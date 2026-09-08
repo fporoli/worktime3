@@ -1,0 +1,27 @@
+services:
+  pg:
+    image: postgres:16
+    ports: ["5431:5432"]
+    environment:
+      POSTGRES_DB: worktime
+      POSTGRES_USER: worktime
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
+    volumes:
+      - ../data-local/pg:/var/lib/postgresql/data
+      - ../../schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../postgres/migrations/002-worktime-extensions.sql:/docker-entrypoint-initdb.d/02-ext.sql:ro
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    ports: ["8091:8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
+      KC_DB_USERNAME: worktime
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
+    volumes:
+      - ../data-local/kc:/opt/keycloak/data
+      - ../keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
+    command: ["start-dev", "--import-realm"]
+    depends_on: [pg]

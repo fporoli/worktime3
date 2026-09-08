@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --workspaces || npm install
+      - run: npm run build --workspaces
+      - run: npm run test --workspaces
+  pages:
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.ref == 'refs/heads/main'
+    permissions: { pages: write, id-token: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p docs && cp docs/index.html docs/ 2>/dev/null || echo ok
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: docs }
+      - uses: actions/deploy-pages@v4

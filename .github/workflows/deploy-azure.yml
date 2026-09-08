@@ -1,0 +1,17 @@
+name: deploy-azure
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag: { description: 'Image tag', required: true, default: 'latest' }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Deploy containers (Azure CLI / App Service placeholders)
+        run: |
+          echo "Set AZURE_CREDENTIALS, ACR_NAME secrets first."
+          echo "Then: az acr login; docker compose -f compose/docker-compose.azure.yml up -d"

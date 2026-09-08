@@ -1,0 +1,10 @@
+# Caddy Azure (ENV_NUMBER=4)
+:3004 {
+  reverse_proxy web:80
+}
+:8004 {
+  reverse_proxy api:8000
+}
+:8094 {
+  reverse_proxy keycloak:8080
+}

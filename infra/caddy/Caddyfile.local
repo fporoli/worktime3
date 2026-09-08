@@ -1,0 +1,10 @@
+# Caddy (local dev, ENV_NUMBER=1): routes :3001 -> web, :8001 -> api, :8091 -> keycloak
+:3001 {
+  reverse_proxy web:80
+}
+:8001 {
+  reverse_proxy api:8000
+}
+:8091 {
+  reverse_proxy keycloak:8080
+}

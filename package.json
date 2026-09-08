@@ -1,0 +1,14 @@
+{
+  "name": "worktime3",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise + individual time tracking (NestJS + React + Postgres + Keycloak + Caddy)",
+  "workspaces": ["apps/api", "apps/web", "packages/shared"],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "db:migrate": "psql $DATABASE_URL -f schema.sql -f infra/postgres/migrations/002-worktime-extensions.sql",
+    "db:seed": "psql $DATABASE_URL -f infra/postgres/seeds/seed.dev.sql"
+  },
+  "engines": { "node": ">=20" }
+}

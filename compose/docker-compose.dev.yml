@@ -1,0 +1,40 @@
+services:
+  pg:
+    image: postgres:16
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_DB: worktime
+      POSTGRES_USER: worktime
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    ports: ["8092:8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
+      KC_DB_USERNAME: worktime
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
+    command: ["start-dev", "--import-realm"]
+    depends_on: [pg]
+  api:
+    build: { context: .., dockerfile: apps/api/Dockerfile }
+    ports: ["8002:8000"]
+    environment:
+      DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:-worktime_dev_only}@pg:5432/worktime
+      API_PORT: 8000
+    depends_on: [pg]
+  web:
+    build: { context: .., dockerfile: apps/web/Dockerfile }
+    ports: ["3002:80"]
+    depends_on: [api]
+  caddy:
+    image: caddy:2
+    ports: ["3002:3002", "8002:8002", "8092:8092"]
+    volumes:
+      - ../infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+volumes:
+  pgdata:

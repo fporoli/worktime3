@@ -1,0 +1,10 @@
+# Caddy dev/docker (ENV_NUMBER=2)
+:3002 {
+  reverse_proxy web:80
+}
+:8002 {
+  reverse_proxy api:8000
+}
+:8092 {
+  reverse_proxy keycloak:8080
+}
