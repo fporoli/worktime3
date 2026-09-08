@@ -8,8 +8,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
     volumes:
       - ../data-local/pg:/var/lib/postgresql/data
-      - ../../schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ../postgres/migrations/002-worktime-extensions.sql:/docker-entrypoint-initdb.d/02-ext.sql:ro
+      - ../schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../infra/postgres/migrations/002-worktime-extensions.sql:/docker-entrypoint-initdb.d/02-ext.sql:ro
+  mailpit:
+    image: axllent/mailpit
+    ports: ["1025:1025", "8025:8025"]
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
     ports: ["8091:8080"]
@@ -22,6 +27,6 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
     volumes:
       - ../data-local/kc:/opt/keycloak/data
-      - ../keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
+      - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start-dev", "--import-realm"]
     depends_on: [pg]

@@ -1,11 +1,24 @@
 import { useMemo, useState } from 'react';
 import { AppBar, Box, Button, Container, TextField, ToggleButton, ToggleButtonGroup, Toolbar, Typography, Paper, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material';
 import { bucket, type Entry, type View } from './aggregate';
+import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
+import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
+function defaultRole(session: Session): 'admin' | 'manager' | 'user' {
+  const roles = session.memberships.map((m) => m.role);
+  if (roles.includes('owner') || roles.includes('admin')) return 'admin';
+  return 'user';
+}
+
 export default function App() {
-  const [role, setRole] = useState<'admin' | 'manager' | 'user'>('user');
+  const [session, setSession] = useState<Session | null>(() => loadSession());
+  const [role, setRole] = useState<'admin' | 'manager' | 'user'>(() => (session ? defaultRole(session) : 'user'));
+
+  if (!session) {
+    return <Login onLoggedIn={(s) => { setSession(s); setRole(defaultRole(s)); }} />;
+  }
   const [view, setView] = useState<View>('weekly');
   const [entries, setEntries] = useState<Entry[]>([
     { id: '1', start_time: '2026-09-07T08:00:00Z', end_time: '2026-09-07T09:30:00Z', comment: 'Homepage hero' },
@@ -22,12 +35,35 @@ export default function App() {
     const e: Entry = { id: String(Date.now()), start_time: new Date(start).toISOString(), end_time: new Date(end).toISOString(), comment };
     setEntries((p) => [...p, e]);
     try {
+      let token = session?.token;
+      if (session?.sso) {
+        await refreshSsoToken();
+        token = keycloak.token ?? token;
+        if (token !== session.token) {
+          const updated = { ...session, token };
+          setSession(updated);
+          saveSession(updated);
+        }
+      }
       await fetch(`${API}/organizations/acme/work-time`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ userId: 'me', startTime: e.start_time, endTime: e.end_time, comment }),
       });
     } catch { /* offline demo */ }
+  }
+
+  async function logout() {
+    if (session?.sso) {
+      try {
+        await ssoLogout();
+      } catch { /* fall through to local clear */ }
+    }
+    clearSession();
+    setSession(null);
   }
 
   return (
@@ -35,7 +71,9 @@ export default function App() {
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>Worktime</Typography>
-          <ToggleButtonGroup value={role} exclusive onChange={(_, v) => v && setRole(v)} size="small" sx={{ bgcolor: 'white' }}>
+          <Typography variant="body2" sx={{ mr: 2 }}>{session.displayName} ({session.email})</Typography>
+          <Button color="inherit" size="small" onClick={logout}>Logout</Button>
+          <ToggleButtonGroup value={role} exclusive onChange={(_, v) => v && setRole(v)} size="small" sx={{ bgcolor: 'white', ml: 1 }}>
             <ToggleButton value="user">User</ToggleButton>
             <ToggleButton value="manager">Manager</ToggleButton>
             <ToggleButton value="admin">Admin</ToggleButton>

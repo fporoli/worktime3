@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './jwt.guard';
 import { HealthController } from './health.controller';
 import { WorktimeService } from './worktime.service';
 import { RbacService } from './rbac.service';
@@ -23,6 +25,6 @@ import { DbService } from './db.service';
     StaticDataController,
     AuditController,
   ],
-  providers: [DbService, WorktimeService, RbacService, AuditService],
+  providers: [DbService, WorktimeService, RbacService, AuditService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
 export class AppModule {}

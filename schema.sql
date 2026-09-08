@@ -9,6 +9,10 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "citext";
 
+-- Keycloak uses the `auth` schema of this database (see KC_DB_URL currentSchema=auth).
+-- It never creates the schema itself, so we do it here.
+CREATE SCHEMA IF NOT EXISTS auth;
+
 -- ----------------------------------------------------------------------------
 -- CLEANUP (For clean runs / migrations testing)
 -- ----------------------------------------------------------------------------

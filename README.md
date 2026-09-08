@@ -32,6 +32,14 @@ npm run test --workspaces
 ## Auth
 
 Keycloak realm `worktime` (see `infra/keycloak/realm-worktime.json`).
+
+## Email (non-prod)
+
+`compose/docker-compose.local.yml` runs [Mailpit](https://github.com/axllent/mailpit):
+SMTP catcher on `localhost:1025`, inbox UI at http://localhost:8025.
+The API sends via `SMTP_HOST/SMTP_PORT/SMTP_FROM` (see `.env.example`;
+defaults point at the catcher). Sends are best-effort — a missing catcher
+never fails a request. Currently: welcome mail on `POST /api/v1/auth/register`.
 Self-onboarding + password reset: `POST /api/v1/auth/onboard`, `POST /api/v1/auth/reset-password`.
 Azure link/unlink: `POST /api/v1/auth/azure/link`, `DELETE /api/v1/auth/azure/link/:userId`.
 

@@ -50,3 +50,18 @@ VALUES
   ('00000000-0000-0000-0000-000000000002', 'de', 'Administrator'),
   ('00000000-0000-0000-0000-000000000003', 'de', 'Benutzer')
 ON CONFLICT DO NOTHING;
+
+-- Local password identities for the demo users (password: dev1234).
+-- Lets the web login screen sign in without Keycloak.
+INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'password', 'admin@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
+  ('22222222-2222-2222-2222-222222222222', 'password', 'manager@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
+  ('33333333-3333-3333-3333-333333333333', 'password', 'user@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6')
+ON CONFLICT DO NOTHING;
+
+-- Pending invitation for the login screen's "invited user" demo (token: dev-invite-0001).
+INSERT INTO organization_invitations (organization_id, email, role_id, token, invited_by_user_id, status, expires_at)
+VALUES
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'invited@acme.example', '00000000-0000-0000-0000-000000000003', 'dev-invite-0001', '11111111-1111-1111-1111-111111111111', 'pending', '2030-01-01T00:00:00Z')
+ON CONFLICT DO NOTHING;
