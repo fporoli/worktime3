@@ -25,6 +25,28 @@ CREATE TABLE IF NOT EXISTS role_translations (
     PRIMARY KEY (role_id, locale)
 );
 
+INSERT INTO permissions (id, description) VALUES
+    ('projects:manage', 'Create and manage projects and subprojects'),
+    ('worktime:approve', 'Approve submitted work times')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO roles (id, organization_id, name, description, is_system_role) VALUES
+    ('00000000-0000-0000-0000-000000000006', NULL, 'manager', 'Manager with team, project, and subproject access', TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO role_permissions (role_id, permission_id) VALUES
+    ('00000000-0000-0000-0000-000000000001', 'projects:manage'),
+    ('00000000-0000-0000-0000-000000000001', 'worktime:approve'),
+    ('00000000-0000-0000-0000-000000000002', 'projects:manage'),
+    ('00000000-0000-0000-0000-000000000002', 'worktime:approve'),
+    ('00000000-0000-0000-0000-000000000006', 'members:manage'),
+    ('00000000-0000-0000-0000-000000000006', 'teams:manage'),
+    ('00000000-0000-0000-0000-000000000006', 'data:read'),
+    ('00000000-0000-0000-0000-000000000006', 'data:write'),
+    ('00000000-0000-0000-0000-000000000006', 'projects:manage')
+ON CONFLICT DO NOTHING;
+
+
 -- 4. Memberships (OrgRoleMember): is_active flag --------------------------
 ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 

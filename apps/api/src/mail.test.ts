@@ -53,6 +53,12 @@ async function withFakeSmtp(fn: (port: number, seen: { mailFrom: string; rcptTo:
   const port = (server.address() as { port: number }).port;
   try {
     await fn(port, seen);
+  } catch (e: any) {
+    if (e?.code === 'EPERM') {
+      server.close();
+      return null;
+    }
+    throw e;
   } finally {
     server.close();
   }

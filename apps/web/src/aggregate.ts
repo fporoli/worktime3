@@ -6,6 +6,10 @@ export interface Entry {
   end_time: string;
   comment?: string;
   project_id?: string | null;
+  subproject_id?: string | null;
+  /** Joined by the API list endpoint so rows render without a lookup. */
+  project_name?: string | null;
+  subproject_name?: string | null;
 }
 
 export function minutes(e: Entry): number {

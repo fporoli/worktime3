@@ -252,7 +252,9 @@ INSERT INTO permissions (id, description) VALUES
     ('sso:configure', 'Configure SAML/OIDC and domain verifications'),
     ('audit:read', 'Export and inspect enterprise audit logs'),
     ('data:read', 'Read resources inside organization'),
-    ('data:write', 'Create and edit resources inside organization');
+    ('data:write', 'Create and edit resources inside organization'),
+    ('projects:manage', 'Create and manage projects and subprojects'),
+    ('worktime:approve', 'Approve submitted work times');
 
 -- Built-in system roles (organization_id IS NULL)
 INSERT INTO roles (id, organization_id, name, description, is_system_role) VALUES
@@ -260,7 +262,8 @@ INSERT INTO roles (id, organization_id, name, description, is_system_role) VALUE
     ('00000000-0000-0000-0000-000000000002', NULL, 'admin', 'Organization administrator', TRUE),
     ('00000000-0000-0000-0000-000000000003', NULL, 'member', 'Standard collaborator with read/write access', TRUE),
     ('00000000-0000-0000-0000-000000000004', NULL, 'guest', 'Restricted access to assigned teams/projects only', TRUE),
-    ('00000000-0000-0000-0000-000000000005', NULL, 'billing_admin', 'Can manage billing and subscription tiers only', TRUE);
+    ('00000000-0000-0000-0000-000000000005', NULL, 'billing_admin', 'Can manage billing and subscription tiers only', TRUE),
+    ('00000000-0000-0000-0000-000000000006', NULL, 'manager', 'Manager with team, project, and subproject access', TRUE);
 
 -- Map permissions to system roles
 INSERT INTO role_permissions (role_id, permission_id) VALUES
@@ -273,6 +276,8 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000001', 'audit:read'),
     ('00000000-0000-0000-0000-000000000001', 'data:read'),
     ('00000000-0000-0000-0000-000000000001', 'data:write'),
+    ('00000000-0000-0000-0000-000000000001', 'projects:manage'),
+    ('00000000-0000-0000-0000-000000000001', 'worktime:approve'),
     -- Admin
     ('00000000-0000-0000-0000-000000000002', 'org:admin'),
     ('00000000-0000-0000-0000-000000000002', 'members:manage'),
@@ -281,6 +286,14 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000002', 'audit:read'),
     ('00000000-0000-0000-0000-000000000002', 'data:read'),
     ('00000000-0000-0000-0000-000000000002', 'data:write'),
+    ('00000000-0000-0000-0000-000000000002', 'projects:manage'),
+    ('00000000-0000-0000-0000-000000000002', 'worktime:approve'),
+    -- Manager
+    ('00000000-0000-0000-0000-000000000006', 'members:manage'),
+    ('00000000-0000-0000-0000-000000000006', 'teams:manage'),
+    ('00000000-0000-0000-0000-000000000006', 'data:read'),
+    ('00000000-0000-0000-0000-000000000006', 'data:write'),
+    ('00000000-0000-0000-0000-000000000006', 'projects:manage'),
     -- Member
     ('00000000-0000-0000-0000-000000000003', 'data:read'),
     ('00000000-0000-0000-0000-000000000003', 'data:write'),
@@ -288,4 +301,5 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000004', 'data:read'),
     -- Billing Admin
     ('00000000-0000-0000-0000-000000000005', 'org:billing');
+
 

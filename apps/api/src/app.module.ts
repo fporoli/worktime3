@@ -8,6 +8,7 @@ import { AuditService } from './audit.service';
 import { AuthController } from './auth.controller';
 import { UsersController } from './users.controller';
 import { OrgsController } from './orgs.controller';
+import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { WorktimeController } from './worktime.controller';
 import { StaticDataController } from './static-data.controller';
@@ -20,6 +21,7 @@ import { DbService } from './db.service';
     AuthController,
     UsersController,
     OrgsController,
+    TeamsController,
     ProjectsController,
     WorktimeController,
     StaticDataController,

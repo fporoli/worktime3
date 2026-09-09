@@ -12,17 +12,22 @@ INSERT INTO organizations (id, slug, name, type, country, created_by_user_id, is
 VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'acme', 'Acme Corp', 'enterprise', 'CH', '11111111-1111-1111-1111-111111111111', TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
--- Memberships: admin->admin role, manager->admin role, user->member role
-INSERT INTO organization_memberships (organization_id, user_id, role_id, status)
+-- Memberships: admin->admin role, manager->manager role, user->member role
+INSERT INTO organization_memberships (id, organization_id, user_id, role_id, status)
 VALUES
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000002', 'active'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000002', 'active'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000003', 'active')
-ON CONFLICT (organization_id, user_id) DO NOTHING;
+  ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000002', 'active'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000006', 'active'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000003', 'active')
+ON CONFLICT (organization_id, user_id) DO UPDATE SET role_id = EXCLUDED.role_id;
 
 INSERT INTO teams (id, organization_id, name, description)
 VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Platform', 'Platform team')
 ON CONFLICT (organization_id, name) DO NOTHING;
+
+INSERT INTO team_members (team_id, membership_id, manager_user_id)
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333', '22222222-2222-2222-2222-222222222222')
+ON CONFLICT (team_id, membership_id) DO NOTHING;
+
 
 INSERT INTO projects (id, organization_id, name, owner_user_id, cost_item, type)
 VALUES ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Website Relaunch', '22222222-2222-2222-2222-222222222222', 'COST-100', 'customer')
@@ -48,8 +53,10 @@ ON CONFLICT DO NOTHING;
 INSERT INTO role_translations (role_id, locale, display_name)
 VALUES
   ('00000000-0000-0000-0000-000000000002', 'de', 'Administrator'),
+  ('00000000-0000-0000-0000-000000000006', 'de', 'Manager'),
   ('00000000-0000-0000-0000-000000000003', 'de', 'Benutzer')
 ON CONFLICT DO NOTHING;
+
 
 -- Local password identities for the demo users (password: dev1234).
 -- Lets the web login screen sign in without Keycloak.

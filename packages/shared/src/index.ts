@@ -109,6 +109,28 @@ export interface SsoConfiguration {
   isActive: boolean;
 }
 
+export interface Team {
+  id: UUID;
+  organizationId: UUID;
+  name: string;
+  description?: string;
+  createdAt?: string;
+  memberCount?: number;
+}
+
+export interface TeamMember {
+  teamId: UUID;
+  membershipId: UUID;
+  userId?: UUID;
+  displayName?: string;
+  email?: string;
+  managerUserId?: UUID | null;
+  managerDisplayName?: string;
+  teamRoleId?: UUID | null;
+  teamRoleName?: string;
+  createdAt?: string;
+}
+
 export interface Project {
   id: UUID;
   organizationId: UUID;
@@ -147,6 +169,13 @@ export interface StaticData {
   translation?: Record<string, unknown>;
 }
 
+export const OWNER_ROLE_ID = '00000000-0000-0000-0000-000000000001';
+export const ADMIN_ROLE_ID = '00000000-0000-0000-0000-000000000002';
+export const MEMBER_ROLE_ID = '00000000-0000-0000-0000-000000000003';
+export const GUEST_ROLE_ID = '00000000-0000-0000-0000-000000000004';
+export const BILLING_ADMIN_ROLE_ID = '00000000-0000-0000-0000-000000000005';
+export const MANAGER_ROLE_ID = '00000000-0000-0000-0000-000000000006';
+
 export type Permission =
   | 'org:admin'
   | 'org:billing'
@@ -181,3 +210,4 @@ export const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
 export function can(role: AppRole, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role].includes(permission);
 }
+

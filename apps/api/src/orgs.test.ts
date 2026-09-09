@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { buildInviteEmail } from './orgs.controller';
-import { callerUserId, isOrgAdmin } from './access';
+import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
 
 function fakePool(rows: Array<Record<string, unknown>>) {
   return {
@@ -31,4 +31,10 @@ test('isOrgAdmin only allows active owner/admin', async () => {
   assert.equal(await isOrgAdmin(fakePool([{ name: 'admin' }]), 'org', 'u'), true);
   assert.equal(await isOrgAdmin(fakePool([{ name: 'member' }]), 'org', 'u'), false);
   assert.equal(await isOrgAdmin(fakePool([]), 'org', 'u'), false);
+});
+
+test('isAnyOrgAdmin spans organizations', async () => {
+  assert.equal(await isAnyOrgAdmin(fakePool([{ name: 'admin' }]), 'u'), true);
+  assert.equal(await isAnyOrgAdmin(fakePool([{ name: 'member' }]), 'u'), false);
+  assert.equal(await isAnyOrgAdmin(fakePool([]), 'u'), false);
 });

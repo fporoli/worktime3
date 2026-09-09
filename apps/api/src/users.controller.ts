@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Req } from '@nestjs/common';
 import { DbService } from './db.service';
+import { callerUserId, isAnyOrgAdmin } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 
 @Controller('users')
@@ -27,11 +28,16 @@ export class UsersController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+  async update(@Param('id') id: string, @Body() body: Record<string, unknown>, @Req() req: AuthenticatedRequest) {
     const pool = this.db.getPool();
     if (!pool) return { ok: true, offline: true };
+    // Self-service, or org admin. Only admins may toggle is_active.
+    const callerId = req.user ? await callerUserId(pool, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unknown-user' };
+    const admin = await isAnyOrgAdmin(pool, callerId);
+    if (id !== callerId && !admin) return { ok: false, error: 'forbidden' };
     const allowed = ['display_name', 'first_name', 'middle_name', 'last_name', 'locale', 'timezone', 'settings', 'is_active'];
-    const keys = Object.keys(body).filter((k) => allowed.includes(k));
+    const keys = Object.keys(body).filter((k) => allowed.includes(k) && (admin || k !== 'is_active'));
     if (keys.length === 0) return { ok: true, noop: true };
     const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(', ');
     await pool.query(`UPDATE users SET ${sets}, updated_at=NOW() WHERE id=$1`, [id, ...keys.map((k) => body[k])]);
