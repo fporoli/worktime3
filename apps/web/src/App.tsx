@@ -4,6 +4,8 @@ import { bucket, minutes, type Entry, type View } from './aggregate';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import Management from './Management';
+import Invitations from './Invitations';
+import AdminSettings from './AdminSettings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -332,11 +334,11 @@ export default function App() {
             }}
           />
         )}
+        {(role === 'manager' || role === 'admin') && (
+          <Invitations session={session} authHeaders={authHeaders} />
+        )}
         {role === 'admin' && (
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6">Static data & audit (admin)</Typography>
-            <Typography variant="body2">Manage enums, SSO/domains override, inspect audit logs.</Typography>
-          </Paper>
+          <AdminSettings session={session} authHeaders={authHeaders} />
         )}
       </Container>
 

@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS static_data (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_static_data_entity ON static_data(entity, enum_name);
+-- One row per (entity, enum_name): makes the seed's `ON CONFLICT DO NOTHING` actually
+-- dedupe instead of silently accumulating a fresh copy on every reseed.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_static_data_entity_enum ON static_data(entity, enum_name);
 
 -- 8. Audit: keep audit_logs as canonical; expose spec-shaped view ---------
 CREATE OR REPLACE VIEW audit AS
