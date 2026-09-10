@@ -57,6 +57,23 @@ interface SsoConfig {
   is_active: boolean;
 }
 
+interface OrgMember {
+  user_id: string;
+  email: string;
+  display_name: string;
+}
+
+interface RateRow {
+  id: string;
+  user_id: string;
+  display_name: string;
+  email: string;
+  hourly_rate: string;
+  currency: string;
+  effective_from: string;
+  effective_to: string | null;
+}
+
 /** A single editable key/label pair, while a static-data enum is open for editing. */
 interface KV {
   key: string;
@@ -81,7 +98,7 @@ interface AdminSettingsProps {
 }
 
 export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps) {
-  const [tab, setTab] = useState<'enums' | 'organization'>('enums');
+  const [tab, setTab] = useState<'enums' | 'organization' | 'rates'>('enums');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -104,6 +121,13 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
   const [ssoProtocol, setSsoProtocol] = useState<'saml2' | 'oidc'>('saml2');
   const [ssoEntityId, setSsoEntityId] = useState('');
   const [ssoUrl, setSsoUrl] = useState('');
+
+  // --- RATES STATE ---
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [rates, setRates] = useState<RateRow[]>([]);
+  const [rateUserId, setRateUserId] = useState('');
+  const [rateAmount, setRateAmount] = useState('');
+  const [rateEffectiveFrom, setRateEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
 
   // -------------------------------------------------------------
   // Data fetching
@@ -149,11 +173,29 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
     } catch { /* offline fallback */ }
   }
 
+  async function reloadMembers() {
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/members`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (Array.isArray(data)) setMembers(data);
+    } catch { /* offline fallback */ }
+  }
+
+  async function reloadRates() {
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/rates`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (Array.isArray(data)) setRates(data);
+    } catch { /* offline fallback */ }
+  }
+
   useEffect(() => {
     reloadEnums();
     reloadOrg();
     reloadDomains();
     reloadSso();
+    reloadMembers();
+    reloadRates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -302,6 +344,32 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
     }
   }
 
+  // -------------------------------------------------------------
+  // RATE ACTIONS
+  // -------------------------------------------------------------
+  async function handleSaveRate() {
+    const amount = Number(rateAmount);
+    if (!rateUserId || !Number.isFinite(amount) || amount < 0) return;
+    setError(null);
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/rates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ userId: rateUserId, hourlyRate: amount, effectiveFrom: rateEffectiveFrom }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error === 'forbidden' ? 'Only admins can set pay rates.' : `Failed to save rate (${data.error ?? 'unknown error'}).`);
+        return;
+      }
+      setSuccess('Rate saved.');
+      setRateAmount('');
+      await reloadRates();
+    } catch {
+      setError('Failed to save rate.');
+    }
+  }
+
   return (
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -318,6 +386,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tab value="enums" label={`Enums (${enums.length})`} />
         <Tab value="organization" label="Organization" />
+        <Tab value="rates" label="Rates" />
       </Tabs>
 
       {/* ========================================================================= */}
@@ -427,6 +496,53 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
               {sso && <Chip label={sso.is_active ? 'Active' : 'Inactive'} size="small" color={sso.is_active ? 'success' : 'default'} />}
             </Box>
           </Box>
+        </Box>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: RATES                                                                */}
+      {/* ========================================================================= */}
+      {tab === 'rates' && (
+        <Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Hourly cost rate per person, used for team/project cost reports. Setting a new rate closes
+            the previous one as of the effective date — history is kept, not overwritten.
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 3 }}>
+            <TextField select label="Member" value={rateUserId} onChange={(e) => setRateUserId(e.target.value)} size="small" sx={{ minWidth: 200 }}>
+              <MenuItem value=""><em>Select member…</em></MenuItem>
+              {members.map((m) => (<MenuItem key={m.user_id} value={m.user_id}>{m.display_name} ({m.email})</MenuItem>))}
+            </TextField>
+            <TextField label="Hourly Rate" type="number" value={rateAmount} onChange={(e) => setRateAmount(e.target.value)} size="small" sx={{ width: 140 }} inputProps={{ min: 0, step: 0.01 }} />
+            <TextField label="Effective From" type="date" value={rateEffectiveFrom} onChange={(e) => setRateEffectiveFrom(e.target.value)} size="small" InputLabelProps={{ shrink: true }} />
+            <Button variant="contained" onClick={handleSaveRate} disabled={!rateUserId || !rateAmount}>Save Rate</Button>
+          </Box>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Member</TableCell>
+                <TableCell align="right">Hourly Rate</TableCell>
+                <TableCell>Effective From</TableCell>
+                <TableCell>Effective To</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rates.map((r) => (
+                <TableRow key={r.id} hover>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{r.display_name}</Typography>
+                    <Typography variant="caption" color="text.secondary">{r.email}</Typography>
+                  </TableCell>
+                  <TableCell align="right">{r.currency} {Number(r.hourly_rate).toFixed(2)}</TableCell>
+                  <TableCell>{r.effective_from}</TableCell>
+                  <TableCell>{r.effective_to ?? <Chip label="current" size="small" color="success" variant="outlined" />}</TableCell>
+                </TableRow>
+              ))}
+              {rates.length === 0 && (
+                <TableRow><TableCell colSpan={4}>No rates set yet.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Box>
       )}
 

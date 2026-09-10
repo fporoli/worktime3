@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@
 import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorktimeService } from './worktime.service';
-import { callerUserId, isOrgMember } from './access';
+import { callerUserId, isOrgMember, isPeriodLocked } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { work_times, projects, subprojects } from './db/schema';
 
@@ -25,6 +25,7 @@ export class WorktimeController {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
+    if (await isPeriodLocked(db, orgId, userId, body.startTime)) return { ok: false, error: 'period-locked' };
     const [row] = await db
       .insert(work_times)
       .values({
@@ -93,8 +94,15 @@ export class WorktimeController {
   ) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
-    const owned = await this.assertOwnEntry(db, id, req);
-    if (owned) return owned;
+    const owned = await this.assertEditableEntry(db, id, req);
+    if ('error' in owned) return owned;
+
+    // A locked month can't be edited into either — check the target date too, not just the entry's current one.
+    if (body.startTime !== undefined && body.startTime !== owned.entry.start_time && owned.entry.organization_id) {
+      if (await isPeriodLocked(db, owned.entry.organization_id, owned.userId, body.startTime)) {
+        return { ok: false, error: 'period-locked' };
+      }
+    }
 
     const patch: Partial<typeof work_times.$inferInsert> = {};
     if (body.projectId !== undefined) patch.project_id = body.projectId || null;
@@ -113,23 +121,36 @@ export class WorktimeController {
   async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
-    const owned = await this.assertOwnEntry(db, id, req);
-    if (owned) return owned;
+    const owned = await this.assertEditableEntry(db, id, req);
+    if ('error' in owned) return owned;
     await db.delete(work_times).where(eq(work_times.id, id));
     return { ok: true };
   }
 
-  /** Entries are only editable by the user they belong to. Returns an error body, or null when allowed. */
-  private async assertOwnEntry(
+  /**
+   * Entries are only editable by the user they belong to, and only outside a
+   * submitted/approved timesheet period. Returns `{error}` when disallowed,
+   * or the entry (plus caller id) when the edit may proceed.
+   */
+  private async assertEditableEntry(
     db: Db,
     id: string,
     req: AuthenticatedRequest,
-  ): Promise<{ ok: false; error: string } | null> {
+  ): Promise<
+    | { ok: false; error: string }
+    | { userId: string; entry: { organization_id: string | null; start_time: string } }
+  > {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
-    const [row] = await db.select({ user_id: work_times.user_id }).from(work_times).where(eq(work_times.id, id));
+    const [row] = await db
+      .select({ user_id: work_times.user_id, organization_id: work_times.organization_id, start_time: work_times.start_time })
+      .from(work_times)
+      .where(eq(work_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
     if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
-    return null;
+    if (row.organization_id && (await isPeriodLocked(db, row.organization_id, userId, row.start_time))) {
+      return { ok: false, error: 'period-locked' };
+    }
+    return { userId, entry: row };
   }
 }

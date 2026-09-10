@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { buildInviteEmail } from './orgs.controller';
-import { callerUserId, isAnyOrgAdmin, isOrgAdmin, isOrgMember, type Executor } from './access';
+import { callerUserId, isAnyOrgAdmin, isOrgAdmin, isOrgMember, isPeriodLocked, type Executor } from './access';
 
 function fakeDb(rows: Array<Record<string, unknown>>): Executor {
   return {
@@ -44,4 +44,9 @@ test('isOrgMember is true for any active role, false with no membership at all',
   assert.equal(await isOrgMember(fakeDb([{ name: 'guest' }]), 'org', 'u'), true);
   assert.equal(await isOrgMember(fakeDb([{ name: 'admin' }]), 'org', 'u'), true);
   assert.equal(await isOrgMember(fakeDb([]), 'org', 'u'), false);
+});
+
+test('isPeriodLocked reflects whether a matching submitted/approved period row was found', async () => {
+  assert.equal(await isPeriodLocked(fakeDb([{ '?column?': 1 }]), 'org', 'u', '2026-09-07'), true);
+  assert.equal(await isPeriodLocked(fakeDb([]), 'org', 'u', '2026-09-07'), false);
 });

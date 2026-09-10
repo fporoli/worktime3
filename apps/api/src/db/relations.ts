@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_settings, sso_configurations, organization_domains, teams, organization_invitations, roles, organization_memberships, audit_logs, projects, subprojects, work_times, role_permissions, permissions, role_translations, team_members } from "./schema";
+import { users, user_identities, organizations, organization_settings, sso_configurations, organization_domains, teams, organization_invitations, roles, organization_memberships, audit_logs, projects, subprojects, work_times, timesheet_periods, member_rates, role_permissions, permissions, role_translations, team_members } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -17,6 +17,13 @@ export const usersRelations = relations(users, ({many}) => ({
 	projects: many(projects),
 	subprojects: many(subprojects),
 	work_times: many(work_times),
+	timesheet_periods_user_id: many(timesheet_periods, {
+		relationName: "timesheet_periods_user_id_users_id"
+	}),
+	timesheet_periods_reviewed_by_user_id: many(timesheet_periods, {
+		relationName: "timesheet_periods_reviewed_by_user_id_users_id"
+	}),
+	member_rates: many(member_rates),
 	team_members: many(team_members),
 }));
 
@@ -44,6 +51,8 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 	projects: many(projects),
 	subprojects: many(subprojects),
 	work_times: many(work_times),
+	timesheet_periods: many(timesheet_periods),
+	member_rates: many(member_rates),
 }));
 
 export const organization_settingsRelations = relations(organization_settings, ({one}) => ({
@@ -174,6 +183,34 @@ export const work_timesRelations = relations(work_times, ({one}) => ({
 	subproject: one(subprojects, {
 		fields: [work_times.subproject_id],
 		references: [subprojects.id]
+	}),
+}));
+
+export const timesheet_periodsRelations = relations(timesheet_periods, ({one}) => ({
+	organization: one(organizations, {
+		fields: [timesheet_periods.organization_id],
+		references: [organizations.id]
+	}),
+	user_user_id: one(users, {
+		fields: [timesheet_periods.user_id],
+		references: [users.id],
+		relationName: "timesheet_periods_user_id_users_id"
+	}),
+	user_reviewed_by_user_id: one(users, {
+		fields: [timesheet_periods.reviewed_by_user_id],
+		references: [users.id],
+		relationName: "timesheet_periods_reviewed_by_user_id_users_id"
+	}),
+}));
+
+export const member_ratesRelations = relations(member_rates, ({one}) => ({
+	organization: one(organizations, {
+		fields: [member_rates.organization_id],
+		references: [organizations.id]
+	}),
+	user: one(users, {
+		fields: [member_rates.user_id],
+		references: [users.id]
 	}),
 }));
 

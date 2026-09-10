@@ -1,4 +1,4 @@
-import { pgTable, index, foreignKey, unique, uuid, varchar, jsonb, timestamp, boolean, text, integer, inet, check, uniqueIndex, primaryKey, pgView, pgEnum, customType } from "drizzle-orm/pg-core"
+import { pgTable, index, foreignKey, unique, uuid, varchar, jsonb, timestamp, boolean, text, integer, inet, check, uniqueIndex, date, numeric, primaryKey, pgView, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 const citext = customType<{ data: string }>({
@@ -14,6 +14,7 @@ export const organization_type = pgEnum("organization_type", ['personal', 'team'
 export const project_type = pgEnum("project_type", ['internal', 'customer', 'research'])
 export const sso_protocol = pgEnum("sso_protocol", ['saml2', 'oidc'])
 export const subproject_type = pgEnum("subproject_type", ['phase', 'work_package', 'task'])
+export const timesheet_status = pgEnum("timesheet_status", ['open', 'submitted', 'approved', 'rejected'])
 export const user_status = pgEnum("user_status", ['active', 'suspended', 'deactivated'])
 
 
@@ -391,6 +392,66 @@ export const databasechangelog = pgTable("databasechangelog", {
 	labels: varchar({ length: 255 }),
 	deployment_id: varchar({ length: 10 }),
 });
+
+export const timesheet_periods = pgTable("timesheet_periods", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	user_id: uuid().notNull(),
+	period_start: date().notNull(),
+	period_end: date().notNull(),
+	status: timesheet_status().default('open').notNull(),
+	submitted_at: timestamp({ withTimezone: true, mode: 'string' }),
+	reviewed_by_user_id: uuid(),
+	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	review_note: text(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_timesheet_periods_org_status").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("enum_ops")),
+	index("idx_timesheet_periods_user").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.period_start.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "timesheet_periods_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "timesheet_periods_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.reviewed_by_user_id],
+			foreignColumns: [users.id],
+			name: "timesheet_periods_reviewed_by_user_id_fkey"
+		}).onDelete("set null"),
+	unique("uq_timesheet_period").on(table.organization_id, table.user_id, table.period_start),
+	check("chk_timesheet_period_order", sql`period_end > period_start`),
+]);
+
+export const member_rates = pgTable("member_rates", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	user_id: uuid().notNull(),
+	hourly_rate: numeric({ precision: 10, scale:  2 }).notNull(),
+	currency: varchar({ length: 3 }).default('USD').notNull(),
+	effective_from: date().notNull(),
+	effective_to: date(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_member_rates_lookup").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.user_id.asc().nullsLast().op("date_ops"), table.effective_from.asc().nullsLast().op("date_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "member_rates_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "member_rates_user_id_fkey"
+		}).onDelete("cascade"),
+	check("chk_member_rate_positive", sql`hourly_rate >= (0)::numeric`),
+	check("chk_member_rate_order", sql`(effective_to IS NULL) OR (effective_to > effective_from)`),
+]);
 
 export const role_permissions = pgTable("role_permissions", {
 	role_id: uuid().notNull(),

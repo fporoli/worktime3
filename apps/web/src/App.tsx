@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   AppBar,
   Box,
   Button,
@@ -33,11 +34,21 @@ import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import Management from './Management';
 import Invitations from './Invitations';
 import AdminSettings from './AdminSettings';
+import Timesheet from './Timesheet';
+import Approvals from './Approvals';
+import Assistant from './Assistant';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'management' | 'invitations' | 'admin';
+type Section = 'time' | 'management' | 'invitations' | 'approvals' | 'assistant' | 'admin';
+
+const WORK_TIME_ERROR_MESSAGES: Record<string, string> = {
+  'period-locked': 'This month has already been submitted or approved and is locked. Ask your manager to reopen it, or use a different month.',
+  'forbidden': 'You do not have permission to do that.',
+  'not-found': 'That entry no longer exists.',
+  'unknown-user': 'Could not identify your account — try logging in again.',
+};
 
 /** A project or subproject as returned by the API (raw db row). */
 interface Option {
@@ -96,6 +107,7 @@ export default function App() {
   const [projectId, setProjectId] = useState('');
   const [subprojectId, setSubprojectId] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [workTimeError, setWorkTimeError] = useState<string | null>(null);
 
   const rows = useMemo(() => bucket(entries, view), [entries, view]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
@@ -108,6 +120,8 @@ export default function App() {
     { key: 'time', label: 'Time Tracking', visible: true },
     { key: 'management', label: 'Management', visible: canManage },
     { key: 'invitations', label: 'Invitations', visible: canManage },
+    { key: 'approvals', label: 'Approvals', visible: canManage },
+    { key: 'assistant', label: 'Assistant', visible: true },
     { key: 'admin', label: 'Admin Settings', visible: role === 'admin' },
   ];
 
@@ -203,6 +217,7 @@ export default function App() {
   }
 
   async function addEntry() {
+    setWorkTimeError(null);
     const e: Entry = {
       id: String(Date.now()),
       start_time: new Date(start).toISOString(),
@@ -213,10 +228,12 @@ export default function App() {
       project_name: projects.find((p) => p.id === projectId)?.name ?? null,
       subproject_name: subprojects.find((s) => s.id === subprojectId)?.name ?? null,
     };
-    setEntries((p) => [...p, e]);
-    if (!orgId) return;
+    if (!orgId) {
+      setEntries((p) => [...p, e]);
+      return;
+    }
     try {
-      await fetch(`${API}/organizations/${orgId}/work-time`, {
+      const res = await fetch(`${API}/organizations/${orgId}/work-time`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
@@ -227,12 +244,21 @@ export default function App() {
           comment,
         }),
       });
+      const data = await res.json();
+      if (data.ok === false) {
+        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not add the entry (${data.error ?? 'unknown error'}).`);
+        return;
+      }
+      setEntries((p) => [...p, e]);
       await reloadEntries();
-    } catch { /* offline demo */ }
+    } catch {
+      setEntries((p) => [...p, e]); // offline demo: API unreachable, keep the optimistic local entry
+    }
   }
 
   async function saveDraft() {
     if (!draft) return;
+    setWorkTimeError(null);
     const patch = {
       startTime: new Date(draft.start).toISOString(),
       endTime: new Date(draft.end).toISOString(),
@@ -240,31 +266,42 @@ export default function App() {
       subprojectId: draft.subprojectId || null,
       comment: draft.comment,
     };
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.id === draft.id
-          ? {
-              ...e,
-              start_time: patch.startTime,
-              end_time: patch.endTime,
-              project_id: patch.projectId,
-              subproject_id: patch.subprojectId,
-              comment: draft.comment,
-              project_name: projects.find((p) => p.id === draft.projectId)?.name ?? null,
-              subproject_name: draftSubprojects.find((s) => s.id === draft.subprojectId)?.name ?? null,
-            }
-          : e,
-      ),
-    );
-    setDraft(null);
+    function applyLocally() {
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === draft!.id
+            ? {
+                ...e,
+                start_time: patch.startTime,
+                end_time: patch.endTime,
+                project_id: patch.projectId,
+                subproject_id: patch.subprojectId,
+                comment: draft!.comment,
+                project_name: projects.find((p) => p.id === draft!.projectId)?.name ?? null,
+                subproject_name: draftSubprojects.find((s) => s.id === draft!.subprojectId)?.name ?? null,
+              }
+            : e,
+        ),
+      );
+    }
     try {
-      await fetch(`${API}/work-time/${draft.id}`, {
+      const res = await fetch(`${API}/work-time/${draft.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify(patch),
       });
+      const data = await res.json();
+      if (data.ok === false) {
+        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not save the change (${data.error ?? 'unknown error'}).`);
+        return;
+      }
+      applyLocally();
+      setDraft(null);
       await reloadEntries();
-    } catch { /* offline demo */ }
+    } catch {
+      applyLocally(); // offline demo: API unreachable, keep the optimistic local edit
+      setDraft(null);
+    }
   }
 
   async function logout() {
@@ -338,6 +375,8 @@ export default function App() {
         <Container maxWidth={false} sx={{ py: 3, display: 'grid', gap: 2 }}>
           {section === 'time' && (
             <>
+              {orgId && <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />}
+              {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
               <Paper sx={{ p: 2 }}>
                 <Typography variant="h6">Log work time (all roles)</Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
@@ -449,6 +488,12 @@ export default function App() {
           {section === 'invitations' && canManage && orgId && (
             <Invitations orgId={orgId} authHeaders={authHeaders} />
           )}
+          {section === 'approvals' && canManage && orgId && (
+            <Approvals orgId={orgId} role={role} authHeaders={authHeaders} />
+          )}
+          {section === 'assistant' && orgId && (
+            <Assistant orgId={orgId} authHeaders={authHeaders} />
+          )}
           {section === 'admin' && role === 'admin' && orgId && (
             <AdminSettings orgId={orgId} authHeaders={authHeaders} />
           )}
@@ -459,6 +504,7 @@ export default function App() {
         <DialogTitle>Edit entry</DialogTitle>
         {draft && (
           <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+            {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
             <TextField label="Start" type="datetime-local" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} size="small" sx={{ mt: 1 }} />
             <TextField label="End" type="datetime-local" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} size="small" error={draftRangeInvalid} helperText={draftRangeInvalid ? 'End must be after start' : ' '} />
             <TextField

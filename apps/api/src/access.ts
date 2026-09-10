@@ -56,3 +56,25 @@ export async function userOrgRole(db: Executor, organizationId: string, userId: 
   const names = await activeRoleNames(db, organizationId, userId);
   return names[0] ?? null;
 }
+
+/**
+ * True when `dateOrTimestamp` falls inside a submitted/approved timesheet
+ * period for this user — the single gate the work-time create/update/delete
+ * handlers call before touching an entry. `rejected`/`open` periods are NOT
+ * locked (an employee fixing a rejected month must be able to edit again).
+ */
+export async function isPeriodLocked(
+  db: Executor,
+  organizationId: string,
+  userId: string,
+  dateOrTimestamp: string,
+): Promise<boolean> {
+  const rows = await db.execute(
+    sql`SELECT 1 FROM timesheet_periods
+        WHERE organization_id = ${organizationId} AND user_id = ${userId}
+          AND status IN ('submitted', 'approved')
+          AND period_start <= ${dateOrTimestamp}::date AND period_end > ${dateOrTimestamp}::date
+        LIMIT 1`,
+  );
+  return rows.rows.length > 0;
+}
