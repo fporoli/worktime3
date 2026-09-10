@@ -6,6 +6,21 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      pg:
+        image: postgres:16
+        env:
+          POSTGRES_DB: worktime
+          POSTGRES_USER: worktime
+          POSTGRES_PASSWORD: worktime_ci_only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U worktime"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://worktime:worktime_ci_only@localhost:5432/worktime
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,6 +28,9 @@ jobs:
       - run: npm install --workspaces || npm install
       - run: npm run build --workspaces
       - run: npm run test --workspaces
+      # Fails the build if a changelog doesn't apply cleanly to a fresh database.
+      - run: npm run db:migrate
+      - run: npm run db:seed
   pages:
     runs-on: ubuntu-latest
     needs: build-test

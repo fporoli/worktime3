@@ -14,8 +14,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import type { Session } from './Login';
-
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 interface RoleOption {
@@ -35,7 +33,7 @@ interface InvitationItem {
 }
 
 interface InvitationsProps {
-  session: Session;
+  orgId: string;
   authHeaders: () => Promise<Record<string, string>>;
 }
 
@@ -46,8 +44,7 @@ const STATUS_COLOR: Record<InvitationItem['status'], 'default' | 'success' | 'er
   expired: 'error',
 };
 
-export default function Invitations({ session, authHeaders }: InvitationsProps) {
-  const orgId = session.memberships[0]?.organizationId ?? 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
   const [email, setEmail] = useState('');

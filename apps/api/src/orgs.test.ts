@@ -1,11 +1,11 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { buildInviteEmail } from './orgs.controller';
-import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
+import { callerUserId, isAnyOrgAdmin, isOrgAdmin, isOrgMember, type Executor } from './access';
 
-function fakePool(rows: Array<Record<string, unknown>>) {
+function fakeDb(rows: Array<Record<string, unknown>>): Executor {
   return {
-    query: async () => ({ rows }),
+    execute: (async () => ({ rows })) as unknown as Executor['execute'],
   };
 }
 
@@ -18,23 +18,30 @@ test('invite email carries org, link and token', () => {
 });
 
 test('callerUserId resolves local sub and keycloak identity', async () => {
-  assert.equal(await callerUserId(fakePool([]), { kind: 'local', sub: 'user-1' }), 'user-1');
+  assert.equal(await callerUserId(fakeDb([]), { kind: 'local', sub: 'user-1' }), 'user-1');
   assert.equal(
-    await callerUserId(fakePool([{ user_id: 'user-2' }]), { kind: 'keycloak', sub: 'kc-sub' }),
+    await callerUserId(fakeDb([{ user_id: 'user-2' }]), { kind: 'keycloak', sub: 'kc-sub' }),
     'user-2',
   );
-  assert.equal(await callerUserId(fakePool([]), { kind: 'keycloak', sub: 'unknown' }), null);
+  assert.equal(await callerUserId(fakeDb([]), { kind: 'keycloak', sub: 'unknown' }), null);
 });
 
 test('isOrgAdmin only allows active owner/admin', async () => {
-  assert.equal(await isOrgAdmin(fakePool([{ name: 'owner' }]), 'org', 'u'), true);
-  assert.equal(await isOrgAdmin(fakePool([{ name: 'admin' }]), 'org', 'u'), true);
-  assert.equal(await isOrgAdmin(fakePool([{ name: 'member' }]), 'org', 'u'), false);
-  assert.equal(await isOrgAdmin(fakePool([]), 'org', 'u'), false);
+  assert.equal(await isOrgAdmin(fakeDb([{ name: 'owner' }]), 'org', 'u'), true);
+  assert.equal(await isOrgAdmin(fakeDb([{ name: 'admin' }]), 'org', 'u'), true);
+  assert.equal(await isOrgAdmin(fakeDb([{ name: 'member' }]), 'org', 'u'), false);
+  assert.equal(await isOrgAdmin(fakeDb([]), 'org', 'u'), false);
 });
 
 test('isAnyOrgAdmin spans organizations', async () => {
-  assert.equal(await isAnyOrgAdmin(fakePool([{ name: 'admin' }]), 'u'), true);
-  assert.equal(await isAnyOrgAdmin(fakePool([{ name: 'member' }]), 'u'), false);
-  assert.equal(await isAnyOrgAdmin(fakePool([]), 'u'), false);
+  assert.equal(await isAnyOrgAdmin(fakeDb([{ name: 'admin' }]), 'u'), true);
+  assert.equal(await isAnyOrgAdmin(fakeDb([{ name: 'member' }]), 'u'), false);
+  assert.equal(await isAnyOrgAdmin(fakeDb([]), 'u'), false);
+});
+
+test('isOrgMember is true for any active role, false with no membership at all', async () => {
+  assert.equal(await isOrgMember(fakeDb([{ name: 'member' }]), 'org', 'u'), true);
+  assert.equal(await isOrgMember(fakeDb([{ name: 'guest' }]), 'org', 'u'), true);
+  assert.equal(await isOrgMember(fakeDb([{ name: 'admin' }]), 'org', 'u'), true);
+  assert.equal(await isOrgMember(fakeDb([]), 'org', 'u'), false);
 });

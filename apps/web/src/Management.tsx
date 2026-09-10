@@ -21,6 +21,7 @@ import {
   Typography,
 } from '@mui/material';
 import type { Session } from './Login';
+import TeamHours from './TeamHours';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -81,14 +82,14 @@ export interface SubprojectItem {
 
 interface ManagementProps {
   session: Session;
+  orgId: string;
   role: 'admin' | 'manager' | 'user';
   authHeaders: () => Promise<Record<string, string>>;
   onDataChanged?: () => void;
 }
 
-export default function Management({ session, role, authHeaders, onDataChanged }: ManagementProps) {
-  const orgId = session.memberships[0]?.organizationId ?? 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  const [tab, setTab] = useState<'teams' | 'projects'>('teams');
+export default function Management({ session, orgId, role, authHeaders, onDataChanged }: ManagementProps) {
+  const [tab, setTab] = useState<'teams' | 'projects' | 'hours'>('teams');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -613,6 +614,7 @@ export default function Management({ session, role, authHeaders, onDataChanged }
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tab value="teams" label={`Teams (${teams.length})`} />
         <Tab value="projects" label={`Projects & Subprojects (${projects.length})`} />
+        <Tab value="hours" label="Team Hours" />
       </Tabs>
 
       {/* ========================================================================= */}
@@ -818,6 +820,11 @@ export default function Management({ session, role, authHeaders, onDataChanged }
           })()}
         </Box>
       )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: TEAM HOURS                                                         */}
+      {/* ========================================================================= */}
+      {tab === 'hours' && <TeamHours orgId={orgId} authHeaders={authHeaders} />}
 
       {/* ========================================================================= */}
       {/* DIALOG: CREATE / EDIT TEAM                                                */}

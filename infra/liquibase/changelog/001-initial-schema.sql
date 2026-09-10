@@ -1,46 +1,20 @@
--- ============================================================================
--- UNIFIED USER & TENANT DATA MODEL (PostgreSQL 14+)
--- Supports: Private / B2C (Personal Workspace) & Enterprise / B2B (Multi-Org)
--- ============================================================================
+--liquibase formatted sql
 
--- ----------------------------------------------------------------------------
--- EXTENSIONS
--- ----------------------------------------------------------------------------
+-- Ported from the former schema.sql (see git history). The destructive
+-- `DROP TABLE/TYPE ... CASCADE` preamble that file used for "clean runs" is
+-- intentionally dropped here: Liquibase changesets are additive and
+-- tracked — each one applies exactly once, ever, per database. To reset a
+-- database for local dev, drop the whole database/volume instead of relying
+-- on a changeset to blow away and recreate tables.
+
+--changeset worktime:001-extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "citext";
-
 -- Keycloak uses the `auth` schema of this database (see KC_DB_URL currentSchema=auth).
 -- It never creates the schema itself, so we do it here.
 CREATE SCHEMA IF NOT EXISTS auth;
 
--- ----------------------------------------------------------------------------
--- CLEANUP (For clean runs / migrations testing)
--- ----------------------------------------------------------------------------
-DROP TABLE IF EXISTS audit_logs CASCADE;
-DROP TABLE IF EXISTS team_members CASCADE;
-DROP TABLE IF EXISTS teams CASCADE;
-DROP TABLE IF EXISTS organization_invitations CASCADE;
-DROP TABLE IF EXISTS organization_memberships CASCADE;
-DROP TABLE IF EXISTS role_permissions CASCADE;
-DROP TABLE IF EXISTS roles CASCADE;
-DROP TABLE IF EXISTS permissions CASCADE;
-DROP TABLE IF EXISTS sso_configurations CASCADE;
-DROP TABLE IF EXISTS organization_domains CASCADE;
-DROP TABLE IF EXISTS organization_settings CASCADE;
-DROP TABLE IF EXISTS organizations CASCADE;
-DROP TABLE IF EXISTS user_identities CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
-
-DROP TYPE IF EXISTS sso_protocol CASCADE;
-DROP TYPE IF EXISTS invitation_status CASCADE;
-DROP TYPE IF EXISTS membership_status CASCADE;
-DROP TYPE IF EXISTS organization_type CASCADE;
-DROP TYPE IF EXISTS auth_provider_type CASCADE;
-DROP TYPE IF EXISTS user_status CASCADE;
-
--- ----------------------------------------------------------------------------
--- 1. IDENTITY LAYER
--- ----------------------------------------------------------------------------
+--changeset worktime:002-identity-layer
 CREATE TYPE user_status AS ENUM ('active', 'suspended', 'deactivated');
 
 CREATE TABLE users (
@@ -73,8 +47,8 @@ CREATE TABLE user_identities (
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider            auth_provider_type NOT NULL,
     provider_user_id    VARCHAR(255) NOT NULL,
-    password_hash       VARCHAR(255),          -- Populated only when provider = 'password'
-    metadata            JSONB NOT NULL DEFAULT '{}', -- IdP profile claims, WebAuthn credentials, etc.
+    password_hash       VARCHAR(255),
+    metadata            JSONB NOT NULL DEFAULT '{}',
     last_sign_in_at     TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -84,14 +58,12 @@ CREATE TABLE user_identities (
 CREATE INDEX idx_user_identities_user_id ON user_identities(user_id);
 COMMENT ON TABLE user_identities IS 'Decoupled credentials. A single user can link passwords, OAuth, and Enterprise SSO.';
 
--- ----------------------------------------------------------------------------
--- 2. TENANCY & ENTERPRISE BOUNDARY
--- ----------------------------------------------------------------------------
+--changeset worktime:003-tenancy
 CREATE TYPE organization_type AS ENUM ('personal', 'team', 'enterprise');
 
 CREATE TABLE organizations (
     id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    parent_organization_id  UUID REFERENCES organizations(id) ON DELETE SET NULL, -- Enterprise multi-workspace hierarchy
+    parent_organization_id  UUID REFERENCES organizations(id) ON DELETE SET NULL,
     slug                    CITEXT UNIQUE NOT NULL,
     name                    VARCHAR(100) NOT NULL,
     type                    organization_type NOT NULL DEFAULT 'personal',
@@ -110,7 +82,7 @@ CREATE TABLE organization_settings (
     enforce_sso                 BOOLEAN NOT NULL DEFAULT FALSE,
     enforce_mfa                 BOOLEAN NOT NULL DEFAULT FALSE,
     allowed_email_domains       TEXT[] NOT NULL DEFAULT '{}',
-    session_duration_minutes    INTEGER NOT NULL DEFAULT 1440, -- 24 hours default
+    session_duration_minutes    INTEGER NOT NULL DEFAULT 1440,
     ip_allowlist                INET[] NOT NULL DEFAULT '{}',
     features                    JSONB NOT NULL DEFAULT '{}',
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -148,17 +120,15 @@ CREATE TABLE sso_configurations (
     CONSTRAINT uq_org_sso UNIQUE (organization_id)
 );
 
--- ----------------------------------------------------------------------------
--- 3. PERMISSIONS & MEMBERSHIPS (RBAC / ReBAC)
--- ----------------------------------------------------------------------------
+--changeset worktime:004-permissions-and-memberships
 CREATE TABLE permissions (
-    id          VARCHAR(64) PRIMARY KEY, -- e.g. 'workspace:manage', 'members:invite'
+    id          VARCHAR(64) PRIMARY KEY,
     description VARCHAR(255) NOT NULL
 );
 
 CREATE TABLE roles (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE, -- NULL = System built-in role
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     name            VARCHAR(64) NOT NULL,
     description     VARCHAR(255),
     is_system_role  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -180,7 +150,7 @@ CREATE TABLE organization_memberships (
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id             UUID NOT NULL REFERENCES roles(id),
     status              membership_status NOT NULL DEFAULT 'active',
-    scim_external_id    VARCHAR(255), -- For automated SCIM sync from Okta / Azure Entra ID
+    scim_external_id    VARCHAR(255),
     joined_at           TIMESTAMPTZ DEFAULT NOW(),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -224,9 +194,7 @@ CREATE TABLE organization_invitations (
 CREATE INDEX idx_invitations_email ON organization_invitations(email);
 CREATE INDEX idx_invitations_token ON organization_invitations(token);
 
--- ----------------------------------------------------------------------------
--- 4. ENTERPRISE COMPLIANCE & AUDIT LOGS
--- ----------------------------------------------------------------------------
+--changeset worktime:005-audit-logs
 CREATE TABLE audit_logs (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id     UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -234,16 +202,14 @@ CREATE TABLE audit_logs (
     action              VARCHAR(128) NOT NULL,
     target_type         VARCHAR(64) NOT NULL,
     target_id           VARCHAR(255) NOT NULL,
-    metadata            JSONB NOT NULL DEFAULT '{}', -- IP address, User-Agent, state diffs
+    metadata            JSONB NOT NULL DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_audit_logs_org_date ON audit_logs(organization_id, created_at DESC);
 CREATE INDEX idx_audit_logs_actor ON audit_logs(actor_user_id);
 
--- ----------------------------------------------------------------------------
--- 5. SEED DATA (Standard Roles & Permissions)
--- ----------------------------------------------------------------------------
+--changeset worktime:006-seed-permissions
 INSERT INTO permissions (id, description) VALUES
     ('org:admin', 'Full administrative access to organization settings and billing'),
     ('org:billing', 'Manage subscriptions, payment methods, and invoices'),
@@ -256,7 +222,7 @@ INSERT INTO permissions (id, description) VALUES
     ('projects:manage', 'Create and manage projects and subprojects'),
     ('worktime:approve', 'Approve submitted work times');
 
--- Built-in system roles (organization_id IS NULL)
+--changeset worktime:007-seed-system-roles
 INSERT INTO roles (id, organization_id, name, description, is_system_role) VALUES
     ('00000000-0000-0000-0000-000000000001', NULL, 'owner', 'Full organization owner and legal contact', TRUE),
     ('00000000-0000-0000-0000-000000000002', NULL, 'admin', 'Organization administrator', TRUE),
@@ -265,9 +231,8 @@ INSERT INTO roles (id, organization_id, name, description, is_system_role) VALUE
     ('00000000-0000-0000-0000-000000000005', NULL, 'billing_admin', 'Can manage billing and subscription tiers only', TRUE),
     ('00000000-0000-0000-0000-000000000006', NULL, 'manager', 'Manager with team, project, and subproject access', TRUE);
 
--- Map permissions to system roles
+--changeset worktime:008-seed-role-permissions
 INSERT INTO role_permissions (role_id, permission_id) VALUES
-    -- Owner has all permissions
     ('00000000-0000-0000-0000-000000000001', 'org:admin'),
     ('00000000-0000-0000-0000-000000000001', 'org:billing'),
     ('00000000-0000-0000-0000-000000000001', 'members:manage'),
@@ -278,7 +243,6 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000001', 'data:write'),
     ('00000000-0000-0000-0000-000000000001', 'projects:manage'),
     ('00000000-0000-0000-0000-000000000001', 'worktime:approve'),
-    -- Admin
     ('00000000-0000-0000-0000-000000000002', 'org:admin'),
     ('00000000-0000-0000-0000-000000000002', 'members:manage'),
     ('00000000-0000-0000-0000-000000000002', 'teams:manage'),
@@ -288,18 +252,12 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000002', 'data:write'),
     ('00000000-0000-0000-0000-000000000002', 'projects:manage'),
     ('00000000-0000-0000-0000-000000000002', 'worktime:approve'),
-    -- Manager
     ('00000000-0000-0000-0000-000000000006', 'members:manage'),
     ('00000000-0000-0000-0000-000000000006', 'teams:manage'),
     ('00000000-0000-0000-0000-000000000006', 'data:read'),
     ('00000000-0000-0000-0000-000000000006', 'data:write'),
     ('00000000-0000-0000-0000-000000000006', 'projects:manage'),
-    -- Member
     ('00000000-0000-0000-0000-000000000003', 'data:read'),
     ('00000000-0000-0000-0000-000000000003', 'data:write'),
-    -- Guest
     ('00000000-0000-0000-0000-000000000004', 'data:read'),
-    -- Billing Admin
     ('00000000-0000-0000-0000-000000000005', 'org:billing');
-
-

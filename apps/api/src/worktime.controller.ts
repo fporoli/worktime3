@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { DbService } from './db.service';
+import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
+import { DbService, type Db } from './db.service';
 import { WorktimeService } from './worktime.service';
-import { callerUserId } from './access';
+import { callerUserId, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
+import { work_times, projects, subprojects } from './db/schema';
 
 @Controller()
 export class WorktimeController {
@@ -17,56 +19,60 @@ export class WorktimeController {
     @Body() body: { projectId?: string; subprojectId?: string; startTime: string; endTime: string; comment?: string },
     @Req() req: AuthenticatedRequest,
   ) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     // The entry always belongs to the caller — never trust a client-supplied user id.
-    const userId = req.user ? await callerUserId(pool, req.user) : null;
+    const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
-    const r = await pool.query(
-      'INSERT INTO work_times (user_id, organization_id, project_id, subproject_id, start_time, end_time, comment) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
-      [userId, orgId, body.projectId ?? null, body.subprojectId ?? null, body.startTime, body.endTime, body.comment ?? null],
-    );
-    return { ok: true, id: r.rows[0].id };
+    if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
+    const [row] = await db
+      .insert(work_times)
+      .values({
+        user_id: userId,
+        organization_id: orgId,
+        project_id: body.projectId ?? null,
+        subproject_id: body.subprojectId ?? null,
+        start_time: body.startTime,
+        end_time: body.endTime,
+        comment: body.comment ?? null,
+      })
+      .returning({ id: work_times.id });
+    return { ok: true, id: row.id };
   }
 
   @Get('organizations/:orgId/work-time')
   async list(
     @Param('orgId') orgId: string,
+    @Req() req: AuthenticatedRequest,
     @Query('userId') userId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('view') view?: 'daily' | 'weekly' | 'monthly',
   ) {
-    const pool = this.db.getPool();
-    if (!pool) return { entries: [], summary: {} };
-    const cond: string[] = ['w.organization_id=$1'];
-    const args: unknown[] = [orgId];
-    if (userId) {
-      args.push(userId);
-      cond.push(`w.user_id=$${args.length}`);
-    }
-    if (from) {
-      args.push(from);
-      cond.push(`w.start_time >= $${args.length}`);
-    }
-    if (to) {
-      args.push(to);
-      cond.push(`w.start_time < $${args.length}`);
-    }
+    const db = this.db.getDb();
+    if (!db) return { entries: [], summary: {} };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { entries: [], summary: {} };
+    const conditions: SQL[] = [eq(work_times.organization_id, orgId)];
+    if (userId) conditions.push(eq(work_times.user_id, userId));
+    if (from) conditions.push(gte(work_times.start_time, from));
+    if (to) conditions.push(lt(work_times.start_time, to));
+
     // Names come along so the UI can list entries without a lookup per row.
-    const rows = (
-      await pool.query(
-        `SELECT w.*, p.name AS project_name, s.name AS subproject_name
-         FROM work_times w
-         LEFT JOIN projects p ON p.id = w.project_id
-         LEFT JOIN subprojects s ON s.id = w.subproject_id
-         WHERE ${cond.join(' AND ')}
-         ORDER BY w.start_time`,
-        args,
-      )
-    ).rows;
+    const rows = await db
+      .select({
+        ...getTableColumns(work_times),
+        project_name: projects.name,
+        subproject_name: subprojects.name,
+      })
+      .from(work_times)
+      .leftJoin(projects, eq(projects.id, work_times.project_id))
+      .leftJoin(subprojects, eq(subprojects.id, work_times.subproject_id))
+      .where(and(...conditions))
+      .orderBy(asc(work_times.start_time));
+
     const summary = this.wt.bucket(
-      rows.map((r: { start_time: string; end_time: string }) => ({ startTime: r.start_time, endTime: r.end_time })),
+      rows.map((r) => ({ startTime: r.start_time, endTime: r.end_time })),
       view ?? 'daily',
     );
     return { entries: rows, summary };
@@ -85,46 +91,43 @@ export class WorktimeController {
     },
     @Req() req: AuthenticatedRequest,
   ) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
-    const owned = await this.assertOwnEntry(pool, id, req);
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const owned = await this.assertOwnEntry(db, id, req);
     if (owned) return owned;
-    const sets: string[] = [];
-    const args: unknown[] = [id];
-    const set = (column: string, value: unknown) => {
-      args.push(value);
-      sets.push(`${column}=$${args.length}`);
-    };
-    if (body.projectId !== undefined) set('project_id', body.projectId || null);
-    if (body.subprojectId !== undefined) set('subproject_id', body.subprojectId || null);
-    if (body.startTime !== undefined) set('start_time', body.startTime);
-    if (body.endTime !== undefined) set('end_time', body.endTime);
-    if (body.comment !== undefined) set('comment', body.comment);
-    if (sets.length === 0) return { ok: true };
+
+    const patch: Partial<typeof work_times.$inferInsert> = {};
+    if (body.projectId !== undefined) patch.project_id = body.projectId || null;
+    if (body.subprojectId !== undefined) patch.subproject_id = body.subprojectId || null;
+    if (body.startTime !== undefined) patch.start_time = body.startTime;
+    if (body.endTime !== undefined) patch.end_time = body.endTime;
+    if (body.comment !== undefined) patch.comment = body.comment;
+    if (Object.keys(patch).length === 0) return { ok: true };
     // One statement: start/end move together, so chk_worktime_order never sees a half-applied edit.
-    await pool.query(`UPDATE work_times SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$1`, args);
+    patch.updated_at = new Date().toISOString();
+    await db.update(work_times).set(patch).where(eq(work_times.id, id));
     return { ok: true };
   }
 
   @Delete('work-time/:id')
   async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
-    const owned = await this.assertOwnEntry(pool, id, req);
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const owned = await this.assertOwnEntry(db, id, req);
     if (owned) return owned;
-    await pool.query('DELETE FROM work_times WHERE id=$1', [id]);
+    await db.delete(work_times).where(eq(work_times.id, id));
     return { ok: true };
   }
 
   /** Entries are only editable by the user they belong to. Returns an error body, or null when allowed. */
   private async assertOwnEntry(
-    pool: NonNullable<ReturnType<DbService['getPool']>>,
+    db: Db,
     id: string,
     req: AuthenticatedRequest,
   ): Promise<{ ok: false; error: string } | null> {
-    const userId = req.user ? await callerUserId(pool, req.user) : null;
+    const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
-    const row = (await pool.query('SELECT user_id FROM work_times WHERE id=$1', [id])).rows[0];
+    const [row] = await db.select({ user_id: work_times.user_id }).from(work_times).where(eq(work_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
     if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
     return null;

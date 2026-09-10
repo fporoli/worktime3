@@ -23,7 +23,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import type { Session } from './Login';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -77,12 +76,11 @@ function kvListToValues(list: KV[]): Record<string, string> {
 }
 
 interface AdminSettingsProps {
-  session: Session;
+  orgId: string;
   authHeaders: () => Promise<Record<string, string>>;
 }
 
-export default function AdminSettings({ session, authHeaders }: AdminSettingsProps) {
-  const orgId = session.memberships[0]?.organizationId ?? 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps) {
   const [tab, setTab] = useState<'enums' | 'organization'>('enums');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);

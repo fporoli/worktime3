@@ -8,8 +8,29 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
     volumes:
       - ../data-local/pg:/var/lib/postgresql/data
-      - ../schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ../infra/postgres/migrations/002-worktime-extensions.sql:/docker-entrypoint-initdb.d/02-ext.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worktime"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  # One-shot: applies infra/liquibase/changelog via Liquibase, then exits.
+  # Schema is no longer seeded through docker-entrypoint-initdb.d — that only
+  # ever ran once, on an empty volume, which is exactly how this local
+  # database went stale relative to schema.sql in the past. Liquibase tracks
+  # applied changesets in the database itself, so `migrate` is safe to rerun
+  # on every `docker compose up`.
+  migrate:
+    build: { context: ../infra/liquibase, dockerfile: Dockerfile }
+    volumes:
+      - ../infra/liquibase/changelog:/liquibase/changelog:ro
+    command:
+      - --changelog-file=db.changelog-master.xml
+      - --url=jdbc:postgresql://pg:5432/worktime
+      - --username=worktime
+      - --password=${POSTGRES_PASSWORD:-worktime_dev_only}
+      - update
+    depends_on:
+      pg: { condition: service_healthy }
   mailpit:
     image: axllent/mailpit
     ports: ["1025:1025", "8025:8025"]
@@ -29,4 +50,6 @@ services:
       - ../data-local/kc:/opt/keycloak/data
       - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start-dev", "--import-realm"]
-    depends_on: [pg]
+    depends_on:
+      # Needs the `auth` schema, which migrate's first changeset creates.
+      migrate: { condition: service_completed_successfully }

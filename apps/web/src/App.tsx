@@ -1,5 +1,32 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AppBar, Box, Button, Container, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, TextField, ToggleButton, ToggleButtonGroup, Toolbar, Typography, Paper, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material';
+import {
+  AppBar,
+  Box,
+  Button,
+  Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Drawer,
+  FormControl,
+  List,
+  ListItemButton,
+  ListItemText,
+  MenuItem,
+  Select,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Toolbar,
+  Typography,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+} from '@mui/material';
 import { bucket, minutes, type Entry, type View } from './aggregate';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
@@ -8,6 +35,9 @@ import Invitations from './Invitations';
 import AdminSettings from './AdminSettings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
+const DRAWER_WIDTH = 220;
+
+type Section = 'time' | 'management' | 'invitations' | 'admin';
 
 /** A project or subproject as returned by the API (raw db row). */
 interface Option {
@@ -25,13 +55,13 @@ interface Draft {
   comment: string;
 }
 
-function defaultRole(session: Session): 'admin' | 'manager' | 'user' {
-  const roles = session.memberships.map((m) => m.role);
-  if (roles.includes('owner') || roles.includes('admin')) return 'admin';
-  if (roles.includes('manager')) return 'manager';
+/** The caller's role is scoped to whichever organization is currently active — not aggregated across all of them. */
+function defaultRole(session: Session, orgId: string | null): 'admin' | 'manager' | 'user' {
+  const membership = session.memberships.find((m) => m.organizationId === orgId);
+  if (membership?.role === 'owner' || membership?.role === 'admin') return 'admin';
+  if (membership?.role === 'manager') return 'manager';
   return 'user';
 }
-
 
 /** ISO instant -> the `YYYY-MM-DDTHH:mm` local-time shape a datetime-local input wants. */
 function toLocalInput(iso: string): string {
@@ -46,7 +76,13 @@ function timeOf(iso: string): string {
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(() => loadSession());
-  const [role, setRole] = useState<'admin' | 'manager' | 'user'>(() => (session ? defaultRole(session) : 'user'));
+  const [currentOrgId, setCurrentOrgId] = useState<string | null>(
+    () => session?.memberships[0]?.organizationId ?? null,
+  );
+  const [role, setRole] = useState<'admin' | 'manager' | 'user'>(() =>
+    session ? defaultRole(session, currentOrgId) : 'user',
+  );
+  const [section, setSection] = useState<Section>('time');
   const [view, setView] = useState<View>('weekly');
   const [entries, setEntries] = useState<Entry[]>([
     { id: '1', start_time: '2026-09-07T08:00:00Z', end_time: '2026-09-07T09:30:00Z', comment: 'Homepage hero' },
@@ -63,9 +99,17 @@ export default function App() {
 
   const rows = useMemo(() => bucket(entries, view), [entries, view]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
-  const orgId = session?.memberships[0]?.organizationId ?? null;
+  const orgId = currentOrgId;
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
+  const canManage = role === 'manager' || role === 'admin';
+
+  const NAV_ITEMS: Array<{ key: Section; label: string; visible: boolean }> = [
+    { key: 'time', label: 'Time Tracking', visible: true },
+    { key: 'management', label: 'Management', visible: canManage },
+    { key: 'invitations', label: 'Invitations', visible: canManage },
+    { key: 'admin', label: 'Admin Settings', visible: role === 'admin' },
+  ];
 
   // Auth header for API calls; renews an expiring Keycloak token first.
   async function authHeaders(): Promise<Record<string, string>> {
@@ -81,6 +125,17 @@ export default function App() {
       }
     }
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  /** Switch the active organization: recompute role for it, and back out of a section it can no longer see. */
+  function switchOrg(newOrgId: string) {
+    setCurrentOrgId(newOrgId);
+    if (session) {
+      const nextRole = defaultRole(session, newOrgId);
+      setRole(nextRole);
+      const stillVisible = NAV_ITEMS.find((n) => n.key === section)?.visible;
+      if (section !== 'time' && !stillVisible) setSection('time');
+    }
   }
 
   /** Fetch a project's subprojects once and keep them; both the add form and the edit dialog read this. */
@@ -134,7 +189,17 @@ export default function App() {
   }, [draft?.projectId]);
 
   if (!session) {
-    return <Login onLoggedIn={(s) => { setSession(s); setRole(defaultRole(s)); }} />;
+    return (
+      <Login
+        onLoggedIn={(s) => {
+          setSession(s);
+          const firstOrg = s.memberships[0]?.organizationId ?? null;
+          setCurrentOrgId(firstOrg);
+          setRole(defaultRole(s, firstOrg));
+          setSection('time');
+        }}
+      />
+    );
   }
 
   async function addEntry() {
@@ -216,131 +281,179 @@ export default function App() {
   const draftRangeInvalid = !!draft && !(new Date(draft.end) > new Date(draft.start));
 
   return (
-    <Box>
-      <AppBar position="static">
-        <Toolbar>
+    <Box sx={{ display: 'flex' }}>
+      <AppBar position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
+        <Toolbar sx={{ gap: 1.5, flexWrap: 'wrap', py: 1 }}>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>Worktime</Typography>
-          <Typography variant="body2" sx={{ mr: 2 }}>{session.displayName} ({session.email})</Typography>
-          <Button color="inherit" size="small" onClick={logout}>Logout</Button>
-          <ToggleButtonGroup value={role} exclusive onChange={(_, v) => v && setRole(v)} size="small" sx={{ bgcolor: 'white', ml: 1 }}>
+
+          {session.memberships.length > 1 ? (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <Select
+                value={currentOrgId ?? ''}
+                onChange={(e) => switchOrg(e.target.value)}
+                sx={{ bgcolor: 'white', borderRadius: 1 }}
+              >
+                {session.memberships.map((m) => (
+                  <MenuItem key={m.organizationId} value={m.organizationId}>{m.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          ) : (
+            session.memberships[0] && (
+              <Typography variant="body2" sx={{ opacity: 0.85 }}>{session.memberships[0].name}</Typography>
+            )
+          )}
+
+          <ToggleButtonGroup value={role} exclusive onChange={(_, v) => v && setRole(v)} size="small" sx={{ bgcolor: 'white' }}>
             <ToggleButton value="user">User</ToggleButton>
             <ToggleButton value="manager">Manager</ToggleButton>
             <ToggleButton value="admin">Admin</ToggleButton>
           </ToggleButtonGroup>
+
+          <Typography variant="body2">{session.displayName} ({session.email})</Typography>
+          <Button color="inherit" size="small" onClick={logout}>Logout</Button>
         </Toolbar>
       </AppBar>
-      <Container sx={{ py: 3, display: 'grid', gap: 2 }}>
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="h6">Log work time (all roles)</Typography>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-            <TextField label="Start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} size="small" />
-            <TextField label="End" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} size="small" error={addRangeInvalid} helperText={addRangeInvalid ? 'End must be after start' : ' '} />
-            <TextField
-              select
-              label="Project"
-              value={projectId}
-              onChange={(e) => { setProjectId(e.target.value); setSubprojectId(''); }}
-              size="small"
-              sx={{ minWidth: 180 }}
-            >
-              <MenuItem value=""><em>None</em></MenuItem>
-              {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
-            </TextField>
-            <TextField
-              select
-              label="Subproject"
-              value={subprojectId}
-              onChange={(e) => setSubprojectId(e.target.value)}
-              size="small"
-              sx={{ minWidth: 180 }}
-              disabled={!projectId || subprojects.length === 0}
-            >
-              <MenuItem value=""><em>None</em></MenuItem>
-              {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
-            </TextField>
-            <TextField label="Comment" value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
-            <Button variant="contained" onClick={addEntry} disabled={addRangeInvalid}>Add</Button>
-          </Box>
-        </Paper>
-        <Paper sx={{ p: 2 }}>
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <Typography variant="h6">Overview — {view} ({Math.round(total)} min)</Typography>
-            <ToggleButtonGroup value={view} exclusive onChange={(_, v) => v && setView(v)} size="small">
-              <ToggleButton value="daily">Daily</ToggleButton>
-              <ToggleButton value="weekly">Weekly</ToggleButton>
-              <ToggleButton value="monthly">Monthly</ToggleButton>
-            </ToggleButtonGroup>
-          </Box>
-          <Table size="small" sx={{ mt: 1 }}>
-            <TableHead><TableRow><TableCell>Period</TableCell><TableCell>Minutes</TableCell></TableRow></TableHead>
-            <TableBody>
-              {rows.map((r) => (<TableRow key={r.label}><TableCell>{r.label}</TableCell><TableCell>{Math.round(r.minutes)}</TableCell></TableRow>))}
-            </TableBody>
-          </Table>
-          <Typography variant="subtitle1" sx={{ mt: 3 }}>Entries</Typography>
-          <Table size="small" sx={{ mt: 1 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>Date</TableCell>
-                <TableCell>Time</TableCell>
-                <TableCell align="right">Minutes</TableCell>
-                <TableCell>Project</TableCell>
-                <TableCell>Subproject</TableCell>
-                <TableCell>Comment</TableCell>
-                <TableCell align="right" />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {entries.map((e) => (
-                <TableRow key={e.id} hover>
-                  <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
-                  <TableCell>{timeOf(e.start_time)} – {timeOf(e.end_time)}</TableCell>
-                  <TableCell align="right">{Math.round(minutes(e))}</TableCell>
-                  <TableCell>{e.project_name ?? '—'}</TableCell>
-                  <TableCell>{e.subproject_name ?? '—'}</TableCell>
-                  <TableCell>{e.comment}</TableCell>
-                  <TableCell align="right">
-                    <Button
-                      size="small"
-                      onClick={() => setDraft({
-                        id: e.id,
-                        start: toLocalInput(e.start_time),
-                        end: toLocalInput(e.end_time),
-                        projectId: e.project_id ?? '',
-                        subprojectId: e.subproject_id ?? '',
-                        comment: e.comment ?? '',
-                      })}
-                    >
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {entries.length === 0 && (
-                <TableRow><TableCell colSpan={7}>No entries yet.</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </Paper>
-        {(role === 'manager' || role === 'admin') && (
-          <Management
-            session={session}
-            role={role}
-            authHeaders={authHeaders}
-            onDataChanged={() => {
-              reloadProjects();
-              setSubprojectsByProject({});
-              if (projectId) ensureSubprojects(projectId);
-            }}
-          />
-        )}
-        {(role === 'manager' || role === 'admin') && (
-          <Invitations session={session} authHeaders={authHeaders} />
-        )}
-        {role === 'admin' && (
-          <AdminSettings session={session} authHeaders={authHeaders} />
-        )}
-      </Container>
+
+      <Drawer
+        variant="permanent"
+        sx={{
+          width: DRAWER_WIDTH,
+          flexShrink: 0,
+          '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' },
+        }}
+      >
+        <Toolbar />
+        <List>
+          {NAV_ITEMS.filter((n) => n.visible).map((n) => (
+            <ListItemButton key={n.key} selected={section === n.key} onClick={() => setSection(n.key)}>
+              <ListItemText primary={n.label} />
+            </ListItemButton>
+          ))}
+        </List>
+      </Drawer>
+
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Toolbar />
+        <Container maxWidth={false} sx={{ py: 3, display: 'grid', gap: 2 }}>
+          {section === 'time' && (
+            <>
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="h6">Log work time (all roles)</Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                  <TextField label="Start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} size="small" />
+                  <TextField label="End" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} size="small" error={addRangeInvalid} helperText={addRangeInvalid ? 'End must be after start' : ' '} />
+                  <TextField
+                    select
+                    label="Project"
+                    value={projectId}
+                    onChange={(e) => { setProjectId(e.target.value); setSubprojectId(''); }}
+                    size="small"
+                    sx={{ minWidth: 180 }}
+                  >
+                    <MenuItem value=""><em>None</em></MenuItem>
+                    {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
+                  </TextField>
+                  <TextField
+                    select
+                    label="Subproject"
+                    value={subprojectId}
+                    onChange={(e) => setSubprojectId(e.target.value)}
+                    size="small"
+                    sx={{ minWidth: 180 }}
+                    disabled={!projectId || subprojects.length === 0}
+                  >
+                    <MenuItem value=""><em>None</em></MenuItem>
+                    {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
+                  </TextField>
+                  <TextField label="Comment" value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
+                  <Button variant="contained" onClick={addEntry} disabled={addRangeInvalid}>Add</Button>
+                </Box>
+              </Paper>
+              <Paper sx={{ p: 2 }}>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <Typography variant="h6">Overview — {view} ({Math.round(total)} min)</Typography>
+                  <ToggleButtonGroup value={view} exclusive onChange={(_, v) => v && setView(v)} size="small">
+                    <ToggleButton value="daily">Daily</ToggleButton>
+                    <ToggleButton value="weekly">Weekly</ToggleButton>
+                    <ToggleButton value="monthly">Monthly</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                <Table size="small" sx={{ mt: 1 }}>
+                  <TableHead><TableRow><TableCell>Period</TableCell><TableCell>Minutes</TableCell></TableRow></TableHead>
+                  <TableBody>
+                    {rows.map((r) => (<TableRow key={r.label}><TableCell>{r.label}</TableCell><TableCell>{Math.round(r.minutes)}</TableCell></TableRow>))}
+                  </TableBody>
+                </Table>
+                <Typography variant="subtitle1" sx={{ mt: 3 }}>Entries</Typography>
+                <Table size="small" sx={{ mt: 1 }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Date</TableCell>
+                      <TableCell>Time</TableCell>
+                      <TableCell align="right">Minutes</TableCell>
+                      <TableCell>Project</TableCell>
+                      <TableCell>Subproject</TableCell>
+                      <TableCell>Comment</TableCell>
+                      <TableCell align="right" />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {entries.map((e) => (
+                      <TableRow key={e.id} hover>
+                        <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
+                        <TableCell>{timeOf(e.start_time)} – {timeOf(e.end_time)}</TableCell>
+                        <TableCell align="right">{Math.round(minutes(e))}</TableCell>
+                        <TableCell>{e.project_name ?? '—'}</TableCell>
+                        <TableCell>{e.subproject_name ?? '—'}</TableCell>
+                        <TableCell>{e.comment}</TableCell>
+                        <TableCell align="right">
+                          <Button
+                            size="small"
+                            onClick={() => setDraft({
+                              id: e.id,
+                              start: toLocalInput(e.start_time),
+                              end: toLocalInput(e.end_time),
+                              projectId: e.project_id ?? '',
+                              subprojectId: e.subproject_id ?? '',
+                              comment: e.comment ?? '',
+                            })}
+                          >
+                            Edit
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {entries.length === 0 && (
+                      <TableRow><TableCell colSpan={7}>No entries yet.</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </Paper>
+            </>
+          )}
+
+          {section === 'management' && canManage && orgId && (
+            <Management
+              session={session}
+              orgId={orgId}
+              role={role}
+              authHeaders={authHeaders}
+              onDataChanged={() => {
+                reloadProjects();
+                setSubprojectsByProject({});
+                if (projectId) ensureSubprojects(projectId);
+              }}
+            />
+          )}
+          {section === 'invitations' && canManage && orgId && (
+            <Invitations orgId={orgId} authHeaders={authHeaders} />
+          )}
+          {section === 'admin' && role === 'admin' && orgId && (
+            <AdminSettings orgId={orgId} authHeaders={authHeaders} />
+          )}
+        </Container>
+      </Box>
 
       <Dialog open={!!draft} onClose={() => setDraft(null)} fullWidth maxWidth="sm">
         <DialogTitle>Edit entry</DialogTitle>

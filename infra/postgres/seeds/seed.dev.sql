@@ -9,7 +9,10 @@ VALUES
 ON CONFLICT (email) DO NOTHING;
 
 INSERT INTO organizations (id, slug, name, type, country, created_by_user_id, is_active)
-VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'acme', 'Acme Corp', 'enterprise', 'CH', '11111111-1111-1111-1111-111111111111', TRUE)
+VALUES
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'acme', 'Acme Corp', 'enterprise', 'CH', '11111111-1111-1111-1111-111111111111', TRUE),
+  -- Second org so the web app's organization switcher has something to switch between in the demo.
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'globex', 'Globex Inc', 'team', 'US', '11111111-1111-1111-1111-111111111111', TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Memberships: admin->admin role, manager->manager role, user->member role
@@ -17,7 +20,10 @@ INSERT INTO organization_memberships (id, organization_id, user_id, role_id, sta
 VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000002', 'active'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000006', 'active'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000003', 'active')
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000003', 'active'),
+  -- admin is also admin of Globex; manager is only a plain member there — same person, different role per org.
+  ('eeeeeeee-eeee-eeee-eeee-111111111111', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000002', 'active'),
+  ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000003', 'active')
 ON CONFLICT (organization_id, user_id) DO UPDATE SET role_id = EXCLUDED.role_id;
 
 INSERT INTO teams (id, organization_id, name, description)

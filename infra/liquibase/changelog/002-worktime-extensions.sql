@@ -1,22 +1,20 @@
--- 002-worktime-extensions.sql
--- Deltas on top of schema.sql to cover the requested domain.
--- Idempotent where cheap; run after schema.sql. Postgres 14+.
+--liquibase formatted sql
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "citext";
+-- Ported from the former infra/postgres/migrations/002-worktime-extensions.sql
+-- (see git history), split into changesets along its own numbered sections.
 
--- 1. Users: extra profile fields requested -------------------------------
+--changeset worktime:009-user-profile-fields
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS middle_name VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
--- 2. Organizations: country + generic company settings -------------------
+--changeset worktime:010-organization-country-settings
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(2);
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';
 
--- 3. Roles: settings + translations --------------------------------------
+--changeset worktime:011-role-settings-and-translations
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS role_translations (
     role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -25,6 +23,7 @@ CREATE TABLE IF NOT EXISTS role_translations (
     PRIMARY KEY (role_id, locale)
 );
 
+--changeset worktime:012-manager-role-permissions
 INSERT INTO permissions (id, description) VALUES
     ('projects:manage', 'Create and manage projects and subprojects'),
     ('worktime:approve', 'Approve submitted work times')
@@ -46,16 +45,15 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     ('00000000-0000-0000-0000-000000000006', 'projects:manage')
 ON CONFLICT DO NOTHING;
 
-
--- 4. Memberships (OrgRoleMember): is_active flag --------------------------
+--changeset worktime:013-membership-active-flag
 ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
--- 5. Teams: description + manager/team-role on members --------------------
+--changeset worktime:014-team-description-and-roles
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE team_members ADD COLUMN IF NOT EXISTS manager_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE team_members ADD COLUMN IF NOT EXISTS team_role_id UUID REFERENCES roles(id) ON DELETE SET NULL;
 
--- 6. Projects / Subprojects / WorkTime ------------------------------------
+--changeset worktime:015-project-subproject-enums splitStatements:false
 DO $$ BEGIN
   CREATE TYPE project_type AS ENUM ('internal', 'customer', 'research');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -64,6 +62,7 @@ DO $$ BEGIN
   CREATE TYPE subproject_type AS ENUM ('phase', 'work_package', 'task');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+--changeset worktime:016-projects-subprojects-worktime
 CREATE TABLE IF NOT EXISTS projects (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -106,7 +105,7 @@ CREATE TABLE IF NOT EXISTS work_times (
 CREATE INDEX IF NOT EXISTS idx_worktimes_user_start ON work_times(user_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_worktimes_project ON work_times(project_id);
 
--- 7. Static Data (generic enum table from the spec) ------------------------
+--changeset worktime:017-static-data
 CREATE TABLE IF NOT EXISTS static_data (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity VARCHAR(128) NOT NULL,
@@ -121,7 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_static_data_entity ON static_data(entity, enum_na
 -- dedupe instead of silently accumulating a fresh copy on every reseed.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_static_data_entity_enum ON static_data(entity, enum_name);
 
--- 8. Audit: keep audit_logs as canonical; expose spec-shaped view ---------
+--changeset worktime:018-audit-view
 CREATE OR REPLACE VIEW audit AS
 SELECT id AS uuid,
        target_type AS entity,

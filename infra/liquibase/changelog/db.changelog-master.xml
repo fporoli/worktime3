@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Master changelog: lists every changelog file in the order it must apply.
+  Kept as a thin XML index — the actual changes are all plain SQL below.
+  ("include"/"includeAll" from inside a *SQL-formatted* root changelog is a
+  Liquibase Secure-only feature; an XML/YAML/JSON root including SQL files
+  is the open-source-supported way to do this.)
+
+  To make a schema change: add a new numbered file here (e.g.
+  003-my-change.sql), add its <include> line at the bottom, then run
+  `npm run db:migrate` and `npm run db:introspect` (see README).
+-->
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <include file="001-initial-schema.sql" relativeToChangelogFile="true"/>
+    <include file="002-worktime-extensions.sql" relativeToChangelogFile="true"/>
+
+</databaseChangeLog>

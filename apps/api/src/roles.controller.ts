@@ -1,5 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
+import { asc, isNull } from 'drizzle-orm';
 import { DbService } from './db.service';
+import { roles } from './db/schema';
 
 /** System roles assignable when inviting someone; owner is reserved for the org creator. */
 export function isAssignableInviteRole(name: string): boolean {
@@ -13,11 +15,13 @@ export class RolesController {
   /** Built-in (organization-agnostic) roles, for role pickers such as the invite dialog. */
   @Get()
   async list() {
-    const pool = this.db.getPool();
-    if (!pool) return [];
-    const r = await pool.query(
-      `SELECT id, name, description FROM roles WHERE organization_id IS NULL ORDER BY name`,
-    );
-    return r.rows.filter((row) => isAssignableInviteRole(row.name as string));
+    const db = this.db.getDb();
+    if (!db) return [];
+    const rows = await db
+      .select({ id: roles.id, name: roles.name, description: roles.description })
+      .from(roles)
+      .where(isNull(roles.organization_id))
+      .orderBy(asc(roles.name));
+    return rows.filter((row) => isAssignableInviteRole(row.name));
   }
 }

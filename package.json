@@ -3,12 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "description": "Enterprise + individual time tracking (NestJS + React + Postgres + Keycloak + Caddy)",
-  "workspaces": ["apps/api", "apps/web", "packages/shared"],
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared"
+  ],
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
-    "db:migrate": "psql $DATABASE_URL -f schema.sql -f infra/postgres/migrations/002-worktime-extensions.sql",
-    "db:seed": "psql $DATABASE_URL -f infra/postgres/seeds/seed.dev.sql"
+    "db:migrate": "node infra/liquibase/migrate.mjs",
+    "db:seed": "psql $DATABASE_URL -f infra/postgres/seeds/seed.dev.sql",
+    "db:introspect": "npm run db:introspect --workspace=@worktime3/api"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "pg": "^8.23.0"
+  }
 }

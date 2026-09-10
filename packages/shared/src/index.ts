@@ -1,5 +1,5 @@
 // Shared domain types, enums and RBAC matrix.
-// Mirrors schema.sql + 002-worktime-extensions.sql. Single source of truth for API + Web.
+// Mirrors infra/liquibase/changelog (the schema's source of truth). Single source of truth for API + Web.
 
 export type UUID = string;
 

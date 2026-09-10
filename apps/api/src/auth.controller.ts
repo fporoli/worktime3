@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
-import { DbService } from './db.service';
+import { and, asc, eq } from 'drizzle-orm';
+import { DbService, type Db } from './db.service';
 import { Public, type AuthenticatedRequest } from './jwt.guard';
 import { mintLocalToken } from './jwt';
 import { sendMail } from './mailer';
 import * as bcrypt from 'bcryptjs';
+import { users, user_identities, organizations, organization_memberships, organization_invitations, roles } from './db/schema';
 
 /**
  * Auth: Keycloak is the IdP (same Postgres DB, `auth` schema).
@@ -52,17 +54,20 @@ interface Session {
   memberships: SessionMembership[];
 }
 
-async function membershipsOf(pool: any, userId: string): Promise<SessionMembership[]> {
-  const rows = await pool.query(
-    `SELECT m.organization_id AS "organizationId", o.slug, o.name, r.name AS role, m.status
-     FROM organization_memberships m
-     JOIN organizations o ON o.id = m.organization_id
-     JOIN roles r ON r.id = m.role_id
-     WHERE m.user_id = $1
-     ORDER BY o.slug`,
-    [userId],
-  );
-  return rows.rows;
+async function membershipsOf(db: Db, userId: string): Promise<SessionMembership[]> {
+  return db
+    .select({
+      organizationId: organization_memberships.organization_id,
+      slug: organizations.slug,
+      name: organizations.name,
+      role: roles.name,
+      status: organization_memberships.status,
+    })
+    .from(organization_memberships)
+    .innerJoin(organizations, eq(organizations.id, organization_memberships.organization_id))
+    .innerJoin(roles, eq(roles.id, organization_memberships.role_id))
+    .where(eq(organization_memberships.user_id, userId))
+    .orderBy(asc(organizations.slug));
 }
 
 @Controller('auth')
@@ -72,62 +77,64 @@ export class AuthController {
   @Public()
   @Post('onboard')
   async onboard(@Body() body: { email: string; displayName: string; passwordHash: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
-    const user = await pool.query(
-      "INSERT INTO users (email, display_name) VALUES ($1,$2) ON CONFLICT (email) DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id",
-      [body.email, body.displayName],
-    );
-    await pool.query(
-      "INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash) VALUES ($1,'password',$2,$3) ON CONFLICT (provider, provider_user_id) DO UPDATE SET password_hash=EXCLUDED.password_hash",
-      [user.rows[0].id, body.email, body.passwordHash],
-    );
-    return { ok: true, userId: user.rows[0].id };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const [user] = await db
+      .insert(users)
+      .values({ email: body.email, display_name: body.displayName })
+      .onConflictDoUpdate({ target: users.email, set: { display_name: body.displayName } })
+      .returning({ id: users.id });
+    await db
+      .insert(user_identities)
+      .values({ user_id: user.id, provider: 'password', provider_user_id: body.email, password_hash: body.passwordHash })
+      .onConflictDoUpdate({
+        target: [user_identities.provider, user_identities.provider_user_id],
+        set: { password_hash: body.passwordHash },
+      });
+    return { ok: true, userId: user.id };
   }
 
   /** Register a new admin user: creates the user, a personal workspace org, and an owner membership. */
   @Public()
   @Post('register')
   async register(@Body() body: { email: string; displayName: string; password: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     const email = (body.email ?? '').trim().toLowerCase();
     if (!isValidEmail(email)) return { ok: false, error: 'invalid-email' };
     if (!body.displayName?.trim()) return { ok: false, error: 'display-name-required' };
     if (!isValidPassword(body.password)) return { ok: false, error: 'password-too-short' };
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.rows.length > 0) return { ok: false, error: 'email-taken' };
+    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    if (existing) return { ok: false, error: 'email-taken' };
     const passwordHash = await bcrypt.hash(body.password, 10);
-    const user = await pool.query('INSERT INTO users (email, display_name) VALUES ($1,$2) RETURNING id, email, display_name', [
-      email,
-      body.displayName.trim(),
-    ]);
-    const userId = user.rows[0].id;
-    await pool.query(
-      "INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash) VALUES ($1,'password',$2,$3)",
-      [userId, email, passwordHash],
-    );
+    const [user] = await db
+      .insert(users)
+      .values({ email, display_name: body.displayName.trim() })
+      .returning({ id: users.id, email: users.email, display_name: users.display_name });
+    const userId = user.id;
+    await db
+      .insert(user_identities)
+      .values({ user_id: userId, provider: 'password', provider_user_id: email, password_hash: passwordHash });
     const base = slugBase(email) || 'workspace';
     let slug = base;
     for (let attempt = 0; attempt < 25; attempt++) {
-      const taken = await pool.query('SELECT id FROM organizations WHERE slug = $1', [slug]);
-      if (taken.rows.length === 0) break;
+      const [taken] = await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, slug));
+      if (!taken) break;
       slug = `${base}-${attempt + 2}`;
     }
-    const org = await pool.query(
-      "INSERT INTO organizations (slug, name, type, created_by_user_id) VALUES ($1,$2,'personal',$3) RETURNING id",
-      [slug, `${body.displayName.trim()}'s workspace`, userId],
-    );
-    await pool.query(
-      "INSERT INTO organization_memberships (organization_id, user_id, role_id, status) VALUES ($1,$2,$3,'active')",
-      [org.rows[0].id, userId, OWNER_ROLE_ID],
-    );
+    const [org] = await db
+      .insert(organizations)
+      .values({ slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: userId })
+      .returning({ id: organizations.id });
+    await db
+      .insert(organization_memberships)
+      .values({ organization_id: org.id, user_id: userId, role_id: OWNER_ROLE_ID, status: 'active' });
     const session: Session = {
       userId,
-      email: user.rows[0].email,
-      displayName: user.rows[0].display_name,
+      email: user.email,
+      displayName: user.display_name,
       token: await mintLocalToken(userId, email),
-      memberships: await membershipsOf(pool, userId),
+      memberships: await membershipsOf(db, userId),
     };
     // Best-effort welcome mail (local catcher); never fail registration over it.
     void sendMail({
@@ -142,32 +149,35 @@ export class AuthController {
   @Public()
   @Post('login')
   async login(@Body() body: { email: string; password: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     const email = (body.email ?? '').trim().toLowerCase();
     if (!isValidEmail(email) || typeof body.password !== 'string') return { ok: false, error: 'invalid-credentials' };
-    const rows = await pool.query(
-      `SELECT u.id, u.email, u.display_name, u.status, i.password_hash
-       FROM users u
-       JOIN user_identities i ON i.user_id = u.id
-       WHERE u.email = $1 AND i.provider = 'password'`,
-      [email],
-    );
-    if (rows.rows.length === 0) return { ok: false, error: 'invalid-credentials' };
-    const row = rows.rows[0];
+    const [row] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        display_name: users.display_name,
+        status: users.status,
+        password_hash: user_identities.password_hash,
+      })
+      .from(users)
+      .innerJoin(user_identities, and(eq(user_identities.user_id, users.id), eq(user_identities.provider, 'password')))
+      .where(eq(users.email, email));
+    if (!row) return { ok: false, error: 'invalid-credentials' };
     if (row.status !== 'active') return { ok: false, error: 'account-inactive' };
     const match = row.password_hash ? await bcrypt.compare(body.password, row.password_hash) : false;
     if (!match) return { ok: false, error: 'invalid-credentials' };
-    await pool.query('UPDATE user_identities SET last_sign_in_at = NOW() WHERE provider = $1 AND provider_user_id = $2', [
-      'password',
-      email,
-    ]);
+    await db
+      .update(user_identities)
+      .set({ last_sign_in_at: new Date().toISOString() })
+      .where(and(eq(user_identities.provider, 'password'), eq(user_identities.provider_user_id, email)));
     const session: Session = {
       userId: row.id,
       email: row.email,
       displayName: row.display_name,
       token: await mintLocalToken(row.id, row.email),
-      memberships: await membershipsOf(pool, row.id),
+      memberships: await membershipsOf(db, row.id),
     };
     return { ok: true, ...session };
   }
@@ -176,16 +186,15 @@ export class AuthController {
   @Public()
   @Post('reset')
   async resetLocal(@Body() body: { email: string; newPassword: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     const email = (body.email ?? '').trim().toLowerCase();
     if (isValidEmail(email) && isValidPassword(body.newPassword)) {
       const passwordHash = await bcrypt.hash(body.newPassword, 10);
-      await pool.query('UPDATE user_identities SET password_hash=$1 WHERE provider=$2 AND provider_user_id=$3', [
-        passwordHash,
-        'password',
-        email,
-      ]);
+      await db
+        .update(user_identities)
+        .set({ password_hash: passwordHash })
+        .where(and(eq(user_identities.provider, 'password'), eq(user_identities.provider_user_id, email)));
     }
     return { ok: true };
   }
@@ -197,52 +206,62 @@ export class AuthController {
   @Public()
   @Post('invitations/accept')
   async acceptInvitation(@Body() body: { token: string; displayName: string; password: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     const token = (body.token ?? '').trim();
     if (!token) return { ok: false, error: 'token-required' };
     if (!body.displayName?.trim()) return { ok: false, error: 'display-name-required' };
     if (!isValidPassword(body.password)) return { ok: false, error: 'password-too-short' };
-    const inv = await pool.query(
-      `SELECT organization_id, email, role_id, status, expires_at FROM organization_invitations WHERE token = $1`,
-      [token],
-    );
-    if (inv.rows.length === 0) return { ok: false, error: 'invalid-token' };
-    const invitation = inv.rows[0];
+    const [invitation] = await db
+      .select({
+        organization_id: organization_invitations.organization_id,
+        email: organization_invitations.email,
+        role_id: organization_invitations.role_id,
+        status: organization_invitations.status,
+        expires_at: organization_invitations.expires_at,
+      })
+      .from(organization_invitations)
+      .where(eq(organization_invitations.token, token));
+    if (!invitation) return { ok: false, error: 'invalid-token' };
     if (invitation.status !== 'pending') return { ok: false, error: 'invitation-not-pending' };
     if (new Date(invitation.expires_at).getTime() < Date.now()) {
-      await pool.query("UPDATE organization_invitations SET status='expired' WHERE token = $1", [token]);
+      await db.update(organization_invitations).set({ status: 'expired' }).where(eq(organization_invitations.token, token));
       return { ok: false, error: 'invitation-expired' };
     }
-    const email = String(invitation.email).toLowerCase();
-    let user = await pool.query('SELECT id, email, display_name FROM users WHERE email = $1', [email]);
+    const email = invitation.email.toLowerCase();
+    const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
     let userId: string;
-    if (user.rows.length === 0) {
-      const created = await pool.query('INSERT INTO users (email, display_name) VALUES ($1,$2) RETURNING id', [
-        email,
-        body.displayName.trim(),
-      ]);
-      userId = created.rows[0].id;
+    if (!existingUser) {
+      const [created] = await db
+        .insert(users)
+        .values({ email, display_name: body.displayName.trim() })
+        .returning({ id: users.id });
+      userId = created.id;
     } else {
-      userId = user.rows[0].id;
+      userId = existingUser.id;
     }
     const passwordHash = await bcrypt.hash(body.password, 10);
-    await pool.query(
-      "INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash) VALUES ($1,'password',$2,$3) ON CONFLICT (provider, provider_user_id) DO UPDATE SET password_hash=EXCLUDED.password_hash",
-      [userId, email, passwordHash],
-    );
-    await pool.query(
-      `INSERT INTO organization_memberships (organization_id, user_id, role_id, status) VALUES ($1,$2,$3,'active')
-       ON CONFLICT (organization_id, user_id) DO UPDATE SET role_id=EXCLUDED.role_id, status='active'`,
-      [invitation.organization_id, userId, invitation.role_id],
-    );
-    await pool.query("UPDATE organization_invitations SET status='accepted' WHERE token = $1", [token]);
+    await db
+      .insert(user_identities)
+      .values({ user_id: userId, provider: 'password', provider_user_id: email, password_hash: passwordHash })
+      .onConflictDoUpdate({
+        target: [user_identities.provider, user_identities.provider_user_id],
+        set: { password_hash: passwordHash },
+      });
+    await db
+      .insert(organization_memberships)
+      .values({ organization_id: invitation.organization_id, user_id: userId, role_id: invitation.role_id, status: 'active' })
+      .onConflictDoUpdate({
+        target: [organization_memberships.organization_id, organization_memberships.user_id],
+        set: { role_id: invitation.role_id, status: 'active' },
+      });
+    await db.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
     const session: Session = {
       userId,
       email,
       displayName: body.displayName.trim(),
       token: await mintLocalToken(userId, email),
-      memberships: await membershipsOf(pool, userId),
+      memberships: await membershipsOf(db, userId),
     };
     return { ok: true, ...session };
   }
@@ -255,53 +274,59 @@ export class AuthController {
    */
   @Post('sso/sync')
   async ssoSync(@Req() req: AuthenticatedRequest, @Body() body: { email?: string; displayName?: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     const principal = req.user;
     if (!principal) return { ok: false, error: 'unauthenticated' };
     const userId: string =
-      principal.kind === 'local' ? principal.sub : await this.resolveSsoUserId(pool, principal, body);
-    const user = await pool.query('SELECT id, email, display_name FROM users WHERE id = $1', [userId]);
+      principal.kind === 'local' ? principal.sub : await this.resolveSsoUserId(db, principal, body);
+    const [user] = await db
+      .select({ id: users.id, email: users.email, display_name: users.display_name })
+      .from(users)
+      .where(eq(users.id, userId));
     const session = {
-      userId: user.rows[0].id,
-      email: user.rows[0].email,
-      displayName: user.rows[0].display_name,
-      memberships: await membershipsOf(pool, userId),
+      userId: user.id,
+      email: user.email,
+      displayName: user.display_name,
+      memberships: await membershipsOf(db, userId),
     };
     return { ok: true, ...session };
   }
 
   private async resolveSsoUserId(
-    pool: any,
+    db: Db,
     principal: { sub: string; email?: string },
     body: { email?: string; displayName?: string },
   ): Promise<string> {
-    const found = await pool.query('SELECT user_id FROM user_identities WHERE provider_user_id = $1 LIMIT 1', [
-      principal.sub,
-    ]);
-    if (found.rows.length > 0) return found.rows[0].user_id as string;
+    const [found] = await db
+      .select({ user_id: user_identities.user_id })
+      .from(user_identities)
+      .where(eq(user_identities.provider_user_id, principal.sub))
+      .limit(1);
+    if (found) return found.user_id;
     const email = (body.email ?? principal.email ?? `${principal.sub}@sso.local`).toLowerCase();
-    const created = await pool.query(
-      'INSERT INTO users (email, display_name) VALUES ($1,$2) ON CONFLICT (email) DO UPDATE SET email=EXCLUDED.email RETURNING id',
-      [email, body.displayName ?? principal.email ?? 'SSO user'],
-    );
-    const userId = created.rows[0].id as string;
-    await pool.query(
-      "INSERT INTO user_identities (user_id, provider, provider_user_id) VALUES ($1,'oidc',$2) ON CONFLICT DO NOTHING",
-      [userId, principal.sub],
-    );
+    const [created] = await db
+      .insert(users)
+      .values({ email, display_name: body.displayName ?? principal.email ?? 'SSO user' })
+      .onConflictDoUpdate({ target: users.email, set: { email } })
+      .returning({ id: users.id });
+    const userId = created.id;
+    await db
+      .insert(user_identities)
+      .values({ user_id: userId, provider: 'oidc', provider_user_id: principal.sub })
+      .onConflictDoNothing();
     return userId;
   }
 
   @Public()
   @Post('reset-password')
   async reset(@Body() body: { email: string; newPasswordHash: string }) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
-    await pool.query("UPDATE user_identities SET password_hash=$2 WHERE provider='password' AND provider_user_id=$1", [
-      body.email,
-      body.newPasswordHash,
-    ]);
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    await db
+      .update(user_identities)
+      .set({ password_hash: body.newPasswordHash })
+      .where(and(eq(user_identities.provider, 'password'), eq(user_identities.provider_user_id, body.email)));
     return { ok: true };
   }
 
@@ -316,15 +341,17 @@ export class AuthController {
   }
 
   private async setAzure(userId: string, azureId: string, link: boolean) {
-    const pool = this.db.getPool();
-    if (!pool) return { ok: true, offline: true };
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
     if (link) {
-      await pool.query(
-        "INSERT INTO user_identities (user_id, provider, provider_user_id) VALUES ($1,'oidc',$2) ON CONFLICT DO NOTHING",
-        [userId, azureId],
-      );
+      await db
+        .insert(user_identities)
+        .values({ user_id: userId, provider: 'oidc', provider_user_id: azureId })
+        .onConflictDoNothing();
     } else {
-      await pool.query("DELETE FROM user_identities WHERE user_id=$1 AND provider='oidc'", [userId]);
+      await db
+        .delete(user_identities)
+        .where(and(eq(user_identities.user_id, userId), eq(user_identities.provider, 'oidc')));
     }
     return { ok: true };
   }
