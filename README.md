@@ -133,14 +133,26 @@ npm run dev --workspace=@worktime3/web     # vite, http://localhost:3001
 
 Keycloak realm `worktime` (see `infra/keycloak/realm-worktime.json`).
 
-## Email (non-prod)
+## Email
 
-`compose/docker-compose.local.yml` runs [Mailpit](https://github.com/axllent/mailpit):
-SMTP catcher on `localhost:1025`, inbox UI at http://localhost:8025.
-The API sends via `SMTP_HOST/SMTP_PORT/SMTP_FROM` (see `.env.example`;
-defaults point at the catcher). Sends are best-effort — a missing catcher
-never fails a request. Currently: welcome mail on `POST /api/v1/auth/register`,
-org-invite mail on `POST /api/v1/organizations/:id/invite`.
+The API sends mail via [nodemailer](https://nodemailer.com), configured from
+`SMTP_HOST/PORT/FROM/USER/PASSWORD/SECURE` (see `.env.example`). Sends are
+best-effort — a missing/misconfigured server never fails a request.
+
+- **`local` and `dev`** (non-prod): each runs its own
+  [Mailpit](https://github.com/axllent/mailpit) catcher — `local` on
+  `localhost:1025` / inbox UI `:8025`, `dev` on `:1026` / `:8026` (offset so
+  both can run at once) — and the `api` container's SMTP env vars already
+  point at it. No auth, nothing real is sent.
+- **`vps`/`azure`**: `SMTP_HOST` is unset by default (mail silently no-ops
+  until configured — nothing to do for a first deploy). Set
+  `SMTP_HOST/PORT/USER/PASSWORD` (+ `SMTP_SECURE=true` for an implicit-TLS
+  relay, typically port 465) as deploy secrets to send through a real relay;
+  nodemailer negotiates STARTTLS/AUTH itself, so any standard relay (SES,
+  SendGrid, Mailgun, etc.) works without code changes.
+
+Currently sent: welcome mail on `POST /api/v1/auth/register`, org-invite mail
+on `POST /api/v1/organizations/:id/invite`.
 Self-onboarding + password reset: `POST /api/v1/auth/onboard`, `POST /api/v1/auth/reset-password`.
 Azure link/unlink: `POST /api/v1/auth/azure/link`, `DELETE /api/v1/auth/azure/link/:userId`.
 

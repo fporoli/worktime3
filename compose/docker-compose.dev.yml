@@ -39,14 +39,31 @@ services:
     command: ["start-dev", "--import-realm"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+  mailpit:
+    image: axllent/mailpit
+    ports: ["1026:1025", "8026:8025"]
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
+      # intentional. Fine here — this catcher never leaves the compose network.
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
   api:
     build: { context: .., dockerfile: apps/api/Dockerfile }
     ports: ["8002:8000"]
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:-worktime_dev_only}@pg:5432/worktime
       API_PORT: 8000
+      # Local catcher by default (same as the `local` profile's Mailpit) — override
+      # SMTP_HOST/PORT/USER/PASSWORD/SECURE/FROM to point at a real relay instead.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-worktime@localhost}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
     depends_on:
       migrate: { condition: service_completed_successfully }
+      mailpit: { condition: service_started }
   web:
     build: { context: .., dockerfile: apps/web/Dockerfile }
     ports: ["3002:80"]

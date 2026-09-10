@@ -43,6 +43,14 @@ services:
     ports: ["8003:8000"]
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@pg:5432/worktime
+      # Real relay, optional: unset SMTP_HOST leaves mail sends failing silently
+      # (fire-and-forget, never breaks a request) until these are provided.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-worktime@localhost}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
     depends_on:
       migrate: { condition: service_completed_successfully }
   web:

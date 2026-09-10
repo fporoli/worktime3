@@ -36,6 +36,9 @@ services:
     ports: ["1025:1025", "8025:8025"]
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
+      # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
+      # intentional. Fine here — this catcher never leaves localhost, no real mail.
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
     ports: ["8091:8080"]

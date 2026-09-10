@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { createServer } from 'node:net';
-import { sendMail } from './mailer';
+import { sendMail, smtpConfig } from './mailer';
 
 /** Minimal fake SMTP catcher: records envelope + message, then accepts. */
 async function withFakeSmtp(fn: (port: number, seen: { mailFrom: string; rcptTo: string; data: string }) => Promise<void>) {
@@ -93,4 +93,32 @@ test('sendMail fails fast when nothing listens', async () => {
   await assert.rejects(() => sendMail({ to: 'a@b.c', subject: 'x', text: 'y' }, 1000));
   delete process.env.SMTP_HOST;
   delete process.env.SMTP_PORT;
+});
+
+test('smtpConfig has no auth/secure by default (local catcher), picks both up when set', () => {
+  const bare = smtpConfig();
+  assert.equal(bare.auth, undefined);
+  assert.equal(bare.secure, false);
+
+  process.env.SMTP_USER = 'relay-user';
+  process.env.SMTP_PASSWORD = 'relay-pass';
+  process.env.SMTP_SECURE = 'true';
+  try {
+    const configured = smtpConfig();
+    assert.deepEqual(configured.auth, { user: 'relay-user', pass: 'relay-pass' });
+    assert.equal(configured.secure, true);
+  } finally {
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASSWORD;
+    delete process.env.SMTP_SECURE;
+  }
+});
+
+test('smtpConfig requires both user and password — one alone does not enable auth', () => {
+  process.env.SMTP_USER = 'only-user';
+  try {
+    assert.equal(smtpConfig().auth, undefined);
+  } finally {
+    delete process.env.SMTP_USER;
+  }
 });
