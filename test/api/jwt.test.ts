@@ -2,14 +2,14 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { createSign, generateKeyPairSync, type KeyLike } from 'node:crypto';
 import { UnauthorizedException } from '@nestjs/common';
-import { JwtAuthGuard } from './jwt.guard';
+import { JwtAuthGuard } from '../../apps/api/src/jwt.guard';
 import {
   authenticateToken,
   LOCAL_ISSUER,
   mintLocalToken,
   verifyKeycloakJwt,
   verifyLocalToken,
-} from './jwt';
+} from '../../apps/api/src/jwt';
 
 process.env.JWT_ISSUER = 'http://kc-test/realms/worktime';
 process.env.JWT_AUDIENCE = 'worktime-web';

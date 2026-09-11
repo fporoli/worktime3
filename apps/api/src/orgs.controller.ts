@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { alias } from 'drizzle-orm/pg-core';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, canManageRole, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
@@ -28,6 +29,8 @@ export function buildInviteEmail(orgName: string, token: string): { subject: str
     text: `Hi,\n\nYou've been invited to join "${orgName}".\n\nAccept it here: ${link}\n\nOr paste this token on the Invited tab of the login screen: ${token}\n`,
   };
 }
+
+const managerUsers = alias(users, 'manager_users');
 
 const ORG_COLUMNS = {
   id: organizations.id,
@@ -92,11 +95,15 @@ export class OrgsController {
         status: organization_memberships.status,
         email: users.email,
         display_name: users.display_name,
+        manager_user_id: organization_memberships.manager_user_id,
+        manager_display_name: managerUsers.display_name,
+        settings: organization_memberships.settings,
         role_id: roles.id,
         role_name: roles.name,
       })
       .from(organization_memberships)
       .innerJoin(users, eq(users.id, organization_memberships.user_id))
+      .leftJoin(managerUsers, eq(managerUsers.id, organization_memberships.manager_user_id))
       .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
       .leftJoin(roles, eq(roles.id, membership_roles.role_id))
       .where(eq(organization_memberships.organization_id, id));
@@ -104,18 +111,81 @@ export class OrgsController {
     // A membership can hold several roles now — fold the joined rows back into one entry per member.
     const byMembership = new Map<
       string,
-      { id: string; user_id: string; status: string; email: string; display_name: string; role_ids: string[]; role_names: string[] }
+      {
+        id: string;
+        user_id: string;
+        status: string;
+        email: string;
+        display_name: string;
+        manager_user_id: string | null;
+        manager_display_name: string | null;
+        settings: unknown;
+        role_ids: string[];
+        role_names: string[];
+      }
     >();
     for (const row of rows) {
       let entry = byMembership.get(row.id);
       if (!entry) {
-        entry = { id: row.id, user_id: row.user_id, status: row.status, email: row.email, display_name: row.display_name, role_ids: [], role_names: [] };
+        entry = {
+          id: row.id,
+          user_id: row.user_id,
+          status: row.status,
+          email: row.email,
+          display_name: row.display_name,
+          manager_user_id: row.manager_user_id,
+          manager_display_name: row.manager_display_name,
+          settings: row.settings,
+          role_ids: [],
+          role_names: [],
+        };
         byMembership.set(row.id, entry);
       }
       if (row.role_id) entry.role_ids.push(row.role_id);
       if (row.role_name) entry.role_names.push(row.role_name);
     }
     return [...byMembership.values()];
+  }
+
+  /** Admin-only: (re)assign who a member's timesheet approvals route to, or stash free-form per-membership data. */
+  @Patch(':id/members/:membershipId')
+  async updateMember(
+    @Param('id') id: string,
+    @Param('membershipId') membershipId: string,
+    @Body() body: { managerUserId?: string | null; settings?: Record<string, unknown> },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unauthenticated' };
+    if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
+
+    const [membership] = await db
+      .select({ user_id: organization_memberships.user_id })
+      .from(organization_memberships)
+      .where(and(eq(organization_memberships.id, membershipId), eq(organization_memberships.organization_id, id)));
+    if (!membership) return { ok: false, error: 'membership-not-found' };
+
+    const patch: Partial<typeof organization_memberships.$inferInsert> = {};
+    if (body.managerUserId !== undefined) {
+      if (body.managerUserId === membership.user_id) return { ok: false, error: 'cannot-be-own-manager' };
+      if (body.managerUserId) {
+        const [managerMembership] = await db
+          .select({ id: organization_memberships.id })
+          .from(organization_memberships)
+          .where(and(eq(organization_memberships.organization_id, id), eq(organization_memberships.user_id, body.managerUserId)));
+        if (!managerMembership) return { ok: false, error: 'manager-not-a-member' };
+      }
+      patch.manager_user_id = body.managerUserId;
+    }
+    if (body.settings !== undefined) patch.settings = body.settings;
+    if (Object.keys(patch).length === 0) return { ok: true, noop: true };
+
+    patch.updated_at = new Date().toISOString();
+    await db.update(organization_memberships).set(patch).where(eq(organization_memberships.id, membershipId));
+    void this.audit.record(id, callerId, 'membership.update', 'membership', membershipId, patch).catch(() => {});
+    return { ok: true };
   }
 
   @Post(':id/members/:membershipId/roles')

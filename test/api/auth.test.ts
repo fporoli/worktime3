@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { isValidEmail, isValidPassword, slugBase } from './auth.controller';
+import { isValidEmail, isValidPassword, slugBase } from '../../apps/api/src/auth.controller';
 
 test('rejects malformed emails', () => {
   assert.equal(isValidEmail('admin@acme.example'), true);

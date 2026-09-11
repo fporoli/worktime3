@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { createServer } from 'node:net';
-import { sendMail, smtpConfig } from './mailer';
+import { sendMail, smtpConfig } from '../../apps/api/src/mailer';
 
 /** Minimal fake SMTP catcher: records envelope + message, then accepts. */
 async function withFakeSmtp(fn: (port: number, seen: { mailFrom: string; rcptTo: string; data: string }) => Promise<void>) {

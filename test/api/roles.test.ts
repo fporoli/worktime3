@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { isAssignableInviteRole } from './roles.controller';
+import { isAssignableInviteRole } from '../../apps/api/src/roles.controller';
 
 test('owner is reserved; every other system role is assignable via invite', () => {
   assert.equal(isAssignableInviteRole('owner'), false);

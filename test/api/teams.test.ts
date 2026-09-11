@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { RbacService } from './rbac.service';
-import { isOrgManagerOrAdmin, type Executor } from './access';
+import { RbacService } from '../../apps/api/src/rbac.service';
+import { isOrgManagerOrAdmin, type Executor } from '../../apps/api/src/access';
 
 test('manager and admin have teams:manage permission, user does not', () => {
   const rbac = new RbacService();
@@ -46,4 +46,3 @@ test('isOrgManagerOrAdmin allows owner, admin, and manager, rejects member/guest
   assert.equal(await isOrgManagerOrAdmin(fakeDb('guest'), 'org1', 'u1'), false);
   assert.equal(await isOrgManagerOrAdmin(fakeDb(null), 'org1', 'u1'), false);
 });
-

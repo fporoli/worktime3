@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_domains, organization_invitations, roles, organization_memberships, audit_logs, projects, subprojects, work_times, timesheet_periods, teams, role_permissions, permissions, team_members, membership_roles } from "./schema";
+import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, timesheet_periods, teams, organization_memberships, role_permissions, permissions, team_members, membership_roles } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -11,7 +11,6 @@ export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 export const usersRelations = relations(users, ({many}) => ({
 	user_identities: many(user_identities),
 	organization_invitations: many(organization_invitations),
-	organization_memberships: many(organization_memberships),
 	audit_logs: many(audit_logs),
 	projects: many(projects),
 	subprojects: many(subprojects),
@@ -24,6 +23,12 @@ export const usersRelations = relations(users, ({many}) => ({
 	}),
 	teams: many(teams),
 	organizations: many(organizations),
+	organization_memberships_user_id: many(organization_memberships, {
+		relationName: "organization_memberships_user_id_users_id"
+	}),
+	organization_memberships_manager_user_id: many(organization_memberships, {
+		relationName: "organization_memberships_manager_user_id_users_id"
+	}),
 	membership_roles: many(membership_roles),
 }));
 
@@ -37,7 +42,6 @@ export const organization_domainsRelations = relations(organization_domains, ({o
 export const organizationsRelations = relations(organizations, ({one, many}) => ({
 	organization_domains: many(organization_domains),
 	organization_invitations: many(organization_invitations),
-	organization_memberships: many(organization_memberships),
 	audit_logs: many(audit_logs),
 	roles: many(roles),
 	projects: many(projects),
@@ -57,6 +61,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 		fields: [organizations.created_by_user_id],
 		references: [users.id]
 	}),
+	organization_memberships: many(organization_memberships),
 }));
 
 export const organization_invitationsRelations = relations(organization_invitations, ({one}) => ({
@@ -81,19 +86,6 @@ export const rolesRelations = relations(roles, ({one, many}) => ({
 		references: [organizations.id]
 	}),
 	role_permissions: many(role_permissions),
-	team_members: many(team_members),
-	membership_roles: many(membership_roles),
-}));
-
-export const organization_membershipsRelations = relations(organization_memberships, ({one, many}) => ({
-	organization: one(organizations, {
-		fields: [organization_memberships.organization_id],
-		references: [organizations.id]
-	}),
-	user: one(users, {
-		fields: [organization_memberships.user_id],
-		references: [users.id]
-	}),
 	team_members: many(team_members),
 	membership_roles: many(membership_roles),
 }));
@@ -184,6 +176,25 @@ export const teamsRelations = relations(teams, ({one, many}) => ({
 		references: [users.id]
 	}),
 	team_members: many(team_members),
+}));
+
+export const organization_membershipsRelations = relations(organization_memberships, ({one, many}) => ({
+	organization: one(organizations, {
+		fields: [organization_memberships.organization_id],
+		references: [organizations.id]
+	}),
+	user_user_id: one(users, {
+		fields: [organization_memberships.user_id],
+		references: [users.id],
+		relationName: "organization_memberships_user_id_users_id"
+	}),
+	user_manager_user_id: one(users, {
+		fields: [organization_memberships.manager_user_id],
+		references: [users.id],
+		relationName: "organization_memberships_manager_user_id_users_id"
+	}),
+	team_members: many(team_members),
+	membership_roles: many(membership_roles),
 }));
 
 export const role_permissionsRelations = relations(role_permissions, ({one}) => ({

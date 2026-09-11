@@ -667,7 +667,7 @@ export default function App() {
             <Approvals orgId={orgId} role={role} authHeaders={authHeaders} />
           )}
           {section === 'users' && canManage && orgId && (
-            <Users orgId={orgId} authHeaders={authHeaders} />
+            <Users orgId={orgId} role={role} authHeaders={authHeaders} />
           )}
           {section === 'audit' && role === 'admin' && orgId && (
             <AuditLog orgId={orgId} authHeaders={authHeaders} />

@@ -89,7 +89,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
         setError(data.error === 'already-submitted' ? 'This month was already submitted.' : `Failed to submit (${data.error ?? 'unknown error'}).`);
         return;
       }
-      setSuccess('Submitted for approval.');
+      setSuccess(data.autoApproved ? 'Approved — you have no manager on record, so no review is needed.' : 'Submitted for approval.');
       await reload();
     } catch {
       setError('Failed to submit. Is the API running?');

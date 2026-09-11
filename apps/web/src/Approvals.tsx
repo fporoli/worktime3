@@ -115,7 +115,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     <Paper sx={{ p: 2 }}>
       <Typography variant="h6">Timesheet Approvals</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Review monthly timesheets submitted by your organization's members.
+        {role === 'admin'
+          ? "Review monthly timesheets submitted by your organization's members."
+          : 'Review monthly timesheets submitted by your direct reports.'}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
-import { and, desc, eq, getTableColumns, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
+import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { timesheet_periods, users } from './db/schema';
 import { AuditService } from './audit.service';
@@ -36,13 +36,17 @@ export class TimesheetsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return [];
 
-    const isManager = await isOrgManagerOrAdmin(db, orgId, callerId);
-    // Non-managers only ever see their own periods; managers can see anyone's (e.g. ?status=submitted for a queue).
-    const targetUserId = userId ?? (isManager ? undefined : callerId);
-    if (targetUserId && targetUserId !== callerId && !isManager) return [];
-
+    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     const conditions: SQL[] = [eq(timesheet_periods.organization_id, orgId)];
-    if (targetUserId) conditions.push(eq(timesheet_periods.user_id, targetUserId));
+    if (userId) {
+      // Someone else's periods: admins can view anyone's; everyone else only that person's own manager.
+      if (userId !== callerId && !isAdmin && !(await isManagerOf(db, orgId, callerId, userId))) return [];
+      conditions.push(eq(timesheet_periods.user_id, userId));
+    } else if (!isAdmin) {
+      // No target given: your own periods, plus your direct reports' (e.g. ?status=submitted for an approval queue).
+      const reportIds = await directReportUserIds(db, orgId, callerId);
+      conditions.push(inArray(timesheet_periods.user_id, [callerId, ...reportIds]));
+    }
     if (status && (STATUSES as readonly string[]).includes(status)) {
       conditions.push(eq(timesheet_periods.status, status as Status));
     }
@@ -89,13 +93,21 @@ export class TimesheetsController {
     }
 
     const now = new Date().toISOString();
+    // No manager on record ("top of the chain") — nobody to route the request to, so it's approved on submit.
+    const autoApproved = !(await membershipManagerId(db, orgId, callerId));
+    const reviewFields = autoApproved
+      ? { status: 'approved' as const, reviewed_by_user_id: callerId, reviewed_at: now }
+      : { status: 'submitted' as const, reviewed_by_user_id: null, reviewed_at: null };
+
     if (existing) {
       await db
         .update(timesheet_periods)
-        .set({ status: 'submitted', submitted_at: now, reviewed_by_user_id: null, reviewed_at: null, review_note: null, updated_at: now })
+        .set({ ...reviewFields, submitted_at: now, review_note: null, updated_at: now })
         .where(eq(timesheet_periods.id, existing.id));
-      void this.audit.record(orgId, callerId, 'timesheet.submit', 'timesheet_period', existing.id, { periodStart }).catch(() => {});
-      return { ok: true, id: existing.id };
+      void this.audit
+        .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', existing.id, { periodStart })
+        .catch(() => {});
+      return { ok: true, id: existing.id, autoApproved };
     }
     const [created] = await db
       .insert(timesheet_periods)
@@ -104,12 +116,14 @@ export class TimesheetsController {
         user_id: callerId,
         period_start: periodStart,
         period_end: nextMonthStart(periodStart),
-        status: 'submitted',
+        ...reviewFields,
         submitted_at: now,
       })
       .returning({ id: timesheet_periods.id });
-    void this.audit.record(orgId, callerId, 'timesheet.submit', 'timesheet_period', created.id, { periodStart }).catch(() => {});
-    return { ok: true, id: created.id };
+    void this.audit
+      .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', created.id, { periodStart })
+      .catch(() => {});
+    return { ok: true, id: created.id, autoApproved };
   }
 
   @Post('timesheet-periods/:id/approve')
@@ -131,13 +145,17 @@ export class TimesheetsController {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status })
+      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
       .from(timesheet_periods)
       .where(eq(timesheet_periods.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, period.organization_id, callerId))) return { ok: false, error: 'forbidden' };
+    // Only that person's own manager may review their period — an org admin may always override.
+    const isAdmin = await isOrgAdmin(db, period.organization_id, callerId);
+    if (!isAdmin && !(await isManagerOf(db, period.organization_id, callerId, period.user_id))) {
+      return { ok: false, error: 'forbidden' };
+    }
     if (period.status !== 'submitted') return { ok: false, error: 'not-submitted' };
     await db
       .update(timesheet_periods)

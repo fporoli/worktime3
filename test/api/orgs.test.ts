@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { buildInviteEmail } from './orgs.controller';
+import { buildInviteEmail } from '../../apps/api/src/orgs.controller';
 import {
   callerUserId,
   canManageRole,
@@ -10,7 +10,7 @@ import {
   isPeriodLocked,
   pickPrimaryRole,
   type Executor,
-} from './access';
+} from '../../apps/api/src/access';
 
 function fakeDb(rows: Array<Record<string, unknown>>): Executor {
   return {

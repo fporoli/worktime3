@@ -97,6 +97,27 @@ export async function canManageRole(
   return rows.rows.length > 0;
 }
 
+/** The `manager_user_id` on `userId`'s membership in this org, or null if they have none (top of their chain). */
+export async function membershipManagerId(db: Executor, organizationId: string, userId: string): Promise<string | null> {
+  const rows = await db.execute(
+    sql`SELECT manager_user_id FROM organization_memberships WHERE organization_id = ${organizationId} AND user_id = ${userId} LIMIT 1`,
+  );
+  return (rows.rows[0]?.manager_user_id as string | null) ?? null;
+}
+
+/** True when `managerId` is the org's designated manager for `targetUserId` — i.e. approvals for them route to `managerId`. */
+export async function isManagerOf(db: Executor, organizationId: string, managerId: string, targetUserId: string): Promise<boolean> {
+  return (await membershipManagerId(db, organizationId, targetUserId)) === managerId;
+}
+
+/** user_ids whose membership in this org names `managerId` as their manager — i.e. `managerId`'s direct reports. */
+export async function directReportUserIds(db: Executor, organizationId: string, managerId: string): Promise<string[]> {
+  const rows = await db.execute(
+    sql`SELECT user_id FROM organization_memberships WHERE organization_id = ${organizationId} AND manager_user_id = ${managerId}`,
+  );
+  return rows.rows.map((r: Record<string, unknown>) => r.user_id as string);
+}
+
 /**
  * True when the caller may onboard/offboard members on this specific team:
  * an org owner/admin always may, and a team's designated lead may for their

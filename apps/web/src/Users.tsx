@@ -15,6 +15,9 @@ interface Member {
   status: string;
   email: string;
   display_name: string;
+  /** Who this member's timesheet approvals route to; null means they don't need approval (e.g. an owner). */
+  manager_user_id: string | null;
+  manager_display_name: string | null;
   /** A membership can hold more than one role. */
   role_ids: string[];
   role_names: string[];
@@ -22,6 +25,7 @@ interface Member {
 
 interface UsersProps {
   orgId: string;
+  role: 'admin' | 'manager' | 'user';
   authHeaders: () => Promise<Record<string, string>>;
 }
 
@@ -31,7 +35,7 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
   suspended: 'error',
 };
 
-export default function Users({ orgId, authHeaders }: UsersProps) {
+export default function Users({ orgId, role, authHeaders }: UsersProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [addRoleFor, setAddRoleFor] = useState<Record<string, string>>({});
@@ -85,6 +89,29 @@ export default function Users({ orgId, authHeaders }: UsersProps) {
     }
   }
 
+  async function setManager(membershipId: string, managerUserId: string) {
+    setError(null);
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/members/${membershipId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ managerUserId: managerUserId || null }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const message =
+          data.error === 'cannot-be-own-manager'
+            ? "A member can't be their own manager."
+            : `Could not set the manager (${data.error ?? 'unknown error'}).`;
+        setError(message);
+        return;
+      }
+      await reloadMembers();
+    } catch {
+      setError('Could not reach the API.');
+    }
+  }
+
   async function revokeRole(membershipId: string, roleId: string) {
     setError(null);
     try {
@@ -107,8 +134,9 @@ export default function Users({ orgId, authHeaders }: UsersProps) {
     <Paper sx={{ p: 2 }}>
       <Typography variant="h6">Users</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Everyone in this organization, with their status and roles. Add or remove roles inline — to invite
-        someone new, use the Invitations page.
+        Everyone in this organization, with their status, roles, and default approval manager — leave a
+        member's manager blank if they're the top of their chain and don't need their timesheets approved.
+        Add or remove roles inline — to invite someone new, use the Invitations page.
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -120,6 +148,7 @@ export default function Users({ orgId, authHeaders }: UsersProps) {
             <TableCell>Name</TableCell>
             <TableCell>Email</TableCell>
             <TableCell>Status</TableCell>
+            <TableCell>Manager</TableCell>
             <TableCell>Roles</TableCell>
             <TableCell>Add role</TableCell>
           </TableRow>
@@ -133,6 +162,24 @@ export default function Users({ orgId, authHeaders }: UsersProps) {
                 <TableCell>{m.email}</TableCell>
                 <TableCell>
                   <Chip label={m.status} size="small" color={STATUS_COLOR[m.status] ?? 'default'} />
+                </TableCell>
+                <TableCell>
+                  {role === 'admin' ? (
+                    <TextField
+                      select
+                      size="small"
+                      value={m.manager_user_id ?? ''}
+                      onChange={(e) => setManager(m.id, e.target.value)}
+                      sx={{ minWidth: 160 }}
+                    >
+                      <MenuItem value=""><em>None (top of chain)</em></MenuItem>
+                      {members.filter((o) => o.id !== m.id).map((o) => (
+                        <MenuItem key={o.user_id} value={o.user_id}>{o.display_name}</MenuItem>
+                      ))}
+                    </TextField>
+                  ) : (
+                    m.manager_display_name ?? '—'
+                  )}
                 </TableCell>
                 <TableCell>
                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
@@ -166,7 +213,7 @@ export default function Users({ orgId, authHeaders }: UsersProps) {
             );
           })}
           {members.length === 0 && !loading && (
-            <TableRow><TableCell colSpan={5}>No members yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={6}>No members yet.</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

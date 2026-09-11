@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-// RBAC matrix mirrored from src/rbac.service.ts (pure check, no Nest boot).
+// RBAC matrix mirrored from apps/api/src/rbac.service.ts (pure check, no Nest boot).
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   admin: ['org:admin', 'members:manage', 'teams:manage', 'sso:configure', 'audit:read', 'data:read', 'data:write', 'projects:manage', 'worktime:approve'],
   manager: ['members:manage', 'teams:manage', 'data:read', 'data:write', 'projects:manage'],

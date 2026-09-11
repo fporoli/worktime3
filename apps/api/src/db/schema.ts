@@ -118,33 +118,6 @@ export const databasechangeloglock = pgTable("databasechangeloglock", {
 	lockedby: varchar({ length: 255 }),
 });
 
-export const organization_memberships = pgTable("organization_memberships", {
-	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
-	organization_id: uuid().notNull(),
-	user_id: uuid().notNull(),
-	status: membership_status().default('active').notNull(),
-	scim_external_id: varchar({ length: 255 }),
-	joined_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	is_active: boolean().default(true).notNull(),
-}, (table) => [
-	index("idx_memberships_org").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops")),
-	index("idx_memberships_scim").using("btree", table.scim_external_id.asc().nullsLast().op("text_ops")),
-	index("idx_memberships_user").using("btree", table.user_id.asc().nullsLast().op("uuid_ops")),
-	foreignKey({
-			columns: [table.organization_id],
-			foreignColumns: [organizations.id],
-			name: "organization_memberships_organization_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.user_id],
-			foreignColumns: [users.id],
-			name: "organization_memberships_user_id_fkey"
-		}).onDelete("cascade"),
-	unique("uq_org_user_membership").on(table.organization_id, table.user_id),
-]);
-
 export const audit_logs = pgTable("audit_logs", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	organization_id: uuid().notNull(),
@@ -396,6 +369,40 @@ export const organizations = pgTable("organizations", {
 			name: "organizations_created_by_user_id_fkey"
 		}),
 	unique("organizations_slug_key").on(table.slug),
+]);
+
+export const organization_memberships = pgTable("organization_memberships", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	user_id: uuid().notNull(),
+	status: membership_status().default('active').notNull(),
+	scim_external_id: varchar({ length: 255 }),
+	joined_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	is_active: boolean().default(true).notNull(),
+	manager_user_id: uuid(),
+	settings: jsonb().default({}).notNull(),
+}, (table) => [
+	index("idx_memberships_org").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops")),
+	index("idx_memberships_scim").using("btree", table.scim_external_id.asc().nullsLast().op("text_ops")),
+	index("idx_memberships_user").using("btree", table.user_id.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "organization_memberships_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "organization_memberships_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.manager_user_id],
+			foreignColumns: [users.id],
+			name: "organization_memberships_manager_user_id_fkey"
+		}).onDelete("set null"),
+	unique("uq_org_user_membership").on(table.organization_id, table.user_id),
 ]);
 
 export const role_permissions = pgTable("role_permissions", {
