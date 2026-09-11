@@ -54,7 +54,7 @@ export default function Assistant({ orgId, authHeaders }: AssistantProps) {
   }
 
   return (
-    <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '70vh' }}>
+    <Paper square elevation={0} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%', borderLeft: 1, borderColor: 'divider' }}>
       <Typography variant="h6">Assistant</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Ask to log hours ("log 9-5 on Website Relaunch yesterday"), or ask for a report — managers and

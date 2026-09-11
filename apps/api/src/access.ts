@@ -14,10 +14,25 @@ export async function callerUserId(db: Executor, principal: AuthenticatedPrincip
   return (found.rows[0]?.user_id as string) ?? null;
 }
 
+/** Highest privilege first — used to pick a single "display" role out of a membership's role set. */
+const ROLE_PRIORITY = ['owner', 'admin', 'manager', 'member', 'guest'];
+
+/** Reduce a set of role names (one membership can hold several) to the single highest-privilege one. */
+export function pickPrimaryRole(names: string[]): string | null {
+  if (names.length === 0) return null;
+  return [...names].sort((a, b) => {
+    const ai = ROLE_PRIORITY.indexOf(a);
+    const bi = ROLE_PRIORITY.indexOf(b);
+    return (ai === -1 ? ROLE_PRIORITY.length : ai) - (bi === -1 ? ROLE_PRIORITY.length : bi);
+  })[0];
+}
+
+/** All of a user's active role names in an organization — a membership can now hold more than one. */
 async function activeRoleNames(db: Executor, organizationId: string, userId: string): Promise<string[]> {
   const rows = await db.execute(
     sql`SELECT r.name FROM organization_memberships m
-        JOIN roles r ON r.id = m.role_id
+        JOIN membership_roles mr ON mr.membership_id = m.id
+        JOIN roles r ON r.id = mr.role_id
         WHERE m.organization_id = ${organizationId} AND m.user_id = ${userId} AND m.status = 'active'`,
   );
   return rows.rows.map((r: Record<string, unknown>) => r.name as string);
@@ -39,7 +54,8 @@ export async function isOrgAdmin(db: Executor, organizationId: string, userId: s
 export async function isAnyOrgAdmin(db: Executor, userId: string): Promise<boolean> {
   const rows = await db.execute(
     sql`SELECT r.name FROM organization_memberships m
-        JOIN roles r ON r.id = m.role_id
+        JOIN membership_roles mr ON mr.membership_id = m.id
+        JOIN roles r ON r.id = mr.role_id
         WHERE m.user_id = ${userId} AND m.status = 'active'`,
   );
   return rows.rows.some((r: Record<string, unknown>) => r.name === 'owner' || r.name === 'admin');
@@ -51,10 +67,34 @@ export async function isOrgManagerOrAdmin(db: Executor, organizationId: string, 
   return names.includes('owner') || names.includes('admin') || names.includes('manager');
 }
 
-/** Get the caller's active role name in the given organization. */
+/**
+ * The caller's single highest-privilege role name in the organization — a
+ * membership can hold several roles at once, so this collapses them to the
+ * one existing single-role permission checks (e.g. `role === 'manager'`)
+ * still expect. Custom roles outside the known ladder sort after it.
+ */
 export async function userOrgRole(db: Executor, organizationId: string, userId: string): Promise<string | null> {
   const names = await activeRoleNames(db, organizationId, userId);
-  return names[0] ?? null;
+  return pickPrimaryRole(names);
+}
+
+/**
+ * True when the caller may grant or revoke `roleId` for other members: an
+ * org owner/admin can always manage any role, and a role can additionally
+ * name its own admins via `roles.admin_user_ids` — e.g. so a "billing-admin"
+ * role can be handed out without making someone a full org admin.
+ */
+export async function canManageRole(
+  db: Executor,
+  organizationId: string,
+  callerId: string,
+  roleId: string,
+): Promise<boolean> {
+  if (await isOrgAdmin(db, organizationId, callerId)) return true;
+  const rows = await db.execute(
+    sql`SELECT 1 FROM roles WHERE id = ${roleId} AND ${callerId} = ANY(admin_user_ids) LIMIT 1`,
+  );
+  return rows.rows.length > 0;
 }
 
 /**

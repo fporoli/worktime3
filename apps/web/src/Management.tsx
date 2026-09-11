@@ -8,6 +8,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  LinearProgress,
   MenuItem,
   Paper,
   Tab,
@@ -21,14 +22,15 @@ import {
   Typography,
 } from '@mui/material';
 import type { Session } from './Login';
-import TeamHours from './TeamHours';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 export interface OrgMember {
   id: string; // membership_id
   user_id: string;
-  role_id: string;
+  /** A membership can hold more than one role. */
+  role_ids: string[];
+  role_names: string[];
   status: string;
   email: string;
   display_name: string;
@@ -89,15 +91,16 @@ interface ManagementProps {
 }
 
 export default function Management({ session, orgId, role, authHeaders, onDataChanged }: ManagementProps) {
-  const [tab, setTab] = useState<'teams' | 'projects' | 'hours'>('teams');
+  const [tab, setTab] = useState<'teams' | 'projects'>('teams');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Org members for assignments
   const [members, setMembers] = useState<OrgMember[]>([
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-111111111111', user_id: '11111111-1111-1111-1111-111111111111', role_id: '00000000-0000-0000-0000-000000000002', status: 'active', email: 'admin@acme.example', display_name: 'Acme Admin' },
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-222222222222', user_id: '22222222-2222-2222-2222-222222222222', role_id: '00000000-0000-0000-0000-000000000006', status: 'active', email: 'manager@acme.example', display_name: 'Marta Manager' },
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333', user_id: '33333333-3333-3333-3333-333333333333', role_id: '00000000-0000-0000-0000-000000000003', status: 'active', email: 'user@acme.example', display_name: 'Uli User' },
+    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-111111111111', user_id: '11111111-1111-1111-1111-111111111111', role_ids: ['00000000-0000-0000-0000-000000000002'], role_names: ['admin'], status: 'active', email: 'admin@acme.example', display_name: 'Acme Admin' },
+    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-222222222222', user_id: '22222222-2222-2222-2222-222222222222', role_ids: ['00000000-0000-0000-0000-000000000006'], role_names: ['manager'], status: 'active', email: 'manager@acme.example', display_name: 'Marta Manager' },
+    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333', user_id: '33333333-3333-3333-3333-333333333333', role_ids: ['00000000-0000-0000-0000-000000000003'], role_names: ['member'], status: 'active', email: 'user@acme.example', display_name: 'Uli User' },
   ]);
 
   // --- TEAMS STATE ---
@@ -202,9 +205,8 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   }
 
   useEffect(() => {
-    reloadMembers();
-    reloadTeams();
-    reloadProjects();
+    setLoading(true);
+    Promise.all([reloadMembers(), reloadTeams(), reloadProjects()]).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -610,11 +612,11 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tab value="teams" label={`Teams (${teams.length})`} />
         <Tab value="projects" label={`Projects & Subprojects (${projects.length})`} />
-        <Tab value="hours" label="Team Hours" />
       </Tabs>
 
       {/* ========================================================================= */}
@@ -820,11 +822,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           })()}
         </Box>
       )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: TEAM HOURS                                                         */}
-      {/* ========================================================================= */}
-      {tab === 'hours' && <TeamHours orgId={orgId} authHeaders={authHeaders} />}
 
       {/* ========================================================================= */}
       {/* DIALOG: CREATE / EDIT TEAM                                                */}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -26,6 +26,21 @@ function currentPeriodStart(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
+/** 'YYYY-MM-01' <-> the 'YYYY-MM' shape a month input wants. */
+function toMonthInput(periodStart: string): string {
+  return periodStart.slice(0, 7);
+}
+
+function fromMonthInput(month: string): string {
+  return `${month}-01`;
+}
+
+function shiftMonth(periodStart: string, delta: number): string {
+  const [y, m] = periodStart.split('-').map(Number);
+  const date = new Date(y, m - 1 + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 interface TimesheetProps {
   orgId: string;
   userId: string;
@@ -36,16 +51,20 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const period = currentPeriodStart();
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState(currentPeriodStart());
 
   async function reload() {
+    setLoading(true);
     try {
       const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods?userId=${userId}`, {
         headers: await authHeaders(),
       });
       const data = await res.json();
       if (Array.isArray(data)) setPeriods(data);
-    } catch { /* offline fallback */ }
+    } catch { /* offline fallback */ } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -83,7 +102,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="h6">Monthly Timesheet</Typography>
         <Chip label={status} color={STATUS_COLOR[status]} size="small" />
       </Box>
@@ -93,9 +112,24 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       {status === 'rejected' && current?.review_note && (
         <Alert severity="warning" sx={{ mt: 1 }}>Rejected: {current.review_note}</Alert>
       )}
+      {loading && <LinearProgress sx={{ mt: 1 }} />}
+
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 2, mb: 1, flexWrap: 'wrap' }}>
+        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, -1))}>‹ Prev</Button>
+        <TextField
+          type="month"
+          size="small"
+          value={toMonthInput(period)}
+          onChange={(e) => e.target.value && setPeriod(fromMonthInput(e.target.value))}
+        />
+        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, 1))}>Next ›</Button>
+        {period !== currentPeriodStart() && (
+          <Button size="small" onClick={() => setPeriod(currentPeriodStart())}>This month</Button>
+        )}
+      </Box>
 
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
-        Current period: {period.slice(0, 7)}. Submit once your hours for the month are complete — a
+        Viewing {period.slice(0, 7)}. Submit once your hours for the month are complete — a
         manager will need to approve it, and the month locks against further edits while submitted or approved.
       </Typography>
 

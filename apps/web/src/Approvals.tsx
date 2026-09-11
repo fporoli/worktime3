@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  LinearProgress,
   Paper,
   Table,
   TableBody,
@@ -36,8 +37,10 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [success, setSuccess] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(true);
 
   async function reload() {
+    setLoading(true);
     try {
       const [pRes, aRes] = await Promise.all([
         fetch(`${API}/organizations/${orgId}/timesheet-periods?status=submitted`, { headers: await authHeaders() }),
@@ -47,7 +50,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       const a = await aRes.json();
       if (Array.isArray(p)) setPending(p);
       if (Array.isArray(a)) setApproved(a);
-    } catch { /* offline fallback */ }
+    } catch { /* offline fallback */ } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -115,6 +120,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       <Typography variant="subtitle1" sx={{ mb: 1 }}>Pending ({pending.length})</Typography>
       <Table size="small" sx={{ mb: 3 }}>

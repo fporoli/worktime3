@@ -1,11 +1,28 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { buildInviteEmail } from './orgs.controller';
-import { callerUserId, isAnyOrgAdmin, isOrgAdmin, isOrgMember, isPeriodLocked, type Executor } from './access';
+import {
+  callerUserId,
+  canManageRole,
+  isAnyOrgAdmin,
+  isOrgAdmin,
+  isOrgMember,
+  isPeriodLocked,
+  pickPrimaryRole,
+  type Executor,
+} from './access';
 
 function fakeDb(rows: Array<Record<string, unknown>>): Executor {
   return {
     execute: (async () => ({ rows })) as unknown as Executor['execute'],
+  };
+}
+
+/** A fake whose `execute` returns a different canned result on each successive call, in order. */
+function sequencedDb(responses: Array<Array<Record<string, unknown>>>): Executor {
+  let call = 0;
+  return {
+    execute: (async () => ({ rows: responses[Math.min(call++, responses.length - 1)] ?? [] })) as unknown as Executor['execute'],
   };
 }
 
@@ -44,6 +61,26 @@ test('isOrgMember is true for any active role, false with no membership at all',
   assert.equal(await isOrgMember(fakeDb([{ name: 'guest' }]), 'org', 'u'), true);
   assert.equal(await isOrgMember(fakeDb([{ name: 'admin' }]), 'org', 'u'), true);
   assert.equal(await isOrgMember(fakeDb([]), 'org', 'u'), false);
+});
+
+test('pickPrimaryRole collapses a multi-role set to the highest privilege one', () => {
+  assert.equal(pickPrimaryRole(['member', 'admin']), 'admin');
+  assert.equal(pickPrimaryRole(['manager', 'owner']), 'owner');
+  assert.equal(pickPrimaryRole(['member', 'manager']), 'manager');
+  assert.equal(pickPrimaryRole(['billing_admin']), 'billing_admin');
+  assert.equal(pickPrimaryRole([]), null);
+});
+
+test('canManageRole: an org admin may manage any role, regardless of admin_user_ids', async () => {
+  assert.equal(await canManageRole(fakeDb([{ name: 'admin' }]), 'org', 'u1', 'role-1'), true);
+});
+
+test('canManageRole: a non-admin is allowed only when listed in that role\'s admin_user_ids', async () => {
+  const isRoleAdmin = sequencedDb([[{ name: 'member' }], [{ '?column?': 1 }]]);
+  assert.equal(await canManageRole(isRoleAdmin, 'org', 'u1', 'role-1'), true);
+
+  const isNotRoleAdmin = sequencedDb([[{ name: 'member' }], []]);
+  assert.equal(await canManageRole(isNotRoleAdmin, 'org', 'u1', 'role-1'), false);
 });
 
 test('isPeriodLocked reflects whether a matching submitted/approved period row was found', async () => {

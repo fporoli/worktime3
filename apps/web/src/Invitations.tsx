@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Chip,
+  LinearProgress,
   MenuItem,
   Paper,
   Table,
@@ -52,6 +53,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function reloadRoles() {
     try {
@@ -73,8 +75,8 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   }
 
   useEffect(() => {
-    reloadRoles();
-    reloadInvitations();
+    setLoading(true);
+    Promise.all([reloadRoles(), reloadInvitations()]).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -113,6 +115,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   }
 
   async function handleRevoke(invitationId: string) {
+    if (!window.confirm('Revoke this invitation? The invite link will stop working.')) return;
     setError(null);
     try {
       await fetch(`${API}/organizations/invitations/${invitationId}`, { method: 'DELETE', headers: await authHeaders() });
@@ -165,6 +168,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
       </Box>
 
       <Typography variant="subtitle2" sx={{ mb: 1 }}>Sent invitations ({invitations.length})</Typography>
+      {loading && <LinearProgress sx={{ mb: 1 }} />}
       <Table size="small">
         <TableHead>
           <TableRow>

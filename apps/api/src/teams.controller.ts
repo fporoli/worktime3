@@ -157,7 +157,6 @@ export class TeamsController {
     @Req() req: AuthenticatedRequest,
     @Query('from') from?: string,
     @Query('to') to?: string,
-    @Query('withCost') withCost?: string,
   ) {
     const db = this.db.getDb();
     if (!db) return { members: [], entries: [] };
@@ -186,27 +185,11 @@ export class TeamsController {
     if (from) conditions.push(gte(work_times.start_time, from));
     if (to) conditions.push(lt(work_times.start_time, to));
 
-    const includeCost = withCost === 'true';
     const entries = await db
       .select({
         ...getTableColumns(work_times),
         project_name: projects.name,
         subproject_name: subprojects.name,
-        // Rate active on the entry's own date, not today's — a plain per-row column, not a joined
-        // aggregate, so the frontend does the cost = hours * rate math itself (same place it already
-        // computes minutes from start/end via aggregate.ts's `minutes()`).
-        ...(includeCost
-          ? {
-              hourly_rate: sql<string | null>`(
-                SELECT mr.hourly_rate FROM member_rates mr
-                WHERE mr.organization_id = ${team.organization_id}
-                  AND mr.user_id = ${work_times.user_id}
-                  AND mr.effective_from <= ${work_times.start_time}::date
-                  AND (mr.effective_to IS NULL OR mr.effective_to > ${work_times.start_time}::date)
-                LIMIT 1
-              )`.as('hourly_rate'),
-            }
-          : {}),
       })
       .from(work_times)
       .leftJoin(projects, eq(projects.id, work_times.project_id))

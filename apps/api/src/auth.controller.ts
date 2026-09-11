@@ -5,7 +5,8 @@ import { Public, type AuthenticatedRequest } from './jwt.guard';
 import { mintLocalToken } from './jwt';
 import { sendMail } from './mailer';
 import * as bcrypt from 'bcryptjs';
-import { users, user_identities, organizations, organization_memberships, organization_invitations, roles } from './db/schema';
+import { users, user_identities, organizations, organization_memberships, organization_invitations, roles, membership_roles } from './db/schema';
+import { pickPrimaryRole } from './access';
 
 /**
  * Auth: Keycloak is the IdP (same Postgres DB, `auth` schema).
@@ -41,7 +42,10 @@ interface SessionMembership {
   organizationId: string;
   slug: string;
   name: string;
+  /** Highest-privilege role, for the existing single-role UI gates. */
   role: string;
+  /** Every role this membership currently holds — a membership can carry more than one. */
+  roles: string[];
   status: string;
 }
 
@@ -55,19 +59,34 @@ interface Session {
 }
 
 async function membershipsOf(db: Db, userId: string): Promise<SessionMembership[]> {
-  return db
+  const rows = await db
     .select({
       organizationId: organization_memberships.organization_id,
       slug: organizations.slug,
       name: organizations.name,
-      role: roles.name,
       status: organization_memberships.status,
+      roleName: roles.name,
     })
     .from(organization_memberships)
     .innerJoin(organizations, eq(organizations.id, organization_memberships.organization_id))
-    .innerJoin(roles, eq(roles.id, organization_memberships.role_id))
+    .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
+    .leftJoin(roles, eq(roles.id, membership_roles.role_id))
     .where(eq(organization_memberships.user_id, userId))
     .orderBy(asc(organizations.slug));
+
+  const byOrg = new Map<string, SessionMembership>();
+  for (const row of rows) {
+    let entry = byOrg.get(row.organizationId);
+    if (!entry) {
+      entry = { organizationId: row.organizationId, slug: row.slug, name: row.name, role: '', roles: [], status: row.status };
+      byOrg.set(row.organizationId, entry);
+    }
+    if (row.roleName) entry.roles.push(row.roleName);
+  }
+  for (const entry of byOrg.values()) {
+    entry.role = pickPrimaryRole(entry.roles) ?? 'member';
+  }
+  return [...byOrg.values()];
 }
 
 @Controller('auth')
@@ -126,9 +145,11 @@ export class AuthController {
       .insert(organizations)
       .values({ slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: userId })
       .returning({ id: organizations.id });
-    await db
+    const [membership] = await db
       .insert(organization_memberships)
-      .values({ organization_id: org.id, user_id: userId, role_id: OWNER_ROLE_ID, status: 'active' });
+      .values({ organization_id: org.id, user_id: userId, status: 'active' })
+      .returning({ id: organization_memberships.id });
+    await db.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
     const session: Session = {
       userId,
       email: user.email,
@@ -248,13 +269,18 @@ export class AuthController {
         target: [user_identities.provider, user_identities.provider_user_id],
         set: { password_hash: passwordHash },
       });
-    await db
+    const [membership] = await db
       .insert(organization_memberships)
-      .values({ organization_id: invitation.organization_id, user_id: userId, role_id: invitation.role_id, status: 'active' })
+      .values({ organization_id: invitation.organization_id, user_id: userId, status: 'active' })
       .onConflictDoUpdate({
         target: [organization_memberships.organization_id, organization_memberships.user_id],
-        set: { role_id: invitation.role_id, status: 'active' },
-      });
+        set: { status: 'active' },
+      })
+      .returning({ id: organization_memberships.id });
+    await db
+      .insert(membership_roles)
+      .values({ membership_id: membership.id, role_id: invitation.role_id })
+      .onConflictDoNothing();
     await db.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
     const session: Session = {
       userId,

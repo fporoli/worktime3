@@ -4,6 +4,7 @@ import { DbService } from './db.service';
 import { callerUserId, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { timesheet_periods, users } from './db/schema';
+import { AuditService } from './audit.service';
 
 const STATUSES = ['open', 'submitted', 'approved', 'rejected'] as const;
 type Status = (typeof STATUSES)[number];
@@ -18,7 +19,10 @@ export function nextMonthStart(periodStart: string): string {
 
 @Controller()
 export class TimesheetsController {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get('organizations/:orgId/timesheet-periods')
   async list(
@@ -90,6 +94,7 @@ export class TimesheetsController {
         .update(timesheet_periods)
         .set({ status: 'submitted', submitted_at: now, reviewed_by_user_id: null, reviewed_at: null, review_note: null, updated_at: now })
         .where(eq(timesheet_periods.id, existing.id));
+      void this.audit.record(orgId, callerId, 'timesheet.submit', 'timesheet_period', existing.id, { periodStart }).catch(() => {});
       return { ok: true, id: existing.id };
     }
     const [created] = await db
@@ -103,6 +108,7 @@ export class TimesheetsController {
         submitted_at: now,
       })
       .returning({ id: timesheet_periods.id });
+    void this.audit.record(orgId, callerId, 'timesheet.submit', 'timesheet_period', created.id, { periodStart }).catch(() => {});
     return { ok: true, id: created.id };
   }
 
@@ -143,6 +149,9 @@ export class TimesheetsController {
         updated_at: new Date().toISOString(),
       })
       .where(eq(timesheet_periods.id, id));
+    void this.audit
+      .record(period.organization_id, callerId, `timesheet.${newStatus === 'approved' ? 'approve' : 'reject'}`, 'timesheet_period', id, note ? { note } : undefined)
+      .catch(() => {});
     return { ok: true };
   }
 
@@ -164,6 +173,7 @@ export class TimesheetsController {
       .update(timesheet_periods)
       .set({ status: 'open', reviewed_by_user_id: null, reviewed_at: null, review_note: null, updated_at: new Date().toISOString() })
       .where(eq(timesheet_periods.id, id));
+    void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
     return { ok: true };
   }
 }

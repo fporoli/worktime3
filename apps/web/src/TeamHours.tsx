@@ -3,10 +3,10 @@ import {
   Alert,
   Box,
   Button,
-  Checkbox,
   Chip,
-  FormControlLabel,
+  LinearProgress,
   MenuItem,
+  Paper,
   Table,
   TableBody,
   TableCell,
@@ -28,14 +28,6 @@ interface TeamOption {
 
 interface TeamMemberEntry extends Entry {
   user_id: string;
-  /** Only present when the request asked for cost — the rate active on this entry's own date. */
-  hourly_rate?: string | null;
-}
-
-/** Cost of one entry, or null when no rate was active for that person on that date. */
-function costOf(e: TeamMemberEntry): number | null {
-  if (!e.hourly_rate) return null;
-  return (minutes(e) / 60) * Number(e.hourly_rate);
 }
 
 interface MemberInfo {
@@ -62,8 +54,8 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [entries, setEntries] = useState<TeamMemberEntry[]>([]);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
-  const [showCost, setShowCost] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function reloadTeams() {
     try {
@@ -76,16 +68,19 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
     } catch { /* offline fallback */ }
   }
 
-  async function reloadWorkTime(id: string, withCost: boolean) {
+  async function reloadWorkTime(id: string) {
     if (!id) return;
     setError(null);
+    setLoading(true);
     try {
-      const res = await fetch(`${API}/teams/${id}/work-time${withCost ? '?withCost=true' : ''}`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/teams/${id}/work-time`, { headers: await authHeaders() });
       const data = await res.json();
       setMembers(Array.isArray(data.members) ? data.members : []);
       setEntries(Array.isArray(data.entries) ? data.entries : []);
     } catch {
       setError('Failed to load team hours. Is the API running?');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -96,9 +91,9 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
 
   useEffect(() => {
     setExpandedUserId(null);
-    reloadWorkTime(teamId, showCost);
+    reloadWorkTime(teamId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId, showCost]);
+  }, [teamId]);
 
   const entriesByUser = new Map<string, TeamMemberEntry[]>();
   for (const e of entries) {
@@ -108,8 +103,14 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
   }
 
   return (
-    <Box>
+    <Paper sx={{ p: 2 }}>
+      <Typography variant="h6">Team Hours</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Booked hours for each member of a team.
+      </Typography>
+
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
         <TextField select label="Team" value={teamId} onChange={(e) => setTeamId(e.target.value)} size="small" sx={{ minWidth: 200 }}>
@@ -120,10 +121,6 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
           <ToggleButton value="weekly">Weekly</ToggleButton>
           <ToggleButton value="monthly">Monthly</ToggleButton>
         </ToggleButtonGroup>
-        <FormControlLabel
-          control={<Checkbox checked={showCost} onChange={(e) => setShowCost(e.target.checked)} size="small" />}
-          label="Show cost"
-        />
       </Box>
 
       {teams.length === 0 && <Typography variant="body2" color="text.secondary">No teams yet — create one in the Teams tab first.</Typography>}
@@ -134,7 +131,6 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
             <TableRow>
               <TableCell>Member</TableCell>
               <TableCell align="right">Total booked</TableCell>
-              {showCost && <TableCell align="right">Cost</TableCell>}
               <TableCell align="right">Entries</TableCell>
               <TableCell align="right" />
             </TableRow>
@@ -143,11 +139,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
             {members.map((m) => {
               const memberEntries = entriesByUser.get(m.user_id) ?? [];
               const total = memberEntries.reduce((sum, e) => sum + minutes(e), 0);
-              const costs = memberEntries.map(costOf);
-              const totalCost = costs.reduce((sum: number, c) => sum + (c ?? 0), 0);
-              const missingRate = showCost && memberEntries.length > 0 && costs.some((c) => c === null);
               const isExpanded = expandedUserId === m.user_id;
-              const colSpan = showCost ? 5 : 4;
               return (
                 <Fragment key={m.user_id}>
                   <TableRow hover selected={isExpanded}>
@@ -158,12 +150,6 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                     <TableCell align="right">
                       <Chip label={formatHours(total)} size="small" color={total > 0 ? 'primary' : 'default'} variant="outlined" />
                     </TableCell>
-                    {showCost && (
-                      <TableCell align="right">
-                        {totalCost > 0 ? totalCost.toFixed(2) : '—'}
-                        {missingRate && <Typography variant="caption" color="text.secondary"> (partial — no rate for some entries)</Typography>}
-                      </TableCell>
-                    )}
                     <TableCell align="right">{memberEntries.length}</TableCell>
                     <TableCell align="right">
                       <Button
@@ -178,7 +164,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                   </TableRow>
                   {isExpanded && (
                     <TableRow>
-                      <TableCell colSpan={colSpan} sx={{ bgcolor: 'action.hover', py: 2 }}>
+                      <TableCell colSpan={4} sx={{ bgcolor: 'action.hover', py: 2 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1 }}>{view} breakdown</Typography>
                         <Table size="small" sx={{ mb: 2, bgcolor: 'background.paper' }}>
                           <TableHead><TableRow><TableCell>Period</TableCell><TableCell align="right">Minutes</TableCell></TableRow></TableHead>
@@ -194,7 +180,6 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                             <TableRow>
                               <TableCell>Date</TableCell>
                               <TableCell align="right">Minutes</TableCell>
-                              {showCost && <TableCell align="right">Cost</TableCell>}
                               <TableCell>Project</TableCell>
                               <TableCell>Subproject</TableCell>
                               <TableCell>Comment</TableCell>
@@ -205,7 +190,6 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                               <TableRow key={e.id}>
                                 <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
                                 <TableCell align="right">{Math.round(minutes(e))}</TableCell>
-                                {showCost && <TableCell align="right">{costOf(e)?.toFixed(2) ?? '—'}</TableCell>}
                                 <TableCell>{e.project_name ?? '—'}</TableCell>
                                 <TableCell>{e.subproject_name ?? '—'}</TableCell>
                                 <TableCell>{e.comment}</TableCell>
@@ -220,11 +204,11 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
               );
             })}
             {members.length === 0 && (
-              <TableRow><TableCell colSpan={showCost ? 5 : 4}>This team has no members yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={4}>This team has no members yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       )}
-    </Box>
+    </Paper>
   );
 }

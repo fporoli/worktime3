@@ -9,7 +9,6 @@ import { AuthController } from './auth.controller';
 import { UsersController } from './users.controller';
 import { OrgsController } from './orgs.controller';
 import { RolesController } from './roles.controller';
-import { RatesController } from './rates.controller';
 import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { WorktimeController } from './worktime.controller';
@@ -27,7 +26,6 @@ import { DbService } from './db.service';
     UsersController,
     OrgsController,
     RolesController,
-    RatesController,
     TeamsController,
     ProjectsController,
     WorktimeController,

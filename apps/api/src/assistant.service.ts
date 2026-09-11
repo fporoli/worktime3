@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
-import { and, asc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { isOrgMember, isOrgManagerOrAdmin, isPeriodLocked } from './access';
 import { work_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
@@ -76,23 +76,6 @@ const TOOLS: ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'get_project_cost_report',
-      description:
-        'Manager/admin only: hours and cost per person on a project, by the project name. Cost is null for people with no rate on file.',
-      parameters: {
-        type: 'object',
-        properties: {
-          projectName: { type: 'string' },
-          from: { type: 'string', description: 'ISO date, inclusive' },
-          to: { type: 'string', description: 'ISO date, exclusive' },
-        },
-        required: ['projectName'],
-      },
-    },
-  },
 ];
 
 @Injectable()
@@ -140,7 +123,7 @@ export class AssistantService {
         role: 'system',
         content:
           `You are the Worktime assistant. Today's date is ${today}. The caller's role in this organization is "${role}". ` +
-          'You can look up and create the caller\'s own time entries, and — only if their role is manager or admin — pull team-hours and project-cost reports. ' +
+          'You can look up and create the caller\'s own time entries, and — only if their role is manager or admin — pull team-hours reports. ' +
           'Every tool call is independently authorization-checked server-side regardless of the caller\'s stated role, so a request outside their permission will come back as an error — explain that plainly rather than guessing around it. ' +
           'When creating entries, always report back exactly which ones succeeded or failed and why (e.g. a locked month). Keep replies concise.',
       },
@@ -187,8 +170,6 @@ export class AssistantService {
         return this.createTimeEntries(ctx, args);
       case 'get_team_hours':
         return { data: await this.getTeamHours(ctx, args) };
-      case 'get_project_cost_report':
-        return { data: await this.getProjectCostReport(ctx, args) };
       default:
         return { data: { error: `unknown-tool:${name}` } };
     }
@@ -310,53 +291,4 @@ export class AssistantService {
     };
   }
 
-  private async getProjectCostReport(ctx: ToolContext, args: Record<string, unknown>) {
-    if (!(await isOrgManagerOrAdmin(ctx.db, ctx.orgId, ctx.callerId))) {
-      return { error: 'forbidden — manager or admin role required' };
-    }
-    const projectName = typeof args.projectName === 'string' ? args.projectName : '';
-    const [project] = await ctx.db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.organization_id, ctx.orgId), ilike(projects.name, projectName)));
-    if (!project) return { error: `unknown project "${projectName}"` };
-
-    const from = typeof args.from === 'string' ? args.from : undefined;
-    const to = typeof args.to === 'string' ? args.to : undefined;
-    // Correlated per-entry rate lookup — same approach as TeamsController.workTime's withCost path.
-    const dateFilter = sql`${from ? sql`AND w.start_time >= ${from}` : sql``} ${to ? sql`AND w.start_time < ${to}` : sql``}`;
-    const rows = await ctx.db.execute<{
-      user_id: string;
-      display_name: string;
-      total_minutes: string;
-      total_cost: string | null;
-    }>(sql`
-        SELECT u.id AS user_id, u.display_name,
-               SUM(EXTRACT(EPOCH FROM (w.end_time - w.start_time)) / 60) AS total_minutes,
-               SUM(
-                 EXTRACT(EPOCH FROM (w.end_time - w.start_time)) / 3600 *
-                 COALESCE((
-                   SELECT mr.hourly_rate FROM member_rates mr
-                   WHERE mr.organization_id = ${ctx.orgId} AND mr.user_id = w.user_id
-                     AND mr.effective_from <= w.start_time::date
-                     AND (mr.effective_to IS NULL OR mr.effective_to > w.start_time::date)
-                   LIMIT 1
-                 ), 0)
-               ) AS total_cost
-        FROM work_times w
-        JOIN users u ON u.id = w.user_id
-        WHERE w.project_id = ${project.id}
-          ${dateFilter}
-        GROUP BY u.id, u.display_name
-        ORDER BY u.display_name
-      `);
-    return {
-      project: projectName,
-      members: rows.rows.map((r: { display_name: string; total_minutes: string; total_cost: string | null }) => ({
-        displayName: r.display_name,
-        totalHours: Math.round((Number(r.total_minutes) / 60) * 100) / 100,
-        totalCost: r.total_cost !== null ? Math.round(Number(r.total_cost) * 100) / 100 : null,
-      })),
-    };
-  }
 }
