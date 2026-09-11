@@ -36,12 +36,12 @@ VALUES
   ('eeeeeeee-eeee-eeee-eeee-222222222222', '00000000-0000-0000-0000-000000000003')
 ON CONFLICT (membership_id, role_id) DO NOTHING;
 
-INSERT INTO teams (id, organization_id, name, description)
-VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Platform', 'Platform team')
+INSERT INTO teams (id, organization_id, name, description, lead_user_id)
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Platform', 'Platform team', '22222222-2222-2222-2222-222222222222')
 ON CONFLICT (organization_id, name) DO NOTHING;
 
-INSERT INTO team_members (team_id, membership_id, manager_user_id)
-VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333', '22222222-2222-2222-2222-222222222222')
+INSERT INTO team_members (team_id, membership_id)
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333')
 ON CONFLICT (team_id, membership_id) DO NOTHING;
 
 

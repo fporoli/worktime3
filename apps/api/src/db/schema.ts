@@ -80,21 +80,6 @@ export const users = pgTable("users", {
 	unique("users_email_key").on(table.email),
 ]);
 
-export const teams = pgTable("teams", {
-	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
-	organization_id: uuid().notNull(),
-	name: varchar({ length: 100 }).notNull(),
-	description: varchar({ length: 255 }),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	foreignKey({
-			columns: [table.organization_id],
-			foreignColumns: [organizations.id],
-			name: "teams_organization_id_fkey"
-		}).onDelete("cascade"),
-	unique("uq_org_team_name").on(table.organization_id, table.name),
-]);
-
 export const organization_invitations = pgTable("organization_invitations", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	organization_id: uuid().notNull(),
@@ -358,6 +343,27 @@ export const timesheet_periods = pgTable("timesheet_periods", {
 	check("chk_timesheet_period_order", sql`period_end > period_start`),
 ]);
 
+export const teams = pgTable("teams", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	name: varchar({ length: 100 }).notNull(),
+	description: varchar({ length: 255 }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lead_user_id: uuid(),
+}, (table) => [
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "teams_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.lead_user_id],
+			foreignColumns: [users.id],
+			name: "teams_lead_user_id_fkey"
+		}).onDelete("set null"),
+	unique("uq_org_team_name").on(table.organization_id, table.name),
+]);
+
 export const organizations = pgTable("organizations", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	parent_organization_id: uuid(),
@@ -409,6 +415,30 @@ export const role_permissions = pgTable("role_permissions", {
 	primaryKey({ columns: [table.role_id, table.permission_id], name: "role_permissions_pkey"}),
 ]);
 
+export const team_members = pgTable("team_members", {
+	team_id: uuid().notNull(),
+	membership_id: uuid().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	team_role_id: uuid(),
+}, (table) => [
+	foreignKey({
+			columns: [table.team_id],
+			foreignColumns: [teams.id],
+			name: "team_members_team_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.membership_id],
+			foreignColumns: [organization_memberships.id],
+			name: "team_members_membership_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.team_role_id],
+			foreignColumns: [roles.id],
+			name: "team_members_team_role_id_fkey"
+		}).onDelete("set null"),
+	primaryKey({ columns: [table.team_id, table.membership_id], name: "team_members_pkey"}),
+]);
+
 export const membership_roles = pgTable("membership_roles", {
 	membership_id: uuid().notNull(),
 	role_id: uuid().notNull(),
@@ -432,36 +462,6 @@ export const membership_roles = pgTable("membership_roles", {
 			name: "membership_roles_granted_by_user_id_fkey"
 		}).onDelete("set null"),
 	primaryKey({ columns: [table.membership_id, table.role_id], name: "membership_roles_pkey"}),
-]);
-
-export const team_members = pgTable("team_members", {
-	team_id: uuid().notNull(),
-	membership_id: uuid().notNull(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	manager_user_id: uuid(),
-	team_role_id: uuid(),
-}, (table) => [
-	foreignKey({
-			columns: [table.team_id],
-			foreignColumns: [teams.id],
-			name: "team_members_team_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.membership_id],
-			foreignColumns: [organization_memberships.id],
-			name: "team_members_membership_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.manager_user_id],
-			foreignColumns: [users.id],
-			name: "team_members_manager_user_id_fkey"
-		}).onDelete("set null"),
-	foreignKey({
-			columns: [table.team_role_id],
-			foreignColumns: [roles.id],
-			name: "team_members_team_role_id_fkey"
-		}).onDelete("set null"),
-	primaryKey({ columns: [table.team_id, table.membership_id], name: "team_members_pkey"}),
 ]);
 export const audit = pgView("audit", {	uuid: uuid(),
 	entity: varchar({ length: 64 }),

@@ -98,6 +98,20 @@ export async function canManageRole(
 }
 
 /**
+ * True when the caller may onboard/offboard members on this specific team:
+ * an org owner/admin always may, and a team's designated lead may for their
+ * own team — but an org "manager" who isn't that team's lead may not,
+ * unlike the broader org-wide checks above.
+ */
+export async function canManageTeamMembers(db: Executor, organizationId: string, teamId: string, callerId: string): Promise<boolean> {
+  if (await isOrgAdmin(db, organizationId, callerId)) return true;
+  const rows = await db.execute(
+    sql`SELECT 1 FROM teams WHERE id = ${teamId} AND organization_id = ${organizationId} AND lead_user_id = ${callerId} LIMIT 1`,
+  );
+  return rows.rows.length > 0;
+}
+
+/**
  * True when `dateOrTimestamp` falls inside a submitted/approved timesheet
  * period for this user — the single gate the work-time create/update/delete
  * handlers call before touching an entry. `rejected`/`open` periods are NOT

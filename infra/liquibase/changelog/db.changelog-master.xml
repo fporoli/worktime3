@@ -23,5 +23,7 @@
     <include file="005-worktime-cleanup.sql" relativeToChangelogFile="true"/>
     <include file="006-fold-org-settings-and-sso.sql" relativeToChangelogFile="true"/>
     <include file="007-role-multiplicity.sql" relativeToChangelogFile="true"/>
+    <include file="008-team-lead.sql" relativeToChangelogFile="true"/>
+    <include file="009-drop-team-member-manager.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

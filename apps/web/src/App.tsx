@@ -38,16 +38,18 @@ import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import Management from './Management';
 import Invitations from './Invitations';
 import AdminSettings from './AdminSettings';
+import OrganizationSettings from './OrganizationSettings';
 import Timesheet from './Timesheet';
 import Approvals from './Approvals';
 import Assistant from './Assistant';
 import TeamHours from './TeamHours';
 import AuditLog from './AuditLog';
+import Users from './Users';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'timesheet' | 'management' | 'hours' | 'invitations' | 'approvals' | 'audit' | 'admin';
+type Section = 'time' | 'timesheet' | 'management' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -171,11 +173,13 @@ export default function App() {
         { key: 'hours', label: 'Team Hours', visible: canManage },
         { key: 'invitations', label: 'Invitations', visible: canManage },
         { key: 'approvals', label: 'Approvals', visible: canManage },
+        { key: 'users', label: 'Users', visible: canManage },
       ],
     },
     {
       header: 'Administration',
       items: [
+        { key: 'orgSettings', label: 'Organization Settings', visible: role === 'admin' },
         { key: 'audit', label: 'Audit Log', visible: role === 'admin' },
         { key: 'admin', label: 'Admin Settings', visible: role === 'admin' },
       ],
@@ -208,7 +212,7 @@ export default function App() {
       const stillVisible =
         section === 'time' || section === 'timesheet'
           ? true
-          : section === 'admin' || section === 'audit'
+          : section === 'admin' || section === 'audit' || section === 'orgSettings'
             ? nextRole === 'admin'
             : nextCanManage;
       if (!stillVisible) setSection('time');
@@ -425,7 +429,24 @@ export default function App() {
         return (
           <li key={group.header}>
             <ul style={{ padding: 0 }}>
-              <ListSubheader>{group.header}</ListSubheader>
+              <ListSubheader
+                disableSticky
+                sx={{
+                  bgcolor: 'action.hover',
+                  color: 'text.secondary',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  lineHeight: '28px',
+                  borderRadius: 1,
+                  mx: 1,
+                  mt: 1,
+                  mb: 0.5,
+                }}
+              >
+                {group.header}
+              </ListSubheader>
               {visibleItems.map((n) => (
                 <ListItemButton
                   key={n.key}
@@ -645,11 +666,17 @@ export default function App() {
           {section === 'approvals' && canManage && orgId && (
             <Approvals orgId={orgId} role={role} authHeaders={authHeaders} />
           )}
+          {section === 'users' && canManage && orgId && (
+            <Users orgId={orgId} authHeaders={authHeaders} />
+          )}
           {section === 'audit' && role === 'admin' && orgId && (
             <AuditLog orgId={orgId} authHeaders={authHeaders} />
           )}
           {section === 'admin' && role === 'admin' && orgId && (
             <AdminSettings orgId={orgId} authHeaders={authHeaders} />
+          )}
+          {section === 'orgSettings' && role === 'admin' && orgId && (
+            <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />
           )}
         </Container>
       </Box>

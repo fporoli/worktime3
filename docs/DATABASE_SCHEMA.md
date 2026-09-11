@@ -133,15 +133,17 @@ erDiagram
 
 ## Teams (2 tables)
 
-A team rosters existing org memberships, not users directly — a manager and a
-team-specific role can be layered on each seat.
+A team rosters existing org memberships, not users directly. Each team has one
+designated lead (an org admin's call, not the members' own) who — along with
+org admins — is the only one allowed to onboard/offboard members on that team;
+a team-specific role can additionally be layered on each seat.
 
 ```mermaid
 erDiagram
     ORGANIZATIONS ||--o{ TEAMS : "has"
+    USERS ||--o{ TEAMS : "lead_user_id"
     TEAMS ||--o{ TEAM_MEMBERS : "rosters"
     ORGANIZATION_MEMBERSHIPS ||--o{ TEAM_MEMBERS : "placed as"
-    USERS ||--o{ TEAM_MEMBERS : "manager_user_id"
     ROLES ||--o{ TEAM_MEMBERS : "team_role_id"
 
     TEAMS {
@@ -149,11 +151,11 @@ erDiagram
         uuid organization_id FK
         varchar name "unique per org"
         varchar description
+        uuid lead_user_id FK "nullable — onboard/offboard rights on this team"
     }
     TEAM_MEMBERS {
         uuid team_id PK "FK -> teams"
         uuid membership_id PK "FK -> organization_memberships"
-        uuid manager_user_id FK "nullable"
         uuid team_role_id FK "nullable"
     }
     ORGANIZATION_MEMBERSHIPS { uuid id PK }

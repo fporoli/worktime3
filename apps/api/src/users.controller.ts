@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, Patch, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query, Req } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, isAnyOrgAdmin } from './access';
+import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { users, user_identities } from './db/schema';
+import { users, user_identities, organizations, organization_memberships, roles, membership_roles } from './db/schema';
 
 const USER_COLUMNS = { id: users.id, email: users.email, display_name: users.display_name, status: users.status };
 
@@ -29,6 +29,58 @@ export class UsersController {
             .limit(1);
     if (rows.length === 0) return { ok: false, error: 'unknown-user' };
     return { ok: true, ...rows[0] };
+  }
+
+  /**
+   * Find a user by email and list which organizations they belong to — scoped to
+   * only the organizations the caller themself administers, so an admin of org A
+   * can't use this to learn that some email is a member of unrelated org B.
+   */
+  @Get('lookup')
+  async lookup(@Query('email') email: string | undefined, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, user: null, memberships: [] };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unauthenticated' };
+    if (!(await isAnyOrgAdmin(db, callerId))) return { ok: false, error: 'forbidden' };
+    const normalized = (email ?? '').trim().toLowerCase();
+    if (!normalized) return { ok: false, error: 'email-required' };
+
+    const [found] = await db.select(USER_COLUMNS).from(users).where(eq(users.email, normalized));
+    if (!found) return { ok: true, user: null, memberships: [] };
+
+    const rows = await db
+      .select({
+        organization_id: organization_memberships.organization_id,
+        organization_name: organizations.name,
+        status: organization_memberships.status,
+        role_name: roles.name,
+      })
+      .from(organization_memberships)
+      .innerJoin(organizations, eq(organizations.id, organization_memberships.organization_id))
+      .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
+      .leftJoin(roles, eq(roles.id, membership_roles.role_id))
+      .where(eq(organization_memberships.user_id, found.id));
+
+    // Only keep rows for organizations the caller themself administers.
+    const distinctOrgIds = [...new Set(rows.map((r) => r.organization_id))];
+    const allowedOrgIds = new Set<string>();
+    for (const orgId of distinctOrgIds) {
+      if (await isOrgAdmin(db, orgId, callerId)) allowedOrgIds.add(orgId);
+    }
+
+    const byOrg = new Map<string, { organization_id: string; organization_name: string; status: string; role_names: string[] }>();
+    for (const row of rows) {
+      if (!allowedOrgIds.has(row.organization_id)) continue;
+      let entry = byOrg.get(row.organization_id);
+      if (!entry) {
+        entry = { organization_id: row.organization_id, organization_name: row.organization_name, status: row.status, role_names: [] };
+        byOrg.set(row.organization_id, entry);
+      }
+      if (row.role_name) entry.role_names.push(row.role_name);
+    }
+
+    return { ok: true, user: found, memberships: [...byOrg.values()] };
   }
 
   @Patch(':id')

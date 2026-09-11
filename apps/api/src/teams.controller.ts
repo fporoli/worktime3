@@ -2,11 +2,11 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@
 import { and, asc, eq, getTableColumns, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DbService } from './db.service';
-import { callerUserId, isOrgManagerOrAdmin, isOrgMember } from './access';
+import { callerUserId, canManageTeamMembers, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { teams, team_members, organization_memberships, users, roles, work_times, projects, subprojects } from './db/schema';
 
-const managerUsers = alias(users, 'manager_users');
+const leadUsers = alias(users, 'lead_users');
 
 @Controller()
 export class TeamsController {
@@ -25,19 +25,22 @@ export class TeamsController {
         name: teams.name,
         description: teams.description,
         created_at: teams.created_at,
+        lead_user_id: teams.lead_user_id,
+        lead_display_name: leadUsers.display_name,
         member_count: sql<number>`count(${team_members.membership_id})::int`,
       })
       .from(teams)
       .leftJoin(team_members, eq(team_members.team_id, teams.id))
+      .leftJoin(leadUsers, eq(leadUsers.id, teams.lead_user_id))
       .where(eq(teams.organization_id, orgId))
-      .groupBy(teams.id)
+      .groupBy(teams.id, leadUsers.display_name)
       .orderBy(asc(teams.name));
   }
 
   @Post('organizations/:orgId/teams')
   async create(
     @Param('orgId') orgId: string,
-    @Body() body: { name: string; description?: string },
+    @Body() body: { name: string; description?: string; leadUserId?: string | null },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -49,15 +52,20 @@ export class TeamsController {
     }
     const name = (body.name ?? '').trim();
     if (!name) return { ok: false, error: 'name-required' };
+    // Only an org admin may designate the team lead — a manager creating a team can't hand themself that.
+    if (body.leadUserId !== undefined && !(await isOrgAdmin(db, orgId, callerId))) {
+      return { ok: false, error: 'forbidden-lead' };
+    }
     const [team] = await db
       .insert(teams)
-      .values({ organization_id: orgId, name, description: body.description ?? null })
+      .values({ organization_id: orgId, name, description: body.description ?? null, lead_user_id: body.leadUserId ?? null })
       .returning({
         id: teams.id,
         organization_id: teams.organization_id,
         name: teams.name,
         description: teams.description,
         created_at: teams.created_at,
+        lead_user_id: teams.lead_user_id,
       });
     return { ok: true, team, id: team.id };
   }
@@ -65,7 +73,7 @@ export class TeamsController {
   @Patch('teams/:id')
   async update(
     @Param('id') id: string,
-    @Body() body: { name?: string; description?: string },
+    @Body() body: { name?: string; description?: string; leadUserId?: string | null },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -78,10 +86,15 @@ export class TeamsController {
     if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
       return { ok: false, error: 'forbidden' };
     }
+    // Only an org admin may reassign the team lead.
+    if (body.leadUserId !== undefined && !(await isOrgAdmin(db, team.organization_id, callerId))) {
+      return { ok: false, error: 'forbidden-lead' };
+    }
 
     const patch: Partial<typeof teams.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.description !== undefined) patch.description = body.description;
+    if (body.leadUserId !== undefined) patch.lead_user_id = body.leadUserId;
     if (Object.keys(patch).length === 0) return { ok: true, noop: true };
 
     const [updated] = await db
@@ -94,6 +107,7 @@ export class TeamsController {
         name: teams.name,
         description: teams.description,
         created_at: teams.created_at,
+        lead_user_id: teams.lead_user_id,
       });
     return { ok: true, team: updated };
   }
@@ -131,15 +145,12 @@ export class TeamsController {
         user_id: organization_memberships.user_id,
         email: users.email,
         display_name: users.display_name,
-        manager_user_id: team_members.manager_user_id,
-        manager_display_name: managerUsers.display_name,
         team_role_id: team_members.team_role_id,
         team_role_name: roles.name,
       })
       .from(team_members)
       .innerJoin(organization_memberships, eq(organization_memberships.id, team_members.membership_id))
       .innerJoin(users, eq(users.id, organization_memberships.user_id))
-      .leftJoin(managerUsers, eq(managerUsers.id, team_members.manager_user_id))
       .leftJoin(roles, eq(roles.id, team_members.team_role_id))
       .where(eq(team_members.team_id, id))
       .orderBy(asc(users.display_name));
@@ -203,7 +214,7 @@ export class TeamsController {
   @Post('teams/:id/members')
   async addMember(
     @Param('id') id: string,
-    @Body() body: { membershipId?: string; userId?: string; managerUserId?: string; teamRoleId?: string },
+    @Body() body: { membershipId?: string; userId?: string; teamRoleId?: string },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -213,7 +224,7 @@ export class TeamsController {
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
+    if (!(await canManageTeamMembers(db, team.organization_id, id, callerId))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -239,12 +250,11 @@ export class TeamsController {
       .values({
         team_id: id,
         membership_id: membershipId,
-        manager_user_id: body.managerUserId ?? null,
         team_role_id: body.teamRoleId ?? null,
       })
       .onConflictDoUpdate({
         target: [team_members.team_id, team_members.membership_id],
-        set: { manager_user_id: body.managerUserId ?? null, team_role_id: body.teamRoleId ?? null },
+        set: { team_role_id: body.teamRoleId ?? null },
       });
     return { ok: true };
   }
@@ -262,7 +272,7 @@ export class TeamsController {
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
+    if (!(await canManageTeamMembers(db, team.organization_id, id, callerId))) {
       return { ok: false, error: 'forbidden' };
     }
 

@@ -42,6 +42,8 @@ export interface TeamItem {
   name: string;
   description?: string | null;
   created_at?: string;
+  lead_user_id?: string | null;
+  lead_display_name?: string | null;
   member_count?: number;
 }
 
@@ -51,8 +53,6 @@ export interface TeamMemberItem {
   user_id: string;
   email: string;
   display_name: string;
-  manager_user_id?: string | null;
-  manager_display_name?: string | null;
   team_role_id?: string | null;
   team_role_name?: string | null;
 }
@@ -111,12 +111,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   const [editingTeam, setEditingTeam] = useState<TeamItem | null>(null);
   const [teamName, setTeamName] = useState('');
   const [teamDesc, setTeamDesc] = useState('');
+  const [teamLeadId, setTeamLeadId] = useState('');
 
   // Team Members Dialog
   const [selectedTeam, setSelectedTeam] = useState<TeamItem | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMemberItem[]>([]);
   const [addMemberId, setAddMemberId] = useState('');
-  const [addMemberManagerId, setAddMemberManagerId] = useState('');
 
   // --- PROJECTS & SUBPROJECTS STATE ---
   const [projects, setProjects] = useState<ProjectItem[]>([
@@ -219,7 +219,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function loadTeamMembers(team: TeamItem) {
     setSelectedTeam(team);
     setAddMemberId('');
-    setAddMemberManagerId('');
     try {
       const res = await fetch(`${API}/teams/${team.id}/members`, { headers: await authHeaders() });
       const data = await res.json();
@@ -229,15 +228,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
       const uli = members.find((m) => m.email.includes('user'));
       if (uli) {
         setTeamMembers([
-          {
-            team_id: team.id,
-            membership_id: uli.id,
-            user_id: uli.user_id,
-            email: uli.email,
-            display_name: uli.display_name,
-            manager_user_id: session.userId,
-            manager_display_name: session.displayName,
-          },
+          { team_id: team.id, membership_id: uli.id, user_id: uli.user_id, email: uli.email, display_name: uli.display_name },
         ]);
       }
     }
@@ -246,10 +237,18 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   // -------------------------------------------------------------
   // TEAM ACTIONS
   // -------------------------------------------------------------
+  /** Onboarding/offboarding on a team is restricted to org admins and that team's designated lead. */
+  function canManageTeamMembers(team: TeamItem): boolean {
+    if (role === 'admin') return true;
+    if (role === 'manager' && team.lead_user_id === session.userId) return true;
+    return false;
+  }
+
   function openCreateTeam() {
     setEditingTeam(null);
     setTeamName('');
     setTeamDesc('');
+    setTeamLeadId('');
     setTeamDialogOpen(true);
   }
 
@@ -257,22 +256,36 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     setEditingTeam(team);
     setTeamName(team.name);
     setTeamDesc(team.description ?? '');
+    setTeamLeadId(team.lead_user_id ?? '');
     setTeamDialogOpen(true);
   }
 
   async function handleSaveTeam() {
     if (!teamName.trim()) return;
     setError(null);
+    // Only an org admin may set/change the team lead — omit the field entirely for a manager,
+    // so their save can't be rejected just for carrying a value they're not allowed to set.
+    const leadPatch = role === 'admin' ? { leadUserId: teamLeadId || null } : {};
+    const lead = members.find((m) => m.user_id === teamLeadId);
     try {
       if (editingTeam) {
         // Update team
         await fetch(`${API}/teams/${editingTeam.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-          body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null }),
+          body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null, ...leadPatch }),
         });
         setTeams((prev) =>
-          prev.map((t) => (t.id === editingTeam.id ? { ...t, name: teamName.trim(), description: teamDesc.trim() || null } : t)),
+          prev.map((t) =>
+            t.id === editingTeam.id
+              ? {
+                  ...t,
+                  name: teamName.trim(),
+                  description: teamDesc.trim() || null,
+                  ...(role === 'admin' ? { lead_user_id: teamLeadId || null, lead_display_name: lead?.display_name ?? null } : {}),
+                }
+              : t,
+          ),
         );
         setSuccess(`Team "${teamName}" updated successfully.`);
       } else {
@@ -280,7 +293,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
         const res = await fetch(`${API}/organizations/${orgId}/teams`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-          body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null }),
+          body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null, ...leadPatch }),
         });
         const data = await res.json();
         const newTeam: TeamItem = {
@@ -288,6 +301,8 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           organization_id: orgId,
           name: teamName.trim(),
           description: teamDesc.trim() || null,
+          lead_user_id: role === 'admin' ? teamLeadId || null : null,
+          lead_display_name: role === 'admin' ? (lead?.display_name ?? null) : null,
           member_count: 0,
         };
         setTeams((prev) => [...prev, newTeam]);
@@ -317,13 +332,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     if (!selectedTeam || !addMemberId) return;
     const member = members.find((m) => m.id === addMemberId || m.user_id === addMemberId);
     if (!member) return;
-    const mgr = members.find((m) => m.user_id === addMemberManagerId);
     setError(null);
     try {
       await fetch(`${API}/teams/${selectedTeam.id}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ membershipId: member.id, managerUserId: addMemberManagerId || undefined }),
+        body: JSON.stringify({ membershipId: member.id }),
       });
       const newTm: TeamMemberItem = {
         team_id: selectedTeam.id,
@@ -331,15 +345,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
         user_id: member.user_id,
         email: member.email,
         display_name: member.display_name,
-        manager_user_id: addMemberManagerId || null,
-        manager_display_name: mgr ? mgr.display_name : null,
       };
       setTeamMembers((prev) => [...prev.filter((m) => m.membership_id !== member.id), newTm]);
       setTeams((prev) =>
         prev.map((t) => (t.id === selectedTeam.id ? { ...t, member_count: (t.member_count ?? 0) + 1 } : t)),
       );
       setAddMemberId('');
-      setAddMemberManagerId('');
       setSuccess(`Added ${member.display_name} to ${selectedTeam.name}.`);
     } catch {
       setError('Failed to add team member.');
@@ -633,6 +644,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
               <TableRow>
                 <TableCell>Team Name</TableCell>
                 <TableCell>Description</TableCell>
+                <TableCell>Lead</TableCell>
                 <TableCell align="center">Members</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -642,6 +654,10 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                 <TableRow key={t.id} hover>
                   <TableCell sx={{ fontWeight: 600 }}>{t.name}</TableCell>
                   <TableCell>{t.description ?? '—'}</TableCell>
+                  <TableCell>
+                    {t.lead_display_name ?? '—'}
+                    {t.lead_user_id === session.userId && <Chip label="You" size="small" color="success" sx={{ ml: 1 }} />}
+                  </TableCell>
                   <TableCell align="center">
                     <Chip label={`${t.member_count ?? 0} members`} size="small" />
                   </TableCell>
@@ -846,6 +862,19 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
             multiline
             rows={2}
           />
+          {role === 'admin' && (
+            <TextField
+              select
+              label="Team Lead"
+              value={teamLeadId}
+              onChange={(e) => setTeamLeadId(e.target.value)}
+              size="small"
+              helperText="Only the lead (plus admins) can onboard/offboard members on this team."
+            >
+              <MenuItem value=""><em>None</em></MenuItem>
+              {members.map((m) => (<MenuItem key={m.user_id} value={m.user_id}>{m.display_name} ({m.email})</MenuItem>))}
+            </TextField>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTeamDialogOpen(false)}>Cancel</Button>
@@ -862,13 +891,17 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           {selectedTeam?.description && (
             <Typography variant="body2" color="text.secondary">{selectedTeam.description}</Typography>
           )}
+          {selectedTeam && !canManageTeamMembers(selectedTeam) && (
+            <Typography variant="caption" color="text.secondary">
+              (Only {selectedTeam.lead_display_name ? `this team's lead (${selectedTeam.lead_display_name})` : "this team's lead"} or an admin can add/remove members.)
+            </Typography>
+          )}
 
           <Typography variant="subtitle2">Current Members ({teamMembers.length})</Typography>
           <Table size="small">
             <TableHead>
               <TableRow>
                 <TableCell>Member</TableCell>
-                <TableCell>Manager</TableCell>
                 <TableCell align="right" />
               </TableRow>
             </TableHead>
@@ -879,56 +912,49 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{tm.display_name}</Typography>
                     <Typography variant="caption" color="text.secondary">{tm.email}</Typography>
                   </TableCell>
-                  <TableCell>{tm.manager_display_name ?? '—'}</TableCell>
                   <TableCell align="right">
-                    <Button size="small" color="error" onClick={() => handleRemoveTeamMember(tm.membership_id)}>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={!selectedTeam || !canManageTeamMembers(selectedTeam)}
+                      onClick={() => handleRemoveTeamMember(tm.membership_id)}
+                    >
                       Remove
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {teamMembers.length === 0 && (
-                <TableRow><TableCell colSpan={3}>No members in this team yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={2}>No members in this team yet.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
 
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>Add Member to Team</Typography>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <TextField
-                select
-                label="Select Member"
-                value={addMemberId}
-                onChange={(e) => setAddMemberId(e.target.value)}
-                size="small"
-                sx={{ minWidth: 200 }}
-              >
-                <MenuItem value=""><em>Select member...</em></MenuItem>
-                {members
-                  .filter((m) => !teamMembers.some((tm) => tm.membership_id === m.id || tm.user_id === m.user_id))
-                  .map((m) => (
-                    <MenuItem key={m.id} value={m.id}>{m.display_name} ({m.email})</MenuItem>
-                  ))}
-              </TextField>
-              <TextField
-                select
-                label="Assign Manager (Optional)"
-                value={addMemberManagerId}
-                onChange={(e) => setAddMemberManagerId(e.target.value)}
-                size="small"
-                sx={{ minWidth: 180 }}
-              >
-                <MenuItem value=""><em>None</em></MenuItem>
-                {members.map((m) => (
-                  <MenuItem key={m.user_id} value={m.user_id}>{m.display_name}</MenuItem>
-                ))}
-              </TextField>
-              <Button variant="contained" size="small" disabled={!addMemberId} onClick={handleAddTeamMember}>
-                Add
-              </Button>
+          {selectedTeam && canManageTeamMembers(selectedTeam) && (
+            <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>Add Member to Team</Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <TextField
+                  select
+                  label="Select Member"
+                  value={addMemberId}
+                  onChange={(e) => setAddMemberId(e.target.value)}
+                  size="small"
+                  sx={{ minWidth: 200 }}
+                >
+                  <MenuItem value=""><em>Select member...</em></MenuItem>
+                  {members
+                    .filter((m) => !teamMembers.some((tm) => tm.membership_id === m.id || tm.user_id === m.user_id))
+                    .map((m) => (
+                      <MenuItem key={m.id} value={m.id}>{m.display_name} ({m.email})</MenuItem>
+                    ))}
+                </TextField>
+                <Button variant="contained" size="small" disabled={!addMemberId} onClick={handleAddTeamMember}>
+                  Add
+                </Button>
+              </Box>
             </Box>
-          </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSelectedTeam(null)}>Close</Button>
