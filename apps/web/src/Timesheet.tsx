@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -48,6 +49,7 @@ interface TimesheetProps {
 }
 
 export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps) {
+  const t = useT();
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -86,13 +88,13 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'already-submitted' ? 'This month was already submitted.' : `Failed to submit (${data.error ?? 'unknown error'}).`);
+        setError(data.error === 'already-submitted' ? t('timesheet.alreadySubmitted') : t('timesheet.submitFailed', { error: data.error ?? 'unknown error' }));
         return;
       }
-      setSuccess(data.autoApproved ? 'Approved — you have no manager on record, so no review is needed.' : 'Submitted for approval.');
+      setSuccess(data.autoApproved ? t('timesheet.autoApproved') : t('timesheet.submitted'));
       await reload();
     } catch {
-      setError('Failed to submit. Is the API running?');
+      setError(t('timesheet.submitFailedOffline'));
     }
   }
 
@@ -103,45 +105,44 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   return (
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-        <Typography variant="h6">Monthly Timesheet</Typography>
+        <Typography variant="h6">{t('timesheet.title')}</Typography>
         <Chip label={status} color={STATUS_COLOR[status]} size="small" />
       </Box>
 
       {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
       {status === 'rejected' && current?.review_note && (
-        <Alert severity="warning" sx={{ mt: 1 }}>Rejected: {current.review_note}</Alert>
+        <Alert severity="warning" sx={{ mt: 1 }}>{t('timesheet.rejected', { note: current.review_note })}</Alert>
       )}
       {loading && <LinearProgress sx={{ mt: 1 }} />}
 
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 2, mb: 1, flexWrap: 'wrap' }}>
-        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, -1))}>‹ Prev</Button>
+        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, -1))}>{t('timesheet.prev')}</Button>
         <TextField
           type="month"
           size="small"
           value={toMonthInput(period)}
           onChange={(e) => e.target.value && setPeriod(fromMonthInput(e.target.value))}
         />
-        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, 1))}>Next ›</Button>
+        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, 1))}>{t('timesheet.next')}</Button>
         {period !== currentPeriodStart() && (
-          <Button size="small" onClick={() => setPeriod(currentPeriodStart())}>This month</Button>
+          <Button size="small" onClick={() => setPeriod(currentPeriodStart())}>{t('timesheet.thisMonth')}</Button>
         )}
       </Box>
 
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
-        Viewing {period.slice(0, 7)}. Submit once your hours for the month are complete — a
-        manager will need to approve it, and the month locks against further edits while submitted or approved.
+        {t('timesheet.viewing', { period: period.slice(0, 7) })}
       </Typography>
 
       <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
-        {status === 'approved' ? 'Approved' : status === 'submitted' ? 'Pending approval' : status === 'rejected' ? 'Resubmit' : 'Submit for approval'}
+        {status === 'approved' ? t('timesheet.approved') : status === 'submitted' ? t('timesheet.pending') : status === 'rejected' ? t('timesheet.resubmit') : t('timesheet.submit')}
       </Button>
 
       {history.length > 0 && (
         <>
-          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>History</Typography>
+          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>{t('timesheet.history')}</Typography>
           <Table size="small">
-            <TableHead><TableRow><TableCell>Period</TableCell><TableCell>Status</TableCell><TableCell>Note</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>{t('time.period')}</TableCell><TableCell>{t('timesheet.status')}</TableCell><TableCell>{t('timesheet.note')}</TableCell></TableRow></TableHead>
             <TableBody>
               {history.map((p) => (
                 <TableRow key={p.id}>

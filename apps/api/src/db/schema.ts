@@ -259,9 +259,15 @@ export const static_data = pgTable("static_data", {
 	values: jsonb().default({}).notNull(),
 	translation: jsonb().default({}).notNull(),
 	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	organization_id: uuid().notNull(),
 }, (table) => [
-	index("idx_static_data_entity").using("btree", table.entity.asc().nullsLast().op("text_ops"), table.enum_name.asc().nullsLast().op("text_ops")),
-	uniqueIndex("uq_static_data_entity_enum").using("btree", table.entity.asc().nullsLast().op("text_ops"), table.enum_name.asc().nullsLast().op("text_ops")),
+	index("idx_static_data_org_entity").using("btree", table.organization_id.asc().nullsLast().op("text_ops"), table.entity.asc().nullsLast().op("uuid_ops"), table.enum_name.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("uq_static_data_org_entity_enum").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.entity.asc().nullsLast().op("uuid_ops"), table.enum_name.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "static_data_organization_id_fkey"
+		}).onDelete("cascade"),
 ]);
 
 export const databasechangelog = pgTable("databasechangelog", {

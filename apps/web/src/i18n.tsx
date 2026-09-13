@@ -1,0 +1,430 @@
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+
+export type Locale = 'en' | 'de' | 'fr' | 'it';
+
+export const LOCALES: { code: Locale; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'fr', label: 'Français' },
+  { code: 'it', label: 'Italiano' },
+];
+
+const LOCALE_STORAGE_KEY = 'worktime.locale';
+
+function isLocale(value: string | undefined | null): value is Locale {
+  return !!value && LOCALES.some((l) => l.code === value);
+}
+
+/** Best-effort starting locale, before we know the signed-in user's saved preference (if any). */
+function detectInitialLocale(): Locale {
+  try {
+    const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (isLocale(stored)) return stored;
+  } catch { /* private-browsing etc. */ }
+  const browser = typeof navigator !== 'undefined' ? navigator.language?.slice(0, 2) : undefined;
+  return isLocale(browser) ? browser : 'en';
+}
+
+type Vars = Record<string, string | number>;
+
+// prettier-ignore
+const DICTIONARIES: Record<Locale, Record<string, string>> = {
+  en: {
+    'appbar.title': 'Worktime',
+
+    'nav.myWork': 'My Work',
+    'nav.timeTracking': 'Time Tracking',
+    'nav.monthlyTimesheet': 'Monthly Timesheet',
+    'nav.organization': 'Organization',
+    'nav.management': 'Management',
+    'nav.teamHours': 'Team Hours',
+    'nav.invitations': 'Invitations',
+    'nav.approvals': 'Approvals',
+    'nav.users': 'Users',
+    'nav.administration': 'Administration',
+    'nav.auditLog': 'Audit Log',
+    'nav.adminSettings': 'Admin Settings',
+    'nav.organizationSettings': 'Organization Settings',
+
+    'usermenu.settings': 'Settings',
+    'usermenu.logout': 'Logout',
+    'usermenu.language': 'Language',
+    'usermenu.save': 'Save',
+    'usermenu.cancel': 'Cancel',
+
+    'time.logWorkTime': 'Log work time (all roles)',
+    'time.start': 'Start',
+    'time.end': 'End',
+    'time.project': 'Project',
+    'time.subproject': 'Subproject',
+    'time.comment': 'Comment',
+    'time.add': 'Add',
+    'time.none': 'None',
+    'time.overview': 'Overview',
+    'time.day': 'Day',
+    'time.week': 'Week',
+    'time.month': 'Month',
+    'time.prev': '‹ Prev',
+    'time.next': 'Next ›',
+    'time.today': 'Today',
+    'time.period': 'Period',
+    'time.minutes': 'Minutes',
+    'time.entries': 'Entries',
+    'time.date': 'Date',
+    'time.time': 'Time',
+    'time.edit': 'Edit',
+    'time.noEntries': 'No entries yet.',
+    'time.endMustBeAfterStart': 'End must be after start',
+
+    'timesheet.title': 'Monthly Timesheet',
+    'timesheet.viewing': 'Viewing {{period}}. Submit once your hours for the month are complete — a manager will need to approve it, and the month locks against further edits while submitted or approved.',
+    'timesheet.prev': '‹ Prev',
+    'timesheet.next': 'Next ›',
+    'timesheet.thisMonth': 'This month',
+    'timesheet.submit': 'Submit for approval',
+    'timesheet.pending': 'Pending approval',
+    'timesheet.approved': 'Approved',
+    'timesheet.resubmit': 'Resubmit',
+    'timesheet.history': 'History',
+    'timesheet.status': 'Status',
+    'timesheet.note': 'Note',
+    'timesheet.autoApproved': 'Approved — you have no manager on record, so no review is needed.',
+    'timesheet.submitted': 'Submitted for approval.',
+    'timesheet.rejected': 'Rejected: {{note}}',
+    'timesheet.alreadySubmitted': 'This month was already submitted.',
+    'timesheet.submitFailed': 'Failed to submit ({{error}}).',
+    'timesheet.submitFailedOffline': 'Failed to submit. Is the API running?',
+
+    'staticdata.title': 'Static Data',
+    'staticdata.description': 'Manage platform enums ({{count}}) — the pickable values behind projects, subprojects, and other typed fields.',
+    'staticdata.newEnum': '+ New Enum',
+    'staticdata.entity': 'Entity',
+    'staticdata.enumName': 'Enum Name',
+    'staticdata.values': 'Values',
+    'staticdata.actions': 'Actions',
+    'staticdata.edit': 'Edit',
+    'staticdata.delete': 'Delete',
+    'staticdata.empty': '(empty)',
+    'staticdata.noneYet': 'No static data enums defined yet.',
+    'staticdata.editEnum': 'Edit Enum',
+    'staticdata.newEnumTitle': 'New Enum',
+    'staticdata.entityHelper': 'The table/resource this enum belongs to.',
+    'staticdata.key': 'Key',
+    'staticdata.label': 'Label (default)',
+    'staticdata.addValue': '+ Add value',
+    'staticdata.cancel': 'Cancel',
+    'staticdata.save': 'Save',
+    'staticdata.translations': 'Translations',
+    'staticdata.translationsHelper': "Optional per-language label overrides. Leave blank to fall back to the default label above.",
+    'staticdata.translatedInto': 'Translated: {{locales}}',
+  },
+  de: {
+    'appbar.title': 'Worktime',
+
+    'nav.myWork': 'Meine Arbeit',
+    'nav.timeTracking': 'Zeiterfassung',
+    'nav.monthlyTimesheet': 'Monatlicher Stundenzettel',
+    'nav.organization': 'Organisation',
+    'nav.management': 'Verwaltung',
+    'nav.teamHours': 'Team-Stunden',
+    'nav.invitations': 'Einladungen',
+    'nav.approvals': 'Genehmigungen',
+    'nav.users': 'Benutzer',
+    'nav.administration': 'Administration',
+    'nav.auditLog': 'Prüfprotokoll',
+    'nav.adminSettings': 'Admin-Einstellungen',
+    'nav.organizationSettings': 'Organisationseinstellungen',
+
+    'usermenu.settings': 'Einstellungen',
+    'usermenu.logout': 'Abmelden',
+    'usermenu.language': 'Sprache',
+    'usermenu.save': 'Speichern',
+    'usermenu.cancel': 'Abbrechen',
+
+    'time.logWorkTime': 'Arbeitszeit erfassen (alle Rollen)',
+    'time.start': 'Beginn',
+    'time.end': 'Ende',
+    'time.project': 'Projekt',
+    'time.subproject': 'Teilprojekt',
+    'time.comment': 'Kommentar',
+    'time.add': 'Hinzufügen',
+    'time.none': 'Keine',
+    'time.overview': 'Übersicht',
+    'time.day': 'Tag',
+    'time.week': 'Woche',
+    'time.month': 'Monat',
+    'time.prev': '‹ Zurück',
+    'time.next': 'Weiter ›',
+    'time.today': 'Heute',
+    'time.period': 'Zeitraum',
+    'time.minutes': 'Minuten',
+    'time.entries': 'Einträge',
+    'time.date': 'Datum',
+    'time.time': 'Zeit',
+    'time.edit': 'Bearbeiten',
+    'time.noEntries': 'Noch keine Einträge.',
+    'time.endMustBeAfterStart': 'Ende muss nach dem Beginn liegen',
+
+    'timesheet.title': 'Monatlicher Stundenzettel',
+    'timesheet.viewing': 'Anzeige {{period}}. Reichen Sie den Monat ein, sobald Ihre Stunden vollständig sind — ein Manager muss ihn genehmigen, und der Monat wird für weitere Änderungen gesperrt, solange er eingereicht oder genehmigt ist.',
+    'timesheet.prev': '‹ Zurück',
+    'timesheet.next': 'Weiter ›',
+    'timesheet.thisMonth': 'Dieser Monat',
+    'timesheet.submit': 'Zur Genehmigung einreichen',
+    'timesheet.pending': 'Genehmigung ausstehend',
+    'timesheet.approved': 'Genehmigt',
+    'timesheet.resubmit': 'Erneut einreichen',
+    'timesheet.history': 'Verlauf',
+    'timesheet.status': 'Status',
+    'timesheet.note': 'Notiz',
+    'timesheet.autoApproved': 'Genehmigt — für Sie ist kein Manager hinterlegt, daher ist keine Prüfung erforderlich.',
+    'timesheet.submitted': 'Zur Genehmigung eingereicht.',
+    'timesheet.rejected': 'Abgelehnt: {{note}}',
+    'timesheet.alreadySubmitted': 'Dieser Monat wurde bereits eingereicht.',
+    'timesheet.submitFailed': 'Einreichen fehlgeschlagen ({{error}}).',
+    'timesheet.submitFailedOffline': 'Einreichen fehlgeschlagen. Läuft die API?',
+
+    'staticdata.title': 'Stammdaten',
+    'staticdata.description': 'Plattform-Enums verwalten ({{count}}) — die auswählbaren Werte hinter Projekten, Teilprojekten und anderen typisierten Feldern.',
+    'staticdata.newEnum': '+ Neues Enum',
+    'staticdata.entity': 'Entität',
+    'staticdata.enumName': 'Enum-Name',
+    'staticdata.values': 'Werte',
+    'staticdata.actions': 'Aktionen',
+    'staticdata.edit': 'Bearbeiten',
+    'staticdata.delete': 'Löschen',
+    'staticdata.empty': '(leer)',
+    'staticdata.noneYet': 'Noch keine Stammdaten-Enums definiert.',
+    'staticdata.editEnum': 'Enum bearbeiten',
+    'staticdata.newEnumTitle': 'Neues Enum',
+    'staticdata.entityHelper': 'Die Tabelle/Ressource, zu der dieses Enum gehört.',
+    'staticdata.key': 'Schlüssel',
+    'staticdata.label': 'Label (Standard)',
+    'staticdata.addValue': '+ Wert hinzufügen',
+    'staticdata.cancel': 'Abbrechen',
+    'staticdata.save': 'Speichern',
+    'staticdata.translations': 'Übersetzungen',
+    'staticdata.translationsHelper': 'Optionale sprachspezifische Label-Überschreibungen. Leer lassen, um auf das Standard-Label oben zurückzufallen.',
+    'staticdata.translatedInto': 'Übersetzt: {{locales}}',
+  },
+  fr: {
+    'appbar.title': 'Worktime',
+
+    'nav.myWork': 'Mon travail',
+    'nav.timeTracking': 'Suivi du temps',
+    'nav.monthlyTimesheet': 'Feuille de temps mensuelle',
+    'nav.organization': 'Organisation',
+    'nav.management': 'Gestion',
+    'nav.teamHours': "Heures de l'équipe",
+    'nav.invitations': 'Invitations',
+    'nav.approvals': 'Approbations',
+    'nav.users': 'Utilisateurs',
+    'nav.administration': 'Administration',
+    'nav.auditLog': "Journal d'audit",
+    'nav.adminSettings': 'Paramètres admin',
+    'nav.organizationSettings': "Paramètres de l'organisation",
+
+    'usermenu.settings': 'Paramètres',
+    'usermenu.logout': 'Déconnexion',
+    'usermenu.language': 'Langue',
+    'usermenu.save': 'Enregistrer',
+    'usermenu.cancel': 'Annuler',
+
+    'time.logWorkTime': 'Saisir le temps de travail (tous rôles)',
+    'time.start': 'Début',
+    'time.end': 'Fin',
+    'time.project': 'Projet',
+    'time.subproject': 'Sous-projet',
+    'time.comment': 'Commentaire',
+    'time.add': 'Ajouter',
+    'time.none': 'Aucun',
+    'time.overview': 'Aperçu',
+    'time.day': 'Jour',
+    'time.week': 'Semaine',
+    'time.month': 'Mois',
+    'time.prev': '‹ Précédent',
+    'time.next': 'Suivant ›',
+    'time.today': "Aujourd'hui",
+    'time.period': 'Période',
+    'time.minutes': 'Minutes',
+    'time.entries': 'Entrées',
+    'time.date': 'Date',
+    'time.time': 'Heure',
+    'time.edit': 'Modifier',
+    'time.noEntries': 'Aucune entrée pour l\'instant.',
+    'time.endMustBeAfterStart': 'La fin doit être après le début',
+
+    'timesheet.title': 'Feuille de temps mensuelle',
+    'timesheet.viewing': "Affichage {{period}}. Soumettez le mois une fois vos heures complètes — un manager devra l'approuver, et le mois sera verrouillé tant qu'il est soumis ou approuvé.",
+    'timesheet.prev': '‹ Précédent',
+    'timesheet.next': 'Suivant ›',
+    'timesheet.thisMonth': 'Ce mois-ci',
+    'timesheet.submit': 'Soumettre pour approbation',
+    'timesheet.pending': "En attente d'approbation",
+    'timesheet.approved': 'Approuvé',
+    'timesheet.resubmit': 'Resoumettre',
+    'timesheet.history': 'Historique',
+    'timesheet.status': 'Statut',
+    'timesheet.note': 'Note',
+    'timesheet.autoApproved': "Approuvé — aucun manager n'est enregistré pour vous, aucune vérification n'est donc nécessaire.",
+    'timesheet.submitted': 'Soumis pour approbation.',
+    'timesheet.rejected': 'Rejeté : {{note}}',
+    'timesheet.alreadySubmitted': 'Ce mois a déjà été soumis.',
+    'timesheet.submitFailed': 'Échec de la soumission ({{error}}).',
+    'timesheet.submitFailedOffline': "Échec de la soumission. L'API est-elle en cours d'exécution ?",
+
+    'staticdata.title': 'Données statiques',
+    'staticdata.description': 'Gérer les enums de la plateforme ({{count}}) — les valeurs sélectionnables derrière les projets, sous-projets et autres champs typés.',
+    'staticdata.newEnum': '+ Nouvel enum',
+    'staticdata.entity': 'Entité',
+    'staticdata.enumName': "Nom de l'enum",
+    'staticdata.values': 'Valeurs',
+    'staticdata.actions': 'Actions',
+    'staticdata.edit': 'Modifier',
+    'staticdata.delete': 'Supprimer',
+    'staticdata.empty': '(vide)',
+    'staticdata.noneYet': "Aucun enum de données statiques défini pour l'instant.",
+    'staticdata.editEnum': "Modifier l'enum",
+    'staticdata.newEnumTitle': 'Nouvel enum',
+    'staticdata.entityHelper': 'La table/ressource à laquelle appartient cet enum.',
+    'staticdata.key': 'Clé',
+    'staticdata.label': 'Libellé (par défaut)',
+    'staticdata.addValue': '+ Ajouter une valeur',
+    'staticdata.cancel': 'Annuler',
+    'staticdata.save': 'Enregistrer',
+    'staticdata.translations': 'Traductions',
+    'staticdata.translationsHelper': 'Libellés spécifiques à une langue, optionnels. Laissez vide pour revenir au libellé par défaut ci-dessus.',
+    'staticdata.translatedInto': 'Traduit : {{locales}}',
+  },
+  it: {
+    'appbar.title': 'Worktime',
+
+    'nav.myWork': 'Il mio lavoro',
+    'nav.timeTracking': 'Rilevazione orari',
+    'nav.monthlyTimesheet': 'Foglio ore mensile',
+    'nav.organization': 'Organizzazione',
+    'nav.management': 'Gestione',
+    'nav.teamHours': 'Ore del team',
+    'nav.invitations': 'Inviti',
+    'nav.approvals': 'Approvazioni',
+    'nav.users': 'Utenti',
+    'nav.administration': 'Amministrazione',
+    'nav.auditLog': 'Registro di controllo',
+    'nav.adminSettings': 'Impostazioni admin',
+    'nav.organizationSettings': 'Impostazioni organizzazione',
+
+    'usermenu.settings': 'Impostazioni',
+    'usermenu.logout': 'Esci',
+    'usermenu.language': 'Lingua',
+    'usermenu.save': 'Salva',
+    'usermenu.cancel': 'Annulla',
+
+    'time.logWorkTime': 'Registra orario di lavoro (tutti i ruoli)',
+    'time.start': 'Inizio',
+    'time.end': 'Fine',
+    'time.project': 'Progetto',
+    'time.subproject': 'Sottoprogetto',
+    'time.comment': 'Commento',
+    'time.add': 'Aggiungi',
+    'time.none': 'Nessuno',
+    'time.overview': 'Panoramica',
+    'time.day': 'Giorno',
+    'time.week': 'Settimana',
+    'time.month': 'Mese',
+    'time.prev': '‹ Prec.',
+    'time.next': 'Succ. ›',
+    'time.today': 'Oggi',
+    'time.period': 'Periodo',
+    'time.minutes': 'Minuti',
+    'time.entries': 'Voci',
+    'time.date': 'Data',
+    'time.time': 'Ora',
+    'time.edit': 'Modifica',
+    'time.noEntries': 'Nessuna voce ancora.',
+    'time.endMustBeAfterStart': "La fine deve essere successiva all'inizio",
+
+    'timesheet.title': 'Foglio ore mensile',
+    'timesheet.viewing': 'Visualizzazione {{period}}. Invia il mese una volta completate le ore — un manager dovrà approvarlo, e il mese verrà bloccato per ulteriori modifiche finché è inviato o approvato.',
+    'timesheet.prev': '‹ Prec.',
+    'timesheet.next': 'Succ. ›',
+    'timesheet.thisMonth': 'Questo mese',
+    'timesheet.submit': 'Invia per approvazione',
+    'timesheet.pending': 'In attesa di approvazione',
+    'timesheet.approved': 'Approvato',
+    'timesheet.resubmit': 'Reinvia',
+    'timesheet.history': 'Cronologia',
+    'timesheet.status': 'Stato',
+    'timesheet.note': 'Nota',
+    'timesheet.autoApproved': 'Approvato — non risulta alcun manager associato, quindi non è necessaria alcuna verifica.',
+    'timesheet.submitted': "Inviato per l'approvazione.",
+    'timesheet.rejected': 'Rifiutato: {{note}}',
+    'timesheet.alreadySubmitted': 'Questo mese è già stato inviato.',
+    'timesheet.submitFailed': 'Invio non riuscito ({{error}}).',
+    'timesheet.submitFailedOffline': "Invio non riuscito. L'API è in esecuzione?",
+
+    'staticdata.title': 'Dati statici',
+    'staticdata.description': 'Gestisci gli enum della piattaforma ({{count}}) — i valori selezionabili dietro progetti, sottoprogetti e altri campi tipizzati.',
+    'staticdata.newEnum': '+ Nuovo enum',
+    'staticdata.entity': 'Entità',
+    'staticdata.enumName': 'Nome enum',
+    'staticdata.values': 'Valori',
+    'staticdata.actions': 'Azioni',
+    'staticdata.edit': 'Modifica',
+    'staticdata.delete': 'Elimina',
+    'staticdata.empty': '(vuoto)',
+    'staticdata.noneYet': 'Nessun enum di dati statici definito ancora.',
+    'staticdata.editEnum': 'Modifica enum',
+    'staticdata.newEnumTitle': 'Nuovo enum',
+    'staticdata.entityHelper': 'La tabella/risorsa a cui appartiene questo enum.',
+    'staticdata.key': 'Chiave',
+    'staticdata.label': 'Etichetta (predefinita)',
+    'staticdata.addValue': '+ Aggiungi valore',
+    'staticdata.cancel': 'Annulla',
+    'staticdata.save': 'Salva',
+    'staticdata.translations': 'Traduzioni',
+    'staticdata.translationsHelper': "Etichette specifiche per lingua, opzionali. Lasciare vuoto per usare l'etichetta predefinita sopra.",
+    'staticdata.translatedInto': 'Tradotto: {{locales}}',
+  },
+};
+
+interface I18nContextValue {
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+  t: (key: string, vars?: Vars) => string;
+}
+
+const I18nContext = createContext<I18nContextValue | null>(null);
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [locale, setLocaleState] = useState<Locale>(() => detectInitialLocale());
+
+  function setLocale(next: Locale) {
+    setLocaleState(next);
+    try {
+      localStorage.setItem(LOCALE_STORAGE_KEY, next);
+    } catch { /* private-browsing etc. */ }
+  }
+
+  const t = useMemo(() => {
+    return (key: string, vars?: Vars) => {
+      const template = DICTIONARIES[locale]?.[key] ?? DICTIONARIES.en[key] ?? key;
+      if (!vars) return template;
+      return template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(vars[name] ?? ''));
+    };
+  }, [locale]);
+
+  const value = useMemo(() => ({ locale, setLocale, t }), [locale, t]);
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useI18n(): I18nContextValue {
+  const ctx = useContext(I18nContext);
+  if (!ctx) throw new Error('useI18n must be used within an I18nProvider');
+  return ctx;
+}
+
+/** Convenience for components that only need the translator function. */
+export function useT() {
+  return useI18n().t;
+}

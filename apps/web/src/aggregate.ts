@@ -81,18 +81,18 @@ export function periodRange(type: PeriodType, anchor: string): { from: string; t
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
-/** A human-readable label for the period of `type` containing `anchor`. */
-export function periodLabel(type: PeriodType, anchor: string): string {
+/** A human-readable label for the period of `type` containing `anchor`, formatted in `locale` (defaults to the browser's). */
+export function periodLabel(type: PeriodType, anchor: string, locale?: string): string {
   const [y, m, d] = anchor.split('-').map(Number);
   if (type === 'month') {
-    return new Date(y, m - 1, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+    return new Date(y, m - 1, 1).toLocaleDateString(locale, { month: 'long', year: 'numeric' });
   }
   if (type === 'day') {
-    return new Date(y, m - 1, d).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    return new Date(y, m - 1, d).toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   }
   const [wy, wm, wd] = startOfWeek(anchor).split('-').map(Number);
   const weekStart = new Date(wy, wm - 1, wd);
   const weekEnd = new Date(wy, wm - 1, wd + 6);
-  const fmt = (dt: Date) => dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const fmt = (dt: Date) => dt.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   return `${fmt(weekStart)} – ${fmt(weekEnd)}, ${weekEnd.getFullYear()}`;
 }

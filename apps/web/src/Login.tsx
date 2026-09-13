@@ -21,6 +21,8 @@ export interface Session {
   /** True when the token is a Keycloak access token from the SSO redirect. */
   sso?: boolean;
   memberships: Membership[];
+  /** The user's preferred UI language (e.g. 'en', 'de'); fetched from the API after login, defaults to 'en'. */
+  locale?: string;
 }
 
 const SESSION_KEY = 'worktime.session';

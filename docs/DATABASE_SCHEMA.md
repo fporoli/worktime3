@@ -2,7 +2,7 @@
 
 Postgres · Liquibase · Drizzle ORM
 
-17 tables across six subsystems, all scoped to a tenant through `organization_id` —
+18 tables across seven subsystems, all scoped to a tenant through `organization_id` —
 which is `NOT NULL` on `work_times`, since every entry belongs to an organization
 whether or not it's tagged to a project. Each section below is a self-contained
 entity-relationship diagram for one subsystem; tables that also appear elsewhere
@@ -79,6 +79,7 @@ erDiagram
     PERMISSIONS ||--o{ ROLE_PERMISSIONS : "granted via"
     ORGANIZATIONS ||--o{ ORGANIZATION_MEMBERSHIPS : "admits"
     USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "joins"
+    USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "manager_user_id"
     ORGANIZATION_MEMBERSHIPS ||--o{ MEMBERSHIP_ROLES : "holds"
     ROLES ||--o{ MEMBERSHIP_ROLES : "granted as"
     USERS ||--o{ MEMBERSHIP_ROLES : "granted_by_user_id"
@@ -107,6 +108,8 @@ erDiagram
         uuid organization_id FK
         uuid user_id FK
         enum status "active / invited / suspended"
+        uuid manager_user_id FK "nullable — who timesheet approvals route to; null = top of chain"
+        jsonb settings "free-form per-membership bucket: validity dates, planned holidays, etc."
     }
     MEMBERSHIP_ROLES {
         uuid membership_id PK "FK -> organization_memberships"
@@ -129,7 +132,9 @@ erDiagram
 > One membership row per `(organization_id, user_id)` — `uq_org_user_membership`
 > — but any number of rows in `membership_roles` for it. Granting or revoking a
 > role requires being an org owner/admin, or being listed in that role's own
-> `admin_user_ids`.
+> `admin_user_ids`. A member's `manager_user_id` is who their timesheet
+> submissions route to for approval (see Timesheets below) — an org admin can
+> always review/approve regardless of this chain.
 
 ## Teams (2 tables)
 
@@ -261,6 +266,32 @@ erDiagram
 > `audit` is a read-only view over `audit_logs` exposing the same rows under
 > legacy column names (`uuid`, `entity`, `actionby`) — not a separate table.
 
+## Static Data (1 table)
+
+Admin-managed dropdown/enum values (e.g. a project type list), scoped per
+organization so different orgs can define their own — not a platform-wide
+catalog.
+
+```mermaid
+erDiagram
+    ORGANIZATIONS ||--o{ STATIC_DATA : "defines"
+
+    STATIC_DATA {
+        uuid id PK
+        uuid organization_id FK
+        varchar entity "the table/resource this enum belongs to, e.g. 'projects'"
+        varchar enum_name "e.g. 'project_type'"
+        jsonb values "key -> default label"
+        jsonb translation "locale -> (key -> translated label), optional overrides"
+    }
+    ORGANIZATIONS { uuid id PK }
+```
+
+> One row per `(organization_id, entity, enum_name)` — `uq_static_data_org_entity_enum`.
+> Managing it (create/edit/delete) requires being that organization's admin;
+> any member can read it. Nothing references `static_data.id` by foreign key —
+> it's a pure lookup table, not yet wired into any dropdown elsewhere in the app.
+
 ## Enumerated Types (8 enums)
 
 | Enum | Values |
@@ -276,13 +307,11 @@ erDiagram
 
 ## Not diagrammed
 
-- `static_data` — a standalone, non-tenant-scoped table of admin-managed
-  enum/dropdown values (no foreign keys).
 - Liquibase's own bookkeeping tables `databasechangelog` /
   `databasechangeloglock`.
 
 ---
 
 Generated from `apps/api/src/db/schema.ts` (Drizzle ORM, introspected from the
-Liquibase-managed schema) on 2026-09-11. A styled, interactive version of this
+Liquibase-managed schema) on 2026-09-13. A styled, interactive version of this
 reference is also published as a Claude artifact.

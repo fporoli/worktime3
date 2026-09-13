@@ -33,6 +33,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type Entry, type PeriodType } from './aggregate';
+import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import Management from './Management';
@@ -45,6 +46,7 @@ import Assistant from './Assistant';
 import TeamHours from './TeamHours';
 import AuditLog from './AuditLog';
 import Users from './Users';
+import UserMenu from './UserMenu';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
@@ -105,6 +107,7 @@ function todayAt(hour: number): string {
 }
 
 export default function App() {
+  const { t, locale, setLocale } = useI18n();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -160,28 +163,28 @@ export default function App() {
 
   const NAV_GROUPS: Array<{ header: string; items: Array<{ key: Section; label: string; visible: boolean }> }> = [
     {
-      header: 'My Work',
+      header: t('nav.myWork'),
       items: [
-        { key: 'time', label: 'Time Tracking', visible: true },
-        { key: 'timesheet', label: 'Monthly Timesheet', visible: true },
+        { key: 'time', label: t('nav.timeTracking'), visible: true },
+        { key: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
       ],
     },
     {
-      header: 'Organization',
+      header: t('nav.organization'),
       items: [
-        { key: 'management', label: 'Management', visible: canManage },
-        { key: 'hours', label: 'Team Hours', visible: canManage },
-        { key: 'invitations', label: 'Invitations', visible: canManage },
-        { key: 'approvals', label: 'Approvals', visible: canManage },
-        { key: 'users', label: 'Users', visible: canManage },
+        { key: 'management', label: t('nav.management'), visible: canManage },
+        { key: 'hours', label: t('nav.teamHours'), visible: canManage },
+        { key: 'invitations', label: t('nav.invitations'), visible: canManage },
+        { key: 'approvals', label: t('nav.approvals'), visible: canManage },
+        { key: 'users', label: t('nav.users'), visible: canManage },
       ],
     },
     {
-      header: 'Administration',
+      header: t('nav.administration'),
       items: [
-        { key: 'orgSettings', label: 'Organization Settings', visible: role === 'admin' },
-        { key: 'audit', label: 'Audit Log', visible: role === 'admin' },
-        { key: 'admin', label: 'Admin Settings', visible: role === 'admin' },
+        { key: 'orgSettings', label: t('nav.organizationSettings'), visible: role === 'admin' },
+        { key: 'audit', label: t('nav.auditLog'), visible: role === 'admin' },
+        { key: 'admin', label: t('nav.adminSettings'), visible: role === 'admin' },
       ],
     },
   ];
@@ -306,6 +309,33 @@ export default function App() {
     if (draft) ensureSubprojects(draft.projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.projectId]);
+
+  // The login/register response doesn't carry the user's saved language preference — fetch it once per session.
+  useEffect(() => {
+    if (!session || session.locale) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/users/me`, { headers: await authHeaders() });
+        const data = await res.json();
+        if (data.ok && data.locale) {
+          setSession((prev) => {
+            if (!prev) return prev;
+            const updated = { ...prev, locale: data.locale };
+            saveSession(updated);
+            return updated;
+          });
+        }
+      } catch { /* offline demo */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.userId]);
+
+  // Once the account's saved language preference is known, it takes over from whatever the UI guessed (browser
+  // language, or a leftover locale from a previous account on this device).
+  useEffect(() => {
+    if (session?.locale && session.locale !== locale) setLocale(session.locale as Locale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.locale]);
 
   if (!session) {
     return (
@@ -475,7 +505,7 @@ export default function App() {
               ☰
             </IconButton>
           )}
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>Worktime</Typography>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>{t('appbar.title')}</Typography>
 
           {session.memberships.length > 1 ? (
             <FormControl size="small" sx={{ minWidth: 160 }}>
@@ -497,10 +527,16 @@ export default function App() {
             )
           )}
 
-          <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>
-            {session.displayName} ({session.email})
-          </Typography>
-          <Button color="inherit" size="small" onClick={logout}>Logout</Button>
+          <UserMenu
+            session={session}
+            authHeaders={authHeaders}
+            onLogout={logout}
+            onLocaleChange={(newLocale) => {
+              const updated = { ...session, locale: newLocale };
+              setSession(updated);
+              saveSession(updated);
+            }}
+          />
         </Toolbar>
       </AppBar>
 
@@ -530,48 +566,48 @@ export default function App() {
             <>
               {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
               <Paper sx={{ p: 2 }}>
-                <Typography variant="h6">Log work time (all roles)</Typography>
+                <Typography variant="h6">{t('time.logWorkTime')}</Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-                  <TextField label="Start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} size="small" />
-                  <TextField label="End" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} size="small" error={addRangeInvalid} helperText={addRangeInvalid ? 'End must be after start' : ' '} />
+                  <TextField label={t('time.start')} type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} size="small" />
+                  <TextField label={t('time.end')} type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} size="small" error={addRangeInvalid} helperText={addRangeInvalid ? t('time.endMustBeAfterStart') : ' '} />
                   <TextField
                     select
-                    label="Project"
+                    label={t('time.project')}
                     value={projectId}
                     onChange={(e) => { setProjectId(e.target.value); setSubprojectId(''); }}
                     size="small"
                     sx={{ minWidth: 180 }}
                   >
-                    <MenuItem value=""><em>None</em></MenuItem>
+                    <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
                     {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
                   </TextField>
                   <TextField
                     select
-                    label="Subproject"
+                    label={t('time.subproject')}
                     value={subprojectId}
                     onChange={(e) => setSubprojectId(e.target.value)}
                     size="small"
                     sx={{ minWidth: 180 }}
                     disabled={!projectId || subprojects.length === 0}
                   >
-                    <MenuItem value=""><em>None</em></MenuItem>
+                    <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
                     {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
                   </TextField>
-                  <TextField label="Comment" value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
-                  <Button variant="contained" onClick={addEntry} disabled={addRangeInvalid}>Add</Button>
+                  <TextField label={t('time.comment')} value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
+                  <Button variant="contained" onClick={addEntry} disabled={addRangeInvalid}>{t('time.add')}</Button>
                 </Box>
               </Paper>
               <Paper sx={{ p: 2 }}>
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Typography variant="h6">Overview — {periodLabel(periodType, periodAnchor)} ({Math.round(total)} min)</Typography>
+                  <Typography variant="h6">{t('time.overview')} — {periodLabel(periodType, periodAnchor, locale)} ({Math.round(total)} min)</Typography>
                   <ToggleButtonGroup value={periodType} exclusive onChange={(_, v) => v && setPeriodType(v)} size="small">
-                    <ToggleButton value="day">Day</ToggleButton>
-                    <ToggleButton value="week">Week</ToggleButton>
-                    <ToggleButton value="month">Month</ToggleButton>
+                    <ToggleButton value="day">{t('time.day')}</ToggleButton>
+                    <ToggleButton value="week">{t('time.week')}</ToggleButton>
+                    <ToggleButton value="month">{t('time.month')}</ToggleButton>
                   </ToggleButtonGroup>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
-                  <Button size="small" onClick={() => setPeriodAnchor((a) => shiftPeriod(periodType, a, -1))}>‹ Prev</Button>
+                  <Button size="small" onClick={() => setPeriodAnchor((a) => shiftPeriod(periodType, a, -1))}>{t('time.prev')}</Button>
                   <TextField
                     type={periodType === 'month' ? 'month' : 'date'}
                     size="small"
@@ -581,34 +617,34 @@ export default function App() {
                       setPeriodAnchor(periodType === 'month' ? `${e.target.value}-01` : e.target.value);
                     }}
                   />
-                  <Button size="small" onClick={() => setPeriodAnchor((a) => shiftPeriod(periodType, a, 1))}>Next ›</Button>
+                  <Button size="small" onClick={() => setPeriodAnchor((a) => shiftPeriod(periodType, a, 1))}>{t('time.next')}</Button>
                   {periodAnchor !== todayDate() && (
-                    <Button size="small" onClick={() => setPeriodAnchor(todayDate())}>Today</Button>
+                    <Button size="small" onClick={() => setPeriodAnchor(todayDate())}>{t('time.today')}</Button>
                   )}
                 </Box>
                 <Table size="small" sx={{ mt: 1 }}>
-                  <TableHead><TableRow><TableCell>Period</TableCell><TableCell>Minutes</TableCell></TableRow></TableHead>
+                  <TableHead><TableRow><TableCell>{t('time.period')}</TableCell><TableCell>{t('time.minutes')}</TableCell></TableRow></TableHead>
                   <TableBody>
                     {rows.map((r) => (<TableRow key={r.label}><TableCell>{r.label}</TableCell><TableCell>{Math.round(r.minutes)}</TableCell></TableRow>))}
                   </TableBody>
                 </Table>
-                <Typography variant="subtitle1" sx={{ mt: 3 }}>Entries</Typography>
+                <Typography variant="subtitle1" sx={{ mt: 3 }}>{t('time.entries')}</Typography>
                 <Table size="small" sx={{ mt: 1 }}>
                   <TableHead>
                     <TableRow>
-                      <TableCell>Date</TableCell>
-                      <TableCell>Time</TableCell>
-                      <TableCell align="right">Minutes</TableCell>
-                      <TableCell>Project</TableCell>
-                      <TableCell>Subproject</TableCell>
-                      <TableCell>Comment</TableCell>
+                      <TableCell>{t('time.date')}</TableCell>
+                      <TableCell>{t('time.time')}</TableCell>
+                      <TableCell align="right">{t('time.minutes')}</TableCell>
+                      <TableCell>{t('time.project')}</TableCell>
+                      <TableCell>{t('time.subproject')}</TableCell>
+                      <TableCell>{t('time.comment')}</TableCell>
                       <TableCell align="right" />
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {entries.map((e) => (
                       <TableRow key={e.id} hover>
-                        <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
+                        <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
                         <TableCell>{timeOf(e.start_time)} – {timeOf(e.end_time)}</TableCell>
                         <TableCell align="right">{Math.round(minutes(e))}</TableCell>
                         <TableCell>{e.project_name ?? '—'}</TableCell>
@@ -626,13 +662,13 @@ export default function App() {
                               comment: e.comment ?? '',
                             })}
                           >
-                            Edit
+                            {t('time.edit')}
                           </Button>
                         </TableCell>
                       </TableRow>
                     ))}
                     {entries.length === 0 && (
-                      <TableRow><TableCell colSpan={7}>No entries yet.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={7}>{t('time.noEntries')}</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>

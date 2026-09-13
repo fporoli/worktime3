@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, timesheet_periods, teams, organization_memberships, role_permissions, permissions, team_members, membership_roles } from "./schema";
+import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, organization_memberships, role_permissions, permissions, team_members, membership_roles } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -47,6 +47,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 	projects: many(projects),
 	subprojects: many(subprojects),
 	work_times: many(work_times),
+	static_data: many(static_data),
 	timesheet_periods: many(timesheet_periods),
 	teams: many(teams),
 	organization: one(organizations, {
@@ -146,6 +147,13 @@ export const work_timesRelations = relations(work_times, ({one}) => ({
 	subproject: one(subprojects, {
 		fields: [work_times.subproject_id],
 		references: [subprojects.id]
+	}),
+}));
+
+export const static_dataRelations = relations(static_data, ({one}) => ({
+	organization: one(organizations, {
+		fields: [static_data.organization_id],
+		references: [organizations.id]
 	}),
 }));
 

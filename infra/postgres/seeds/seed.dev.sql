@@ -59,11 +59,11 @@ VALUES
   ('33333333-3333-3333-3333-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day' + INTERVAL '90 minutes', 'Bugfix')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO static_data (entity, enum_name, "values", translation)
+INSERT INTO static_data (organization_id, entity, enum_name, "values", translation)
 VALUES
-  ('projects', 'project_type', '{"internal":"Internal","customer":"Customer","research":"Research"}', '{"de":{"internal":"Intern"}}'),
-  ('organization_memberships', 'membership_status', '{"active":"Active","invited":"Invited","suspended":"Suspended"}', '{}'),
-  ('work_times', 'billability', '{"billable":"Billable","non_billable":"Non billable"}', '{}')
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'projects', 'project_type', '{"internal":"Internal","customer":"Customer","research":"Research"}', '{"de":{"internal":"Intern"}}'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'organization_memberships', 'membership_status', '{"active":"Active","invited":"Invited","suspended":"Suspended"}', '{}'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'work_times', 'billability', '{"billable":"Billable","non_billable":"Non billable"}', '{}')
 ON CONFLICT DO NOTHING;
 
 UPDATE roles SET translations = translations || '{"de":"Administrator"}'::jsonb WHERE id = '00000000-0000-0000-0000-000000000002';
