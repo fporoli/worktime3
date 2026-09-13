@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Query, Req } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DbService } from './db.service';
+import { VersionsService } from './versions.service';
 import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { users, user_identities, organizations, organization_memberships, roles, membership_roles } from './db/schema';
@@ -9,7 +10,10 @@ const USER_COLUMNS = { id: users.id, email: users.email, display_name: users.dis
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly versions: VersionsService,
+  ) {}
 
   /** Resolve the caller from the validated JWT (local user id, or Keycloak sub -> user_identities). */
   @Get('me')
@@ -97,8 +101,8 @@ export class UsersController {
     if (keys.length === 0) return { ok: true, noop: true };
     const patch: Partial<typeof users.$inferInsert> = {};
     for (const k of keys) (patch as Record<string, unknown>)[k] = body[k];
-    patch.updated_at = new Date().toISOString();
     await db.update(users).set(patch).where(eq(users.id, id));
+    void this.versions.record('users', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true };
   }
 }

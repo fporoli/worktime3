@@ -41,7 +41,6 @@ export interface TeamItem {
   organization_id: string;
   name: string;
   description?: string | null;
-  created_at?: string;
   lead_user_id?: string | null;
   lead_display_name?: string | null;
   member_count?: number;

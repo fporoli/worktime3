@@ -5,6 +5,7 @@ import { HealthController } from './health.controller';
 import { WorktimeService } from './worktime.service';
 import { RbacService } from './rbac.service';
 import { AuditService } from './audit.service';
+import { VersionsService } from './versions.service';
 import { AuthController } from './auth.controller';
 import { UsersController } from './users.controller';
 import { OrgsController } from './orgs.controller';
@@ -39,6 +40,7 @@ import { DbService } from './db.service';
     WorktimeService,
     RbacService,
     AuditService,
+    VersionsService,
     AssistantService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],

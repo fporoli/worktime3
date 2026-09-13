@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@
 import { and, asc, eq, getTableColumns, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DbService } from './db.service';
+import { VersionsService } from './versions.service';
 import { callerUserId, canManageTeamMembers, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { teams, team_members, organization_memberships, users, roles, work_times, projects, subprojects } from './db/schema';
@@ -10,7 +11,10 @@ const leadUsers = alias(users, 'lead_users');
 
 @Controller()
 export class TeamsController {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly versions: VersionsService,
+  ) {}
 
   @Get('organizations/:orgId/teams')
   async list(@Param('orgId') orgId: string, @Req() req: AuthenticatedRequest) {
@@ -24,7 +28,6 @@ export class TeamsController {
         organization_id: teams.organization_id,
         name: teams.name,
         description: teams.description,
-        created_at: teams.created_at,
         lead_user_id: teams.lead_user_id,
         lead_display_name: leadUsers.display_name,
         member_count: sql<number>`count(${team_members.membership_id})::int`,
@@ -64,9 +67,9 @@ export class TeamsController {
         organization_id: teams.organization_id,
         name: teams.name,
         description: teams.description,
-        created_at: teams.created_at,
         lead_user_id: teams.lead_user_id,
       });
+    void this.versions.record('teams', team.id, 'insert', callerId, team).catch(() => {});
     return { ok: true, team, id: team.id };
   }
 
@@ -106,9 +109,9 @@ export class TeamsController {
         organization_id: teams.organization_id,
         name: teams.name,
         description: teams.description,
-        created_at: teams.created_at,
         lead_user_id: teams.lead_user_id,
       });
+    void this.versions.record('teams', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true, team: updated };
   }
 
@@ -126,6 +129,7 @@ export class TeamsController {
     }
 
     await db.delete(teams).where(eq(teams.id, id));
+    void this.versions.record('teams', id, 'delete', callerId, team).catch(() => {});
     return { ok: true };
   }
 
@@ -141,7 +145,6 @@ export class TeamsController {
       .select({
         team_id: team_members.team_id,
         membership_id: team_members.membership_id,
-        created_at: team_members.created_at,
         user_id: organization_memberships.user_id,
         email: users.email,
         display_name: users.display_name,

@@ -28,7 +28,6 @@ interface InvitationItem {
   email: string;
   status: 'pending' | 'accepted' | 'revoked' | 'expired';
   expires_at: string;
-  created_at: string;
   role_name: string;
   invited_by: string;
 }

@@ -5,6 +5,7 @@ import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember
 import type { AuthenticatedRequest } from './jwt.guard';
 import { timesheet_periods, users } from './db/schema';
 import { AuditService } from './audit.service';
+import { VersionsService } from './versions.service';
 
 const STATUSES = ['open', 'submitted', 'approved', 'rejected'] as const;
 type Status = (typeof STATUSES)[number];
@@ -22,6 +23,7 @@ export class TimesheetsController {
   constructor(
     private readonly db: DbService,
     private readonly audit: AuditService,
+    private readonly versions: VersionsService,
   ) {}
 
   @Get('organizations/:orgId/timesheet-periods')
@@ -100,29 +102,27 @@ export class TimesheetsController {
       : { status: 'submitted' as const, reviewed_by_user_id: null, reviewed_at: null };
 
     if (existing) {
-      await db
-        .update(timesheet_periods)
-        .set({ ...reviewFields, submitted_at: now, review_note: null, updated_at: now })
-        .where(eq(timesheet_periods.id, existing.id));
+      const patch = { ...reviewFields, submitted_at: now, review_note: null };
+      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, existing.id));
       void this.audit
         .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', existing.id, { periodStart })
         .catch(() => {});
+      void this.versions.record('timesheet_periods', existing.id, 'update_delta', callerId, patch).catch(() => {});
       return { ok: true, id: existing.id, autoApproved };
     }
-    const [created] = await db
-      .insert(timesheet_periods)
-      .values({
-        organization_id: orgId,
-        user_id: callerId,
-        period_start: periodStart,
-        period_end: nextMonthStart(periodStart),
-        ...reviewFields,
-        submitted_at: now,
-      })
-      .returning({ id: timesheet_periods.id });
+    const values = {
+      organization_id: orgId,
+      user_id: callerId,
+      period_start: periodStart,
+      period_end: nextMonthStart(periodStart),
+      ...reviewFields,
+      submitted_at: now,
+    };
+    const [created] = await db.insert(timesheet_periods).values(values).returning({ id: timesheet_periods.id });
     void this.audit
       .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', created.id, { periodStart })
       .catch(() => {});
+    void this.versions.record('timesheet_periods', created.id, 'insert', callerId, { id: created.id, ...values }).catch(() => {});
     return { ok: true, id: created.id, autoApproved };
   }
 
@@ -157,19 +157,17 @@ export class TimesheetsController {
       return { ok: false, error: 'forbidden' };
     }
     if (period.status !== 'submitted') return { ok: false, error: 'not-submitted' };
-    await db
-      .update(timesheet_periods)
-      .set({
-        status: newStatus,
-        reviewed_by_user_id: callerId,
-        reviewed_at: new Date().toISOString(),
-        review_note: note?.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
-      .where(eq(timesheet_periods.id, id));
+    const patch = {
+      status: newStatus,
+      reviewed_by_user_id: callerId,
+      reviewed_at: new Date().toISOString(),
+      review_note: note?.trim() || null,
+    };
+    await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
     void this.audit
       .record(period.organization_id, callerId, `timesheet.${newStatus === 'approved' ? 'approve' : 'reject'}`, 'timesheet_period', id, note ? { note } : undefined)
       .catch(() => {});
+    void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true };
   }
 
@@ -187,11 +185,10 @@ export class TimesheetsController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgAdmin(db, period.organization_id, callerId))) return { ok: false, error: 'forbidden' };
     if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
-    await db
-      .update(timesheet_periods)
-      .set({ status: 'open', reviewed_by_user_id: null, reviewed_at: null, review_note: null, updated_at: new Date().toISOString() })
-      .where(eq(timesheet_periods.id, id));
+    const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
+    await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
     void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
+    void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true };
   }
 }

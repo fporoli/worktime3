@@ -3,6 +3,7 @@ import { asc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, isOrgManagerOrAdmin, isOrgMember, userOrgRole } from './access';
 import { RbacService } from './rbac.service';
+import { VersionsService } from './versions.service';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { projects, subprojects, users } from './db/schema';
 
@@ -11,6 +12,7 @@ export class ProjectsController {
   constructor(
     private readonly db: DbService,
     private readonly rbac: RbacService,
+    private readonly versions: VersionsService,
   ) {}
 
   @Get('organizations/:orgId/projects')
@@ -60,6 +62,7 @@ export class ProjectsController {
         type: (body.type as (typeof projects.$inferInsert)['type']) ?? 'internal',
       })
       .returning();
+    void this.versions.record('projects', project.id, 'insert', callerId, project).catch(() => {});
     return { ok: true, id: project.id, project };
   }
 
@@ -85,13 +88,14 @@ export class ProjectsController {
       return { ok: false, error: 'forbidden' };
     }
 
-    const patch: Partial<typeof projects.$inferInsert> = { updated_at: new Date().toISOString() };
+    const patch: Partial<typeof projects.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.ownerUserId !== undefined) patch.owner_user_id = body.ownerUserId || null;
     if (body.costItem !== undefined) patch.cost_item = body.costItem || null;
     if (body.type !== undefined) patch.type = body.type as (typeof projects.$inferInsert)['type'];
 
     const [updated] = await db.update(projects).set(patch).where(eq(projects.id, id)).returning();
+    void this.versions.record('projects', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true, project: updated };
   }
 
@@ -114,6 +118,7 @@ export class ProjectsController {
     }
 
     await db.delete(projects).where(eq(projects.id, id));
+    void this.versions.record('projects', id, 'delete', callerId, project).catch(() => {});
     return { ok: true };
   }
 
@@ -196,6 +201,7 @@ export class ProjectsController {
         type: (body.type as (typeof subprojects.$inferInsert)['type']) ?? 'phase',
       })
       .returning();
+    void this.versions.record('subprojects', subproject.id, 'insert', callerId, subproject).catch(() => {});
     return { ok: true, id: subproject.id, subproject };
   }
 
@@ -236,13 +242,14 @@ export class ProjectsController {
       return { ok: false, error: 'forbidden' };
     }
 
-    const patch: Partial<typeof subprojects.$inferInsert> = { updated_at: new Date().toISOString() };
+    const patch: Partial<typeof subprojects.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.ownerUserId !== undefined) patch.owner_user_id = body.ownerUserId || null;
     if (body.costItem !== undefined) patch.cost_item = body.costItem || null;
     if (body.type !== undefined) patch.type = body.type as (typeof subprojects.$inferInsert)['type'];
 
     const [updated] = await db.update(subprojects).set(patch).where(eq(subprojects.id, id)).returning();
+    void this.versions.record('subprojects', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true, subproject: updated };
   }
 
@@ -267,6 +274,7 @@ export class ProjectsController {
     }
 
     await db.delete(subprojects).where(eq(subprojects.id, id));
+    void this.versions.record('subprojects', id, 'delete', callerId, subproject).catch(() => {});
     return { ok: true };
   }
 }

@@ -1,13 +1,17 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
 import { DbService } from './db.service';
+import { VersionsService } from './versions.service';
 import { callerUserId, isOrgAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { static_data } from './db/schema';
 
 @Controller('organizations/:orgId/static-data')
 export class StaticDataController {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly versions: VersionsService,
+  ) {}
 
   /** All enum definitions for this organization, for the admin static-data screen. */
   @Get()
@@ -48,17 +52,16 @@ export class StaticDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
     if (!body.entity?.trim() || !body.enumName?.trim()) return { ok: false, error: 'entity-and-enum-name-required' };
-    const [row] = await db
-      .insert(static_data)
-      .values({
-        organization_id: orgId,
-        entity: body.entity.trim(),
-        entity_uuid: body.entityUuid ?? null,
-        enum_name: body.enumName.trim(),
-        values: body.values ?? {},
-        translation: body.translation ?? {},
-      })
-      .returning({ id: static_data.id });
+    const values = {
+      organization_id: orgId,
+      entity: body.entity.trim(),
+      entity_uuid: body.entityUuid ?? null,
+      enum_name: body.enumName.trim(),
+      values: body.values ?? {},
+      translation: body.translation ?? {},
+    };
+    const [row] = await db.insert(static_data).values(values).returning({ id: static_data.id });
+    void this.versions.record('static_data', row.id, 'insert', callerId, { id: row.id, ...values }).catch(() => {});
     return { ok: true, id: row.id };
   }
 
@@ -83,6 +86,7 @@ export class StaticDataController {
     if (Object.keys(patch).length > 0) {
       // Scoped by organization_id too, so an org admin can't edit another org's row by guessing its id.
       await db.update(static_data).set(patch).where(and(eq(static_data.id, id), eq(static_data.organization_id, orgId)));
+      void this.versions.record('static_data', id, 'update_delta', callerId, patch).catch(() => {});
     }
     return { ok: true };
   }
@@ -95,6 +99,7 @@ export class StaticDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
     await db.delete(static_data).where(and(eq(static_data.id, id), eq(static_data.organization_id, orgId)));
+    void this.versions.record('static_data', id, 'delete', callerId, null).catch(() => {});
     return { ok: true };
   }
 }

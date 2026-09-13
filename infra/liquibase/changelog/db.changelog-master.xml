@@ -27,5 +27,10 @@
     <include file="009-drop-team-member-manager.sql" relativeToChangelogFile="true"/>
     <include file="010-membership-manager-and-settings.sql" relativeToChangelogFile="true"/>
     <include file="011-static-data-organization-scoped.sql" relativeToChangelogFile="true"/>
+    <include file="012-versions.sql" relativeToChangelogFile="true"/>
+    <include file="013-versions-rename-columns.sql" relativeToChangelogFile="true"/>
+    <include file="014-versions-rename-workflow-column.sql" relativeToChangelogFile="true"/>
+    <include file="015-workflows.sql" relativeToChangelogFile="true"/>
+    <include file="016-drop-created-updated-columns.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

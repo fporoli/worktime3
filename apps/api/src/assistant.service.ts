@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import { and, asc, eq, ilike, inArray } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
+import { VersionsService } from './versions.service';
 import { isOrgMember, isOrgManagerOrAdmin, isPeriodLocked } from './access';
 import { work_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
 
@@ -80,7 +81,10 @@ const TOOLS: ChatCompletionTool[] = [
 
 @Injectable()
 export class AssistantService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly versions: VersionsService,
+  ) {}
 
   /**
    * Provider is swappable without touching any call site below: Gemini
@@ -234,14 +238,16 @@ export class AssistantService {
         results.push({ date, ok: false, error: `unknown project "${projectName}"` });
         continue;
       }
-      await ctx.db.insert(work_times).values({
+      const values = {
         user_id: ctx.callerId,
         organization_id: ctx.orgId,
         project_id: project?.id ?? null,
         start_time: start,
         end_time: end,
         comment: typeof e.comment === 'string' ? e.comment : null,
-      });
+      };
+      const [row] = await ctx.db.insert(work_times).values(values).returning({ id: work_times.id });
+      void this.versions.record('work_times', row.id, 'insert', ctx.callerId, { id: row.id, ...values }).catch(() => {});
       created += 1;
       results.push({ date, ok: true });
     }

@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@
 import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorktimeService } from './worktime.service';
+import { VersionsService } from './versions.service';
 import { callerUserId, isOrgMember, isPeriodLocked } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { work_times, projects, subprojects } from './db/schema';
@@ -11,6 +12,7 @@ export class WorktimeController {
   constructor(
     private readonly db: DbService,
     private readonly wt: WorktimeService,
+    private readonly versions: VersionsService,
   ) {}
 
   @Post('organizations/:orgId/work-time')
@@ -26,18 +28,17 @@ export class WorktimeController {
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
     if (await isPeriodLocked(db, orgId, userId, body.startTime)) return { ok: false, error: 'period-locked' };
-    const [row] = await db
-      .insert(work_times)
-      .values({
-        user_id: userId,
-        organization_id: orgId,
-        project_id: body.projectId ?? null,
-        subproject_id: body.subprojectId ?? null,
-        start_time: body.startTime,
-        end_time: body.endTime,
-        comment: body.comment ?? null,
-      })
-      .returning({ id: work_times.id });
+    const values = {
+      user_id: userId,
+      organization_id: orgId,
+      project_id: body.projectId ?? null,
+      subproject_id: body.subprojectId ?? null,
+      start_time: body.startTime,
+      end_time: body.endTime,
+      comment: body.comment ?? null,
+    };
+    const [row] = await db.insert(work_times).values(values).returning({ id: work_times.id });
+    void this.versions.record('work_times', row.id, 'insert', userId, { id: row.id, ...values }).catch(() => {});
     return { ok: true, id: row.id };
   }
 
@@ -112,8 +113,8 @@ export class WorktimeController {
     if (body.comment !== undefined) patch.comment = body.comment;
     if (Object.keys(patch).length === 0) return { ok: true };
     // One statement: start/end move together, so chk_worktime_order never sees a half-applied edit.
-    patch.updated_at = new Date().toISOString();
     await db.update(work_times).set(patch).where(eq(work_times.id, id));
+    void this.versions.record('work_times', id, 'update_delta', owned.userId, patch).catch(() => {});
     return { ok: true };
   }
 
@@ -124,6 +125,7 @@ export class WorktimeController {
     const owned = await this.assertEditableEntry(db, id, req);
     if ('error' in owned) return owned;
     await db.delete(work_times).where(eq(work_times.id, id));
+    void this.versions.record('work_times', id, 'delete', owned.userId, owned.entry).catch(() => {});
     return { ok: true };
   }
 

@@ -7,6 +7,7 @@ import { sendMail } from './mailer';
 import * as bcrypt from 'bcryptjs';
 import { users, user_identities, organizations, organization_memberships, organization_invitations, roles, membership_roles } from './db/schema';
 import { pickPrimaryRole } from './access';
+import { VersionsService } from './versions.service';
 
 /**
  * Auth: Keycloak is the IdP (same Postgres DB, `auth` schema).
@@ -91,7 +92,10 @@ async function membershipsOf(db: Db, userId: string): Promise<SessionMembership[
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly versions: VersionsService,
+  ) {}
 
   @Public()
   @Post('onboard')
@@ -110,6 +114,9 @@ export class AuthController {
         target: [user_identities.provider, user_identities.provider_user_id],
         set: { password_hash: body.passwordHash },
       });
+    void this.versions
+      .record('users', user.id, 'update_delta', user.id, { email: body.email, display_name: body.displayName })
+      .catch(() => {});
     return { ok: true, userId: user.id };
   }
 
@@ -134,6 +141,7 @@ export class AuthController {
     await db
       .insert(user_identities)
       .values({ user_id: userId, provider: 'password', provider_user_id: email, password_hash: passwordHash });
+    void this.versions.record('users', userId, 'insert', userId, user).catch(() => {});
     const base = slugBase(email) || 'workspace';
     let slug = base;
     for (let attempt = 0; attempt < 25; attempt++) {
@@ -145,11 +153,15 @@ export class AuthController {
       .insert(organizations)
       .values({ slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: userId })
       .returning({ id: organizations.id });
+    void this.versions.record('organizations', org.id, 'insert', userId, { id: org.id, slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal' }).catch(() => {});
     const [membership] = await db
       .insert(organization_memberships)
       .values({ organization_id: org.id, user_id: userId, status: 'active' })
       .returning({ id: organization_memberships.id });
     await db.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
+    void this.versions
+      .record('organization_memberships', membership.id, 'insert', userId, { id: membership.id, organization_id: org.id, user_id: userId, status: 'active' })
+      .catch(() => {});
     const session: Session = {
       userId,
       email: user.email,
@@ -235,6 +247,7 @@ export class AuthController {
     if (!isValidPassword(body.password)) return { ok: false, error: 'password-too-short' };
     const [invitation] = await db
       .select({
+        id: organization_invitations.id,
         organization_id: organization_invitations.organization_id,
         email: organization_invitations.email,
         role_id: organization_invitations.role_id,
@@ -247,6 +260,7 @@ export class AuthController {
     if (invitation.status !== 'pending') return { ok: false, error: 'invitation-not-pending' };
     if (new Date(invitation.expires_at).getTime() < Date.now()) {
       await db.update(organization_invitations).set({ status: 'expired' }).where(eq(organization_invitations.token, token));
+      void this.versions.record('organization_invitations', invitation.id, 'update_delta', null, { status: 'expired' }).catch(() => {});
       return { ok: false, error: 'invitation-expired' };
     }
     const email = invitation.email.toLowerCase();
@@ -258,6 +272,7 @@ export class AuthController {
         .values({ email, display_name: body.displayName.trim() })
         .returning({ id: users.id });
       userId = created.id;
+      void this.versions.record('users', userId, 'insert', userId, { id: userId, email, display_name: body.displayName.trim() }).catch(() => {});
     } else {
       userId = existingUser.id;
     }
@@ -277,11 +292,15 @@ export class AuthController {
         set: { status: 'active' },
       })
       .returning({ id: organization_memberships.id });
+    void this.versions
+      .record('organization_memberships', membership.id, 'update_delta', userId, { organization_id: invitation.organization_id, user_id: userId, status: 'active' })
+      .catch(() => {});
     await db
       .insert(membership_roles)
       .values({ membership_id: membership.id, role_id: invitation.role_id })
       .onConflictDoNothing();
     await db.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
+    void this.versions.record('organization_invitations', invitation.id, 'update_delta', userId, { status: 'accepted' }).catch(() => {});
     const session: Session = {
       userId,
       email,
@@ -341,6 +360,7 @@ export class AuthController {
       .insert(user_identities)
       .values({ user_id: userId, provider: 'oidc', provider_user_id: principal.sub })
       .onConflictDoNothing();
+    void this.versions.record('users', userId, 'insert', userId, { id: userId, email }).catch(() => {});
     return userId;
   }
 

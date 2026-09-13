@@ -1,13 +1,14 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, canManageRole, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { sendMail } from './mailer';
 import { isValidEmail } from './auth.controller';
 import { AuditService } from './audit.service';
+import { VersionsService } from './versions.service';
 import {
   organizations,
   organization_memberships,
@@ -38,7 +39,6 @@ const ORG_COLUMNS = {
   name: organizations.name,
   type: organizations.type,
   avatar_url: organizations.avatar_url,
-  created_at: organizations.created_at,
 };
 
 @Controller('organizations')
@@ -46,6 +46,7 @@ export class OrgsController {
   constructor(
     private readonly db: DbService,
     private readonly audit: AuditService,
+    private readonly versions: VersionsService,
   ) {}
 
   @Get(':id')
@@ -75,9 +76,9 @@ export class OrgsController {
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.avatarUrl !== undefined) patch.avatar_url = body.avatarUrl;
     if (Object.keys(patch).length > 0) {
-      patch.updated_at = new Date().toISOString();
       await db.update(organizations).set(patch).where(eq(organizations.id, id));
       void this.audit.record(id, callerId, 'organization.update', 'organization', id, patch).catch(() => {});
+      void this.versions.record('organizations', id, 'update_delta', callerId, patch).catch(() => {});
     }
     return { ok: true };
   }
@@ -182,9 +183,9 @@ export class OrgsController {
     if (body.settings !== undefined) patch.settings = body.settings;
     if (Object.keys(patch).length === 0) return { ok: true, noop: true };
 
-    patch.updated_at = new Date().toISOString();
     await db.update(organization_memberships).set(patch).where(eq(organization_memberships.id, membershipId));
     void this.audit.record(id, callerId, 'membership.update', 'membership', membershipId, patch).catch(() => {});
+    void this.versions.record('organization_memberships', membershipId, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true };
   }
 
@@ -285,6 +286,9 @@ export class OrgsController {
     // Best-effort invite mail (local catcher); the token is returned so it can be shared manually.
     void sendMail({ to: email, ...mail }).catch(() => {});
     void this.audit.record(id, callerId, 'invitation.send', 'organization_invitation', inserted.id, { email, roleId: body.roleId }).catch(() => {});
+    void this.versions
+      .record('organization_invitations', inserted.id, 'insert', callerId, { id: inserted.id, organization_id: id, email, role_id: body.roleId, token, expires_at: expiresAt })
+      .catch(() => {});
     return { ok: true, token, id: inserted.id };
   }
 
@@ -300,15 +304,13 @@ export class OrgsController {
         email: organization_invitations.email,
         status: organization_invitations.status,
         expires_at: organization_invitations.expires_at,
-        created_at: organization_invitations.created_at,
         role_name: roles.name,
         invited_by: users.display_name,
       })
       .from(organization_invitations)
       .innerJoin(roles, eq(roles.id, organization_invitations.role_id))
       .innerJoin(users, eq(users.id, organization_invitations.invited_by_user_id))
-      .where(eq(organization_invitations.organization_id, id))
-      .orderBy(desc(organization_invitations.created_at));
+      .where(eq(organization_invitations.organization_id, id));
   }
 
   @Delete('invitations/:invitationId')
@@ -333,6 +335,7 @@ export class OrgsController {
     void this.audit
       .record(invitation.organization_id, callerId, 'invitation.revoke', 'organization_invitation', invitationId)
       .catch(() => {});
+    void this.versions.record('organization_invitations', invitationId, 'update_delta', callerId, { status: 'revoked' }).catch(() => {});
     return { ok: true };
   }
 
@@ -348,7 +351,6 @@ export class OrgsController {
         domain: organization_domains.domain,
         verified_at: organization_domains.verified_at,
         auto_join_enabled: organization_domains.auto_join_enabled,
-        created_at: organization_domains.created_at,
       })
       .from(organization_domains)
       .where(eq(organization_domains.organization_id, id))
@@ -368,7 +370,7 @@ export class OrgsController {
     if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
     const domain = (body.domain ?? '').trim().toLowerCase();
     if (!domain) return { ok: false, error: 'domain-required' };
-    await db
+    const [row] = await db
       .insert(organization_domains)
       .values({
         organization_id: id,
@@ -379,10 +381,12 @@ export class OrgsController {
       .onConflictDoUpdate({
         target: organization_domains.domain,
         set: { auto_join_enabled: body.autoJoin ?? false },
-      });
+      })
+      .returning({ id: organization_domains.id });
     void this.audit
       .record(id, callerId, 'domain.upsert', 'organization_domain', domain, { autoJoin: body.autoJoin ?? false })
       .catch(() => {});
+    void this.versions.record('organization_domains', row.id, 'update_delta', callerId, { domain, auto_join_enabled: body.autoJoin ?? false }).catch(() => {});
     return { ok: true };
   }
 
@@ -419,19 +423,16 @@ export class OrgsController {
     const protocol = body.protocol;
     const idpEntityId = body.idpEntityId.trim();
     const idpSsoUrl = body.idpSsoUrl.trim();
-    await db
-      .update(organizations)
-      .set({
-        sso_config: {
-          protocol,
-          idp_entity_id: idpEntityId,
-          idp_sso_url: idpSsoUrl,
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        },
-      })
-      .where(eq(organizations.id, id));
+    const ssoConfig = {
+      protocol,
+      idp_entity_id: idpEntityId,
+      idp_sso_url: idpSsoUrl,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    };
+    await db.update(organizations).set({ sso_config: ssoConfig }).where(eq(organizations.id, id));
     void this.audit.record(id, callerId, 'sso.upsert', 'organization', id, { protocol, idpEntityId }).catch(() => {});
+    void this.versions.record('organizations', id, 'update_delta', callerId, { sso_config: ssoConfig }).catch(() => {});
     return { ok: true };
   }
 }

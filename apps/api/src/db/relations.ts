@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, organization_memberships, role_permissions, permissions, team_members, membership_roles } from "./schema";
+import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, organization_memberships, versions, workflow_definitions, workflows, role_permissions, permissions, team_members, membership_roles } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -28,6 +28,12 @@ export const usersRelations = relations(users, ({many}) => ({
 	}),
 	organization_memberships_manager_user_id: many(organization_memberships, {
 		relationName: "organization_memberships_manager_user_id_users_id"
+	}),
+	versions_created_by_user_id: many(versions, {
+		relationName: "versions_created_by_user_id_users_id"
+	}),
+	versions_lastmodified_by_user_id: many(versions, {
+		relationName: "versions_lastmodified_by_user_id_users_id"
 	}),
 	membership_roles: many(membership_roles),
 }));
@@ -63,6 +69,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 		references: [users.id]
 	}),
 	organization_memberships: many(organization_memberships),
+	workflow_definitions: many(workflow_definitions),
 }));
 
 export const organization_invitationsRelations = relations(organization_invitations, ({one}) => ({
@@ -183,6 +190,7 @@ export const teamsRelations = relations(teams, ({one, many}) => ({
 		fields: [teams.lead_user_id],
 		references: [users.id]
 	}),
+	workflows: many(workflows),
 	team_members: many(team_members),
 }));
 
@@ -203,6 +211,38 @@ export const organization_membershipsRelations = relations(organization_membersh
 	}),
 	team_members: many(team_members),
 	membership_roles: many(membership_roles),
+}));
+
+export const versionsRelations = relations(versions, ({one}) => ({
+	user_created_by_user_id: one(users, {
+		fields: [versions.created_by_user_id],
+		references: [users.id],
+		relationName: "versions_created_by_user_id_users_id"
+	}),
+	user_lastmodified_by_user_id: one(users, {
+		fields: [versions.lastmodified_by_user_id],
+		references: [users.id],
+		relationName: "versions_lastmodified_by_user_id_users_id"
+	}),
+}));
+
+export const workflow_definitionsRelations = relations(workflow_definitions, ({one, many}) => ({
+	organization: one(organizations, {
+		fields: [workflow_definitions.organization_id],
+		references: [organizations.id]
+	}),
+	workflows: many(workflows),
+}));
+
+export const workflowsRelations = relations(workflows, ({one}) => ({
+	workflow_definition: one(workflow_definitions, {
+		fields: [workflows.workflow_def_id],
+		references: [workflow_definitions.workflow_def_id]
+	}),
+	team: one(teams, {
+		fields: [workflows.assigned_to_team_id],
+		references: [teams.id]
+	}),
 }));
 
 export const role_permissionsRelations = relations(role_permissions, ({one}) => ({
