@@ -4,6 +4,11 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   LinearProgress,
   MenuItem,
   Paper,
@@ -53,29 +58,36 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revokeTargetId, setRevokeTargetId] = useState<string | null>(null);
 
   async function reloadRoles() {
     try {
-      const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/roles`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) {
-        setRoles(data);
-        setRoleId((prev) => prev || data.find((r: RoleOption) => r.name === 'member')?.id || data[0]?.id || '');
+        setRoles(data.filter((r) => r.name !== 'owner'));
+        if (!roleId && data.length > 0) {
+          const defaultRole = data.find((r) => r.name === 'member') ?? data[0];
+          setRoleId(defaultRole.id);
+        }
       }
     } catch { /* offline fallback */ }
   }
 
   async function reloadInvitations() {
+    setLoading(true);
     try {
       const res = await fetch(`${API}/organizations/${orgId}/invitations`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) setInvitations(data);
-    } catch { /* offline fallback */ }
+    } catch { /* offline fallback */ } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    setLoading(true);
-    Promise.all([reloadRoles(), reloadInvitations()]).finally(() => setLoading(false));
+    reloadRoles();
+    reloadInvitations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -86,7 +98,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
     setSuccess(null);
     setLastInviteLink(null);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/invite`, {
+      const res = await fetch(`${API}/organizations/${orgId}/invitations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ email: trimmed, roleId }),
@@ -94,11 +106,9 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
       const data = await res.json();
       if (!data.ok) {
         setError(
-          data.error === 'invalid-email'
-            ? 'Please enter a valid email address.'
-            : data.error === 'forbidden'
-              ? 'You do not have permission to invite members.'
-              : `Failed to send invitation (${data.error ?? 'unknown error'}).`,
+          data.error === 'forbidden'
+            ? 'You do not have permission to invite members.'
+            : `Failed to send invitation (${data.error ?? 'unknown error'}).`,
         );
         return;
       }
@@ -114,7 +124,6 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   }
 
   async function handleRevoke(invitationId: string) {
-    if (!window.confirm('Revoke this invitation? The invite link will stop working.')) return;
     setError(null);
     try {
       await fetch(`${API}/organizations/invitations/${invitationId}`, { method: 'DELETE', headers: await authHeaders() });
@@ -194,7 +203,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
                   size="small"
                   color="error"
                   disabled={inv.status !== 'pending'}
-                  onClick={() => handleRevoke(inv.id)}
+                  onClick={() => setRevokeTargetId(inv.id)}
                 >
                   Revoke
                 </Button>
@@ -206,6 +215,29 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
           )}
         </TableBody>
       </Table>
+
+      <Dialog open={!!revokeTargetId} onClose={() => setRevokeTargetId(null)}>
+        <DialogTitle>Revoke invitation</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Revoke this invitation? The invite link will stop working immediately.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevokeTargetId(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={async () => {
+              const id = revokeTargetId;
+              setRevokeTargetId(null);
+              if (id) await handleRevoke(id);
+            }}
+          >
+            Revoke
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }

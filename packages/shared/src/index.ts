@@ -114,6 +114,7 @@ export interface Team {
   organizationId: UUID;
   name: string;
   description?: string;
+  leadUserId?: UUID | null;
   createdAt?: string;
   memberCount?: number;
 }
@@ -124,11 +125,21 @@ export interface TeamMember {
   userId?: UUID;
   displayName?: string;
   email?: string;
-  managerUserId?: UUID | null;
-  managerDisplayName?: string;
   teamRoleId?: UUID | null;
   teamRoleName?: string;
   createdAt?: string;
+}
+
+export interface OrgMember {
+  id: UUID;
+  userId: UUID;
+  status: MembershipStatus;
+  email: string;
+  displayName: string;
+  managerUserId?: UUID | null;
+  managerDisplayName?: string | null;
+  roleIds?: UUID[];
+  roleNames?: string[];
 }
 
 export interface Project {

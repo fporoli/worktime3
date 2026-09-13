@@ -117,3 +117,19 @@ test('guard accepts a local token and attaches the principal', async () => {
   assert.equal(await guard.canActivate(context), true);
   assert.deepEqual(req.user, { kind: 'local', sub: 'user-7', email: 'c@example.com' });
 });
+
+test('localSecret throws in production if API_JWT_SECRET is unset', async () => {
+  const origEnv = process.env.NODE_ENV;
+  const origSecret = process.env.API_JWT_SECRET;
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.API_JWT_SECRET;
+    await assert.rejects(async () => {
+      await mintLocalToken('user-x', 'x@example.com');
+    }, /API_JWT_SECRET environment variable is required in production/);
+  } finally {
+    if (origEnv !== undefined) process.env.NODE_ENV = origEnv;
+    else delete process.env.NODE_ENV;
+    if (origSecret !== undefined) process.env.API_JWT_SECRET = origSecret;
+  }
+});

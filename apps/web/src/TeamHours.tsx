@@ -17,7 +17,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { bucket, minutes, type Entry, type View } from './aggregate';
+import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type Entry, type PeriodType, type View } from './aggregate';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -51,11 +51,15 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [teamId, setTeamId] = useState('');
   const [view, setView] = useState<View>('weekly');
+  const [anchor, setAnchor] = useState<string>(todayDate());
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [entries, setEntries] = useState<TeamMemberEntry[]>([]);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const periodType: PeriodType = view === 'daily' ? 'day' : view === 'weekly' ? 'week' : 'month';
+  const { from, to } = periodRange(periodType, anchor);
 
   async function reloadTeams() {
     try {
@@ -68,12 +72,15 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
     } catch { /* offline fallback */ }
   }
 
-  async function reloadWorkTime(id: string) {
+  async function reloadWorkTime(id: string, fromIso: string, toIso: string) {
     if (!id) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API}/teams/${id}/work-time`, { headers: await authHeaders() });
+      const url = new URL(`${API}/teams/${id}/work-time`);
+      url.searchParams.set('from', fromIso);
+      url.searchParams.set('to', toIso);
+      const res = await fetch(url.toString(), { headers: await authHeaders() });
       const data = await res.json();
       setMembers(Array.isArray(data.members) ? data.members : []);
       setEntries(Array.isArray(data.entries) ? data.entries : []);
@@ -91,9 +98,9 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
 
   useEffect(() => {
     setExpandedUserId(null);
-    reloadWorkTime(teamId);
+    reloadWorkTime(teamId, from, to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId]);
+  }, [teamId, from, to]);
 
   const entriesByUser = new Map<string, TeamMemberEntry[]>();
   for (const e of entries) {
@@ -121,6 +128,26 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
           <ToggleButton value="weekly">Weekly</ToggleButton>
           <ToggleButton value="monthly">Monthly</ToggleButton>
         </ToggleButtonGroup>
+      </Box>
+
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
+        <Typography variant="subtitle2" sx={{ mr: 1, minWidth: 160 }}>
+          {periodLabel(periodType, anchor)}
+        </Typography>
+        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, -1))}>Prev</Button>
+        <TextField
+          type={periodType === 'month' ? 'month' : 'date'}
+          size="small"
+          value={periodType === 'month' ? anchor.slice(0, 7) : anchor}
+          onChange={(e) => {
+            if (!e.target.value) return;
+            setAnchor(periodType === 'month' ? `${e.target.value}-01` : e.target.value);
+          }}
+        />
+        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, 1))}>Next</Button>
+        {anchor !== todayDate() && (
+          <Button size="small" onClick={() => setAnchor(todayDate())}>Today</Button>
+        )}
       </Box>
 
       {teams.length === 0 && <Typography variant="body2" color="text.secondary">No teams yet — create one in the Teams tab first.</Typography>}

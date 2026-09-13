@@ -133,35 +133,39 @@ export class AuthController {
     const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
     if (existing) return { ok: false, error: 'email-taken' };
     const passwordHash = await bcrypt.hash(body.password, 10);
-    const [user] = await db
-      .insert(users)
-      .values({ email, display_name: body.displayName.trim() })
-      .returning({ id: users.id, email: users.email, display_name: users.display_name });
+    const { u: user, orgId, membershipId, slug } = await db.transaction(async (tx) => {
+      const [u] = await tx
+        .insert(users)
+        .values({ email, display_name: body.displayName.trim() })
+        .returning({ id: users.id, email: users.email, display_name: users.display_name });
+      const uid = u.id;
+      await tx
+        .insert(user_identities)
+        .values({ user_id: uid, provider: 'password', provider_user_id: email, password_hash: passwordHash });
+      const base = slugBase(email) || 'workspace';
+      let workspaceSlug = base;
+      for (let attempt = 0; attempt < 25; attempt++) {
+        const [taken] = await tx.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, workspaceSlug));
+        if (!taken) break;
+        workspaceSlug = `${base}-${attempt + 2}`;
+      }
+      const [org] = await tx
+        .insert(organizations)
+        .values({ slug: workspaceSlug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: uid })
+        .returning({ id: organizations.id });
+      const [membership] = await tx
+        .insert(organization_memberships)
+        .values({ organization_id: org.id, user_id: uid, status: 'active' })
+        .returning({ id: organization_memberships.id });
+      await tx.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
+      return { u, orgId: org.id, membershipId: membership.id, slug: workspaceSlug };
+    });
+
     const userId = user.id;
-    await db
-      .insert(user_identities)
-      .values({ user_id: userId, provider: 'password', provider_user_id: email, password_hash: passwordHash });
     void this.versions.record('users', userId, 'insert', userId, user).catch(() => {});
-    const base = slugBase(email) || 'workspace';
-    let slug = base;
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const [taken] = await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, slug));
-      if (!taken) break;
-      slug = `${base}-${attempt + 2}`;
-    }
-    const [org] = await db
-      .insert(organizations)
-      .values({ slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: userId })
-      .returning({ id: organizations.id });
-    void this.versions.record('organizations', org.id, 'insert', userId, { id: org.id, slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal' }).catch(() => {});
-    const [membership] = await db
-      .insert(organization_memberships)
-      .values({ organization_id: org.id, user_id: userId, status: 'active' })
-      .returning({ id: organization_memberships.id });
-    await db.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
-    void this.versions
-      .record('organization_memberships', membership.id, 'insert', userId, { id: membership.id, organization_id: org.id, user_id: userId, status: 'active' })
-      .catch(() => {});
+    void this.versions.record('organizations', orgId, 'insert', userId, { id: orgId, slug, name: `${body.displayName.trim()}'s workspace`, type: 'personal' }).catch(() => {});
+    void this.versions.record('organization_memberships', membershipId, 'insert', userId, { id: membershipId, organization_id: orgId, user_id: userId, status: 'active' }).catch(() => {});
+
     const session: Session = {
       userId,
       email: user.email,
@@ -265,42 +269,48 @@ export class AuthController {
     }
     const email = invitation.email.toLowerCase();
     const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
-    let userId: string;
-    if (!existingUser) {
-      const [created] = await db
-        .insert(users)
-        .values({ email, display_name: body.displayName.trim() })
-        .returning({ id: users.id });
-      userId = created.id;
-      void this.versions.record('users', userId, 'insert', userId, { id: userId, email, display_name: body.displayName.trim() }).catch(() => {});
-    } else {
-      userId = existingUser.id;
-    }
     const passwordHash = await bcrypt.hash(body.password, 10);
-    await db
-      .insert(user_identities)
-      .values({ user_id: userId, provider: 'password', provider_user_id: email, password_hash: passwordHash })
-      .onConflictDoUpdate({
-        target: [user_identities.provider, user_identities.provider_user_id],
-        set: { password_hash: passwordHash },
-      });
-    const [membership] = await db
-      .insert(organization_memberships)
-      .values({ organization_id: invitation.organization_id, user_id: userId, status: 'active' })
-      .onConflictDoUpdate({
-        target: [organization_memberships.organization_id, organization_memberships.user_id],
-        set: { status: 'active' },
-      })
-      .returning({ id: organization_memberships.id });
-    void this.versions
-      .record('organization_memberships', membership.id, 'update_delta', userId, { organization_id: invitation.organization_id, user_id: userId, status: 'active' })
-      .catch(() => {});
-    await db
-      .insert(membership_roles)
-      .values({ membership_id: membership.id, role_id: invitation.role_id })
-      .onConflictDoNothing();
-    await db.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
+
+    const { userId, membershipId, wasNewUser } = await db.transaction(async (tx) => {
+      let uid: string;
+      if (!existingUser) {
+        const [created] = await tx
+          .insert(users)
+          .values({ email, display_name: body.displayName.trim() })
+          .returning({ id: users.id });
+        uid = created.id;
+      } else {
+        uid = existingUser.id;
+      }
+      await tx
+        .insert(user_identities)
+        .values({ user_id: uid, provider: 'password', provider_user_id: email, password_hash: passwordHash })
+        .onConflictDoUpdate({
+          target: [user_identities.provider, user_identities.provider_user_id],
+          set: { password_hash: passwordHash },
+        });
+      const [membership] = await tx
+        .insert(organization_memberships)
+        .values({ organization_id: invitation.organization_id, user_id: uid, status: 'active' })
+        .onConflictDoUpdate({
+          target: [organization_memberships.organization_id, organization_memberships.user_id],
+          set: { status: 'active' },
+        })
+        .returning({ id: organization_memberships.id });
+      await tx
+        .insert(membership_roles)
+        .values({ membership_id: membership.id, role_id: invitation.role_id })
+        .onConflictDoNothing();
+      await tx.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
+      return { userId: uid, membershipId: membership.id, wasNewUser: !existingUser };
+    });
+
+    if (wasNewUser) {
+      void this.versions.record('users', userId, 'insert', userId, { id: userId, email, display_name: body.displayName.trim() }).catch(() => {});
+    }
+    void this.versions.record('organization_memberships', membershipId, 'update_delta', userId, { organization_id: invitation.organization_id, user_id: userId, status: 'active' }).catch(() => {});
     void this.versions.record('organization_invitations', invitation.id, 'update_delta', userId, { status: 'accepted' }).catch(() => {});
+
     const session: Session = {
       userId,
       email,

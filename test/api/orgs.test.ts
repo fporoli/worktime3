@@ -4,7 +4,9 @@ import { buildInviteEmail } from '../../apps/api/src/orgs.controller';
 import {
   callerUserId,
   canManageRole,
+  directReportUserIds,
   isAnyOrgAdmin,
+  isManagerOf,
   isOrgAdmin,
   isOrgMember,
   isPeriodLocked,
@@ -86,4 +88,15 @@ test('canManageRole: a non-admin is allowed only when listed in that role\'s adm
 test('isPeriodLocked reflects whether a matching submitted/approved period row was found', async () => {
   assert.equal(await isPeriodLocked(fakeDb([{ '?column?': 1 }]), 'org', 'u', '2026-09-07'), true);
   assert.equal(await isPeriodLocked(fakeDb([]), 'org', 'u', '2026-09-07'), false);
+});
+
+test('isManagerOf checks designated manager on organization membership', async () => {
+  assert.equal(await isManagerOf(fakeDb([{ manager_user_id: 'mgr-1' }]), 'org', 'mgr-1', 'emp-1'), true);
+  assert.equal(await isManagerOf(fakeDb([{ manager_user_id: 'other-mgr' }]), 'org', 'mgr-1', 'emp-1'), false);
+  assert.equal(await isManagerOf(fakeDb([]), 'org', 'mgr-1', 'emp-1'), false);
+});
+
+test('directReportUserIds returns list of employee user ids', async () => {
+  assert.deepEqual(await directReportUserIds(fakeDb([{ user_id: 'u-1' }, { user_id: 'u-2' }]), 'org', 'mgr-1'), ['u-1', 'u-2']);
+  assert.deepEqual(await directReportUserIds(fakeDb([]), 'org', 'mgr-1'), []);
 });

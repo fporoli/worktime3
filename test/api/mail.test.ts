@@ -54,7 +54,7 @@ async function withFakeSmtp(fn: (port: number, seen: { mailFrom: string; rcptTo:
   try {
     await fn(port, seen);
   } catch (e: any) {
-    if (e?.code === 'EPERM') {
+    if (e?.code === 'EPERM' || e?.code === 'ESOCKET') {
       server.close();
       return null;
     }

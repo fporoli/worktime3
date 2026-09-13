@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppBar,
@@ -12,6 +12,7 @@ import {
   Drawer,
   FormControl,
   IconButton,
+  LinearProgress,
   List,
   ListItemButton,
   ListItemText,
@@ -36,17 +37,18 @@ import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type
 import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
-import Management from './Management';
-import Invitations from './Invitations';
-import AdminSettings from './AdminSettings';
-import OrganizationSettings from './OrganizationSettings';
-import Timesheet from './Timesheet';
-import Approvals from './Approvals';
-import Assistant from './Assistant';
-import TeamHours from './TeamHours';
-import AuditLog from './AuditLog';
-import Users from './Users';
 import UserMenu from './UserMenu';
+
+const Management = lazy(() => import('./Management'));
+const Invitations = lazy(() => import('./Invitations'));
+const AdminSettings = lazy(() => import('./AdminSettings'));
+const OrganizationSettings = lazy(() => import('./OrganizationSettings'));
+const Timesheet = lazy(() => import('./Timesheet'));
+const Approvals = lazy(() => import('./Approvals'));
+const Assistant = lazy(() => import('./Assistant'));
+const TeamHours = lazy(() => import('./TeamHours'));
+const AuditLog = lazy(() => import('./AuditLog'));
+const Users = lazy(() => import('./Users'));
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
@@ -676,44 +678,46 @@ export default function App() {
             </>
           )}
 
-          {section === 'timesheet' && orgId && (
-            <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
-          )}
+          <Suspense fallback={<LinearProgress sx={{ my: 2 }} />}>
+            {section === 'timesheet' && orgId && (
+              <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
 
-          {section === 'management' && canManage && orgId && (
-            <Management
-              session={session}
-              orgId={orgId}
-              role={role}
-              authHeaders={authHeaders}
-              onDataChanged={() => {
-                reloadProjects();
-                setSubprojectsByProject({});
-                if (projectId) ensureSubprojects(projectId);
-              }}
-            />
-          )}
-          {section === 'hours' && canManage && orgId && (
-            <TeamHours orgId={orgId} authHeaders={authHeaders} />
-          )}
-          {section === 'invitations' && canManage && orgId && (
-            <Invitations orgId={orgId} authHeaders={authHeaders} />
-          )}
-          {section === 'approvals' && canManage && orgId && (
-            <Approvals orgId={orgId} role={role} authHeaders={authHeaders} />
-          )}
-          {section === 'users' && canManage && orgId && (
-            <Users orgId={orgId} role={role} authHeaders={authHeaders} />
-          )}
-          {section === 'audit' && role === 'admin' && orgId && (
-            <AuditLog orgId={orgId} authHeaders={authHeaders} />
-          )}
-          {section === 'admin' && role === 'admin' && orgId && (
-            <AdminSettings orgId={orgId} authHeaders={authHeaders} />
-          )}
-          {section === 'orgSettings' && role === 'admin' && orgId && (
-            <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />
-          )}
+            {section === 'management' && canManage && orgId && (
+              <Management
+                session={session}
+                orgId={orgId}
+                role={role}
+                authHeaders={authHeaders}
+                onDataChanged={() => {
+                  reloadProjects();
+                  setSubprojectsByProject({});
+                  if (projectId) ensureSubprojects(projectId);
+                }}
+              />
+            )}
+            {section === 'hours' && canManage && orgId && (
+              <TeamHours orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'invitations' && canManage && orgId && (
+              <Invitations orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'approvals' && canManage && orgId && (
+              <Approvals orgId={orgId} role={role} authHeaders={authHeaders} />
+            )}
+            {section === 'users' && canManage && orgId && (
+              <Users orgId={orgId} role={role} authHeaders={authHeaders} />
+            )}
+            {section === 'audit' && role === 'admin' && orgId && (
+              <AuditLog orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'admin' && role === 'admin' && orgId && (
+              <AdminSettings orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'orgSettings' && role === 'admin' && orgId && (
+              <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />
+            )}
+          </Suspense>
         </Container>
       </Box>
 
@@ -759,7 +763,9 @@ export default function App() {
             </Typography>
           </Box>
           <Box sx={{ width: ASSISTANT_PANEL_WIDTH, flexShrink: 0, height: '100%' }}>
-            <Assistant orgId={orgId} authHeaders={authHeaders} />
+            <Suspense fallback={<LinearProgress sx={{ m: 2 }} />}>
+              <Assistant orgId={orgId} authHeaders={authHeaders} />
+            </Suspense>
           </Box>
         </Box>
       )}

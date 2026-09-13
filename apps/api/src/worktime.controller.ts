@@ -3,7 +3,7 @@ import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorktimeService } from './worktime.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isOrgMember, isPeriodLocked } from './access';
+import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isPeriodLocked } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { work_times, projects, subprojects } from './db/schema';
 
@@ -55,10 +55,22 @@ export class WorktimeController {
     if (!db) return { entries: [], summary: {} };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { entries: [], summary: {} };
+
+    const isAdmin = await isOrgAdmin(db, orgId, callerId);
+    let targetUserId = userId;
+    if (targetUserId && targetUserId !== callerId) {
+      if (!isAdmin && !(await isManagerOf(db, orgId, callerId, targetUserId))) {
+        return { entries: [], summary: {} };
+      }
+    } else if (!targetUserId && !isAdmin) {
+      targetUserId = callerId;
+    }
+
     const conditions: SQL[] = [eq(work_times.organization_id, orgId)];
-    if (userId) conditions.push(eq(work_times.user_id, userId));
+    if (targetUserId) conditions.push(eq(work_times.user_id, targetUserId));
     if (from) conditions.push(gte(work_times.start_time, from));
     if (to) conditions.push(lt(work_times.start_time, to));
+
 
     // Names come along so the UI can list entries without a lookup per row.
     const rows = await db

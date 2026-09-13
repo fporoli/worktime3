@@ -215,6 +215,7 @@ export const work_times = pgTable("work_times", {
 }, (table) => [
 	index("idx_worktimes_project").using("btree", table.project_id.asc().nullsLast().op("uuid_ops")),
 	index("idx_worktimes_user_start").using("btree", table.user_id.asc().nullsLast().op("timestamptz_ops"), table.start_time.asc().nullsLast().op("timestamptz_ops")),
+	index("idx_worktimes_org_start").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.start_time.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.user_id],
 			foreignColumns: [users.id],

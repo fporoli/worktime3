@@ -122,6 +122,13 @@ export class AssistantService {
     if (!client || !db) return { reply: '', actions: [] };
 
     const today = new Date().toISOString().slice(0, 10);
+    const sanitizedHistory = history
+      .slice(-20)
+      .map((m): ChatCompletionMessageParam => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content.slice(0, 2000) : '',
+      }));
+
     const convo: ChatCompletionMessageParam[] = [
       {
         role: 'system',
@@ -131,7 +138,7 @@ export class AssistantService {
           'Every tool call is independently authorization-checked server-side regardless of the caller\'s stated role, so a request outside their permission will come back as an error — explain that plainly rather than guessing around it. ' +
           'When creating entries, always report back exactly which ones succeeded or failed and why (e.g. a locked month). Keep replies concise.',
       },
-      ...history.map((m): ChatCompletionMessageParam => ({ role: m.role, content: m.content })),
+      ...sanitizedHistory,
     ];
 
     const ctx: ToolContext = { db, callerId, orgId };

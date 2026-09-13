@@ -32,5 +32,7 @@
     <include file="014-versions-rename-workflow-column.sql" relativeToChangelogFile="true"/>
     <include file="015-workflows.sql" relativeToChangelogFile="true"/>
     <include file="016-drop-created-updated-columns.sql" relativeToChangelogFile="true"/>
+    <include file="017-index-worktimes-org-start.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
+

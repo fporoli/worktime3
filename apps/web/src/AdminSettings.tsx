@@ -7,6 +7,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   IconButton,
   LinearProgress,
@@ -70,6 +71,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
   const [editingEnum, setEditingEnum] = useState<StaticDataRow | null>(null);
   const [enumEntity, setEnumEntity] = useState('');
   const [enumName, setEnumName] = useState('');
+  const [deletingEnum, setDeletingEnum] = useState<StaticDataRow | null>(null);
   const [enumKvList, setEnumKvList] = useState<KV[]>([{ key: '', label: '' }]);
   /** Per-language label overrides being edited: locale -> (values key -> translated label). */
   const [enumTranslations, setEnumTranslations] = useState<Record<string, Record<string, string>>>({});
@@ -171,7 +173,6 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
   }
 
   async function handleDeleteEnum(row: StaticDataRow) {
-    if (!confirm(`Delete enum "${row.enum_name}" (${row.entity})?`)) return;
     setError(null);
     try {
       await fetch(`${API}/organizations/${orgId}/static-data/${row.id}`, { method: 'DELETE', headers: await authHeaders() });
@@ -233,7 +234,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
                   </TableCell>
                   <TableCell align="right">
                     <Button size="small" sx={{ mr: 1 }} onClick={() => openEditEnum(row)}>{t('staticdata.edit')}</Button>
-                    <Button size="small" color="error" onClick={() => handleDeleteEnum(row)}>{t('staticdata.delete')}</Button>
+                    <Button size="small" color="error" onClick={() => setDeletingEnum(row)}>{t('staticdata.delete')}</Button>
                   </TableCell>
                 </TableRow>
               );
@@ -322,6 +323,29 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
         <DialogActions>
           <Button onClick={() => setEnumDialogOpen(false)}>{t('staticdata.cancel')}</Button>
           <Button variant="contained" onClick={handleSaveEnum} disabled={!enumEntity.trim() || !enumName.trim()}>{t('staticdata.save')}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!deletingEnum} onClose={() => setDeletingEnum(null)}>
+        <DialogTitle>Delete enum</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {deletingEnum ? `Delete enum "${deletingEnum.enum_name}" (${deletingEnum.entity})?` : ''}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeletingEnum(null)}>{t('staticdata.cancel')}</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={async () => {
+              const row = deletingEnum;
+              setDeletingEnum(null);
+              if (row) await handleDeleteEnum(row);
+            }}
+          >
+            {t('staticdata.delete')}
+          </Button>
         </DialogActions>
       </Dialog>
     </Paper>

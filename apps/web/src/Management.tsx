@@ -7,6 +7,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   LinearProgress,
   MenuItem,
@@ -165,6 +166,9 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   const [subprojectCost, setSubprojectCost] = useState('');
   const [subprojectOwner, setSubprojectOwner] = useState(session.userId);
 
+  // Confirmation Dialog
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void> } | null>(null);
+
   // -------------------------------------------------------------
   // Data Fetching
   // -------------------------------------------------------------
@@ -315,7 +319,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   }
 
   async function handleDeleteTeam(teamId: string) {
-    if (!confirm('Are you sure you want to delete this team?')) return;
     setError(null);
     try {
       await fetch(`${API}/teams/${teamId}`, { method: 'DELETE', headers: await authHeaders() });
@@ -462,7 +465,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   }
 
   async function handleDeleteProject(projectId: string) {
-    if (!confirm('Are you sure you want to delete this project and all its subprojects?')) return;
     setError(null);
     try {
       await fetch(`${API}/projects/${projectId}`, { method: 'DELETE', headers: await authHeaders() });
@@ -586,7 +588,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   }
 
   async function handleDeleteSubproject(sub: SubprojectItem) {
-    if (!confirm(`Are you sure you want to delete subproject "${sub.name}"?`)) return;
     setError(null);
     try {
       await fetch(`${API}/subprojects/${sub.id}`, { method: 'DELETE', headers: await authHeaders() });
@@ -667,7 +668,17 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                     <Button size="small" sx={{ mr: 1 }} onClick={() => openEditTeam(t)}>
                       Edit
                     </Button>
-                    <Button size="small" color="error" onClick={() => handleDeleteTeam(t.id)}>
+                    <Button
+                      size="small"
+                      color="error"
+                      onClick={() =>
+                        setConfirmDialog({
+                          title: 'Delete team',
+                          message: 'Are you sure you want to delete this team?',
+                          onConfirm: () => handleDeleteTeam(t.id),
+                        })
+                      }
+                    >
                       Delete
                     </Button>
                   </TableCell>
@@ -745,7 +756,13 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                         size="small"
                         color="error"
                         disabled={role !== 'admin' && !isOwner}
-                        onClick={() => handleDeleteProject(p.id)}
+                        onClick={() =>
+                          setConfirmDialog({
+                            title: 'Delete project',
+                            message: 'Are you sure you want to delete this project and all its subprojects?',
+                            onConfirm: () => handleDeleteProject(p.id),
+                          })
+                        }
                       >
                         Delete
                       </Button>
@@ -820,7 +837,13 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                             size="small"
                             color="error"
                             disabled={!canSub}
-                            onClick={() => handleDeleteSubproject(s)}
+                            onClick={() =>
+                              setConfirmDialog({
+                                title: 'Delete subproject',
+                                message: `Are you sure you want to delete subproject "${s.name}"?`,
+                                onConfirm: () => handleDeleteSubproject(s),
+                              })
+                            }
                           >
                             Delete
                           </Button>
@@ -1063,6 +1086,27 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
         <DialogActions>
           <Button onClick={() => setSubprojectDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleSaveSubproject} disabled={!subprojectName.trim()}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!confirmDialog} onClose={() => setConfirmDialog(null)}>
+        <DialogTitle>{confirmDialog?.title ?? 'Confirm'}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>{confirmDialog?.message}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDialog(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={async () => {
+              const action = confirmDialog?.onConfirm;
+              setConfirmDialog(null);
+              if (action) await action();
+            }}
+          >
+            Delete
+          </Button>
         </DialogActions>
       </Dialog>
     </Paper>

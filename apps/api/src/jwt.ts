@@ -32,7 +32,14 @@ export function keycloakAudience(): string {
 }
 
 function localSecret(): Buffer {
-  return Buffer.from(process.env.API_JWT_SECRET ?? 'dev-only-secret-change-me', 'utf8');
+  const secret = process.env.API_JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('API_JWT_SECRET environment variable is required in production');
+    }
+    return Buffer.from('dev-only-secret-change-me', 'utf8');
+  }
+  return Buffer.from(secret, 'utf8');
 }
 
 function b64urlDecode(input: string): Buffer {

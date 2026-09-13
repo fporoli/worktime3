@@ -3,6 +3,11 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   LinearProgress,
   Paper,
   Table,
@@ -13,11 +18,13 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 interface PeriodRow {
   id: string;
+  user_id: string;
   user_display_name: string;
   user_email: string;
   period_start: string;
@@ -38,6 +45,32 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
+
+  const [inspectingPeriod, setInspectingPeriod] = useState<PeriodRow | null>(null);
+  const [inspectingEntries, setInspectingEntries] = useState<Entry[]>([]);
+  const [inspectingLoading, setInspectingLoading] = useState(false);
+  const [inspectingError, setInspectingError] = useState<string | null>(null);
+
+  async function inspect(period: PeriodRow) {
+    setInspectingPeriod(period);
+    setInspectingEntries([]);
+    setInspectingLoading(true);
+    setInspectingError(null);
+    try {
+      const { from, to } = periodRange('month', period.period_start.slice(0, 10));
+      const url = new URL(`${API}/organizations/${orgId}/work-time`);
+      url.searchParams.set('userId', period.user_id);
+      url.searchParams.set('from', from);
+      url.searchParams.set('to', to);
+      const res = await fetch(url.toString(), { headers: await authHeaders() });
+      const data = await res.json();
+      setInspectingEntries(Array.isArray(data.entries) ? data.entries : []);
+    } catch {
+      setInspectingError('Failed to load timesheet entries.');
+    } finally {
+      setInspectingLoading(false);
+    }
+  }
 
   async function reload() {
     setLoading(true);
@@ -145,6 +178,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 <TableCell>{p.period_start.slice(0, 7)}</TableCell>
                 <TableCell>{p.submitted_at ? new Date(p.submitted_at).toLocaleString() : '—'}</TableCell>
                 <TableCell align="right">
+                  <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p)}>Inspect</Button>
                   <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approve(p.id)}>Approve</Button>
                   <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === p.id ? null : p.id)}>Reject</Button>
                 </TableCell>
@@ -180,6 +214,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <TableCell>{p.user_display_name}</TableCell>
                   <TableCell>{p.period_start.slice(0, 7)}</TableCell>
                   <TableCell align="right">
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p)}>Inspect</Button>
                     <Button size="small" onClick={() => reopen(p.id)}>Reopen</Button>
                   </TableCell>
                 </TableRow>
@@ -191,6 +226,90 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
           </Table>
         </>
       )}
+
+      <Dialog open={!!inspectingPeriod} onClose={() => setInspectingPeriod(null)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          {inspectingPeriod ? `Review Timesheet: ${inspectingPeriod.user_display_name} (${periodLabel('month', inspectingPeriod.period_start.slice(0, 10))})` : 'Review Timesheet'}
+        </DialogTitle>
+        <DialogContent dividers>
+          {inspectingError && <Alert severity="error" sx={{ mb: 2 }}>{inspectingError}</Alert>}
+          {inspectingLoading && <LinearProgress sx={{ mb: 2 }} />}
+          {inspectingPeriod && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                {inspectingPeriod.user_email}
+              </Typography>
+              <Chip
+                label={`Total: ${Math.floor(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) / 60)}h ${Math.round(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) % 60)}m`}
+                color="primary"
+                variant="outlined"
+              />
+            </Box>
+          )}
+          {inspectingEntries.length === 0 && !inspectingLoading ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No entries logged for this period.</Typography>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Date</TableCell>
+                  <TableCell>Time</TableCell>
+                  <TableCell align="right">Duration</TableCell>
+                  <TableCell>Project</TableCell>
+                  <TableCell>Subproject</TableCell>
+                  <TableCell>Comment</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {inspectingEntries.map((e) => {
+                  const m = Math.round(minutes(e));
+                  const h = Math.floor(m / 60);
+                  const rem = m % 60;
+                  const startTime = new Date(e.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const endTime = new Date(e.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  return (
+                    <TableRow key={e.id}>
+                      <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
+                      <TableCell>{`${startTime} – ${endTime}`}</TableCell>
+                      <TableCell align="right">{`${h}h ${rem}m`}</TableCell>
+                      <TableCell>{e.project_name ?? '—'}</TableCell>
+                      <TableCell>{e.subproject_name ?? '—'}</TableCell>
+                      <TableCell>{e.comment ?? '—'}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInspectingPeriod(null)}>Close</Button>
+          {inspectingPeriod && pending.some((p) => p.id === inspectingPeriod.id) && (
+            <>
+              <Button
+                color="error"
+                onClick={() => {
+                  const id = inspectingPeriod.id;
+                  setInspectingPeriod(null);
+                  setRejectingId(id);
+                }}
+              >
+                Reject...
+              </Button>
+              <Button
+                variant="contained"
+                onClick={async () => {
+                  const id = inspectingPeriod.id;
+                  setInspectingPeriod(null);
+                  await approve(id);
+                }}
+              >
+                Approve
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }
