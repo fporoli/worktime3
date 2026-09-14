@@ -33,6 +33,8 @@
     <include file="015-workflows.sql" relativeToChangelogFile="true"/>
     <include file="016-drop-created-updated-columns.sql" relativeToChangelogFile="true"/>
     <include file="017-index-worktimes-org-start.sql" relativeToChangelogFile="true"/>
+    <include file="018-workflow-steps.sql" relativeToChangelogFile="true"/>
+    <include file="019-revert-workflow-steps.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

@@ -6,6 +6,7 @@ import { WorktimeService } from './worktime.service';
 import { RbacService } from './rbac.service';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
+import { WorkflowsService } from './workflows.service';
 import { AuthController } from './auth.controller';
 import { UsersController } from './users.controller';
 import { OrgsController } from './orgs.controller';
@@ -14,6 +15,7 @@ import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { WorktimeController } from './worktime.controller';
 import { TimesheetsController } from './timesheets.controller';
+import { WorkflowsController } from './workflows.controller';
 import { StaticDataController } from './static-data.controller';
 import { AuditController } from './audit.controller';
 import { AssistantController } from './assistant.controller';
@@ -31,6 +33,7 @@ import { DbService } from './db.service';
     ProjectsController,
     WorktimeController,
     TimesheetsController,
+    WorkflowsController,
     StaticDataController,
     AuditController,
     AssistantController,
@@ -41,6 +44,7 @@ import { DbService } from './db.service';
     RbacService,
     AuditService,
     VersionsService,
+    WorkflowsService,
     AssistantService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],

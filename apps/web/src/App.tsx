@@ -53,7 +53,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'timesheet' | 'management' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings';
+type Section = 'time' | 'timesheet' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -163,30 +163,32 @@ export default function App() {
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
 
-  const NAV_GROUPS: Array<{ header: string; items: Array<{ key: Section; label: string; visible: boolean }> }> = [
+  const NAV_GROUPS: Array<{ header: string; items: Array<{ id: string; section: Section; label: string; visible: boolean; indent?: boolean }> }> = [
     {
       header: t('nav.myWork'),
       items: [
-        { key: 'time', label: t('nav.timeTracking'), visible: true },
-        { key: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
+        { id: 'time', section: 'time', label: t('nav.timeTracking'), visible: true },
+        { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
       ],
     },
     {
       header: t('nav.organization'),
       items: [
-        { key: 'management', label: t('nav.management'), visible: canManage },
-        { key: 'hours', label: t('nav.teamHours'), visible: canManage },
-        { key: 'invitations', label: t('nav.invitations'), visible: canManage },
-        { key: 'approvals', label: t('nav.approvals'), visible: canManage },
-        { key: 'users', label: t('nav.users'), visible: canManage },
+        { id: 'hours', section: 'hours', label: t('nav.teamHours'), visible: canManage },
+        { id: 'approvals', section: 'approvals', label: t('nav.approvals'), visible: canManage },
+        { id: 'users', section: 'users', label: t('nav.users'), visible: canManage },
+        { id: 'invitations', section: 'invitations', label: t('nav.invitations'), visible: canManage, indent: true },
+        { id: 'management', section: 'management', label: t('nav.management'), visible: canManage },
+        { id: 'management-teams', section: 'management', label: t('nav.teams'), visible: canManage, indent: true },
+        { id: 'management-projects', section: 'managementProjects', label: t('nav.managementProjects'), visible: canManage, indent: true },
       ],
     },
     {
       header: t('nav.administration'),
       items: [
-        { key: 'orgSettings', label: t('nav.organizationSettings'), visible: role === 'admin' },
-        { key: 'audit', label: t('nav.auditLog'), visible: role === 'admin' },
-        { key: 'admin', label: t('nav.adminSettings'), visible: role === 'admin' },
+        { id: 'orgSettings', section: 'orgSettings', label: t('nav.organizationSettings'), visible: role === 'admin' },
+        { id: 'audit', section: 'audit', label: t('nav.auditLog'), visible: role === 'admin' },
+        { id: 'admin', section: 'admin', label: t('nav.adminSettings'), visible: role === 'admin' },
       ],
     },
   ];
@@ -219,7 +221,7 @@ export default function App() {
           ? true
           : section === 'admin' || section === 'audit' || section === 'orgSettings'
             ? nextRole === 'admin'
-            : nextCanManage;
+            : nextCanManage; // covers management, managementProjects, hours, invitations, approvals, users
       if (!stillVisible) setSection('time');
     }
     if (isMobile) setMobileNavOpen(false);
@@ -481,14 +483,18 @@ export default function App() {
               </ListSubheader>
               {visibleItems.map((n) => (
                 <ListItemButton
-                  key={n.key}
-                  selected={section === n.key}
+                  key={n.id}
+                  selected={section === n.section}
                   onClick={() => {
-                    setSection(n.key);
+                    setSection(n.section);
                     if (isMobile) setMobileNavOpen(false);
                   }}
+                  sx={n.indent ? { pl: 4 } : undefined}
                 >
-                  <ListItemText primary={n.label} />
+                  <ListItemText
+                    primary={n.label}
+                    slotProps={n.indent ? { primary: { fontSize: '0.9rem' } } : undefined}
+                  />
                 </ListItemButton>
               ))}
             </ul>
@@ -683,12 +689,14 @@ export default function App() {
               <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
             )}
 
-            {section === 'management' && canManage && orgId && (
+            {(section === 'management' || section === 'managementProjects') && canManage && orgId && (
               <Management
                 session={session}
                 orgId={orgId}
                 role={role}
                 authHeaders={authHeaders}
+                tab={section === 'managementProjects' ? 'projects' : 'teams'}
+                onTabChange={(tab) => setSection(tab === 'projects' ? 'managementProjects' : 'management')}
                 onDataChanged={() => {
                   reloadProjects();
                   setSubprojectsByProject({});
@@ -742,19 +750,33 @@ export default function App() {
           <Box
             onClick={toggleAssistantPin}
             role="button"
-            aria-label={assistantOpen ? 'Close assistant' : 'Open assistant'}
+            aria-label={assistantPinned ? 'Unpin assistant' : 'Pin assistant open'}
+            title={assistantPinned ? 'Unpin assistant' : 'Click to keep the assistant open'}
             sx={{
               width: ASSISTANT_TAB_WIDTH,
               flexShrink: 0,
-              bgcolor: 'primary.main',
+              bgcolor: assistantPinned ? 'primary.dark' : 'primary.main',
               color: 'primary.contrastText',
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 0.75,
               cursor: 'pointer',
               '&:hover': { bgcolor: 'primary.dark' },
             }}
           >
+            <Typography
+              aria-hidden
+              sx={{
+                fontSize: '1.1rem',
+                lineHeight: 1,
+                transform: assistantPinned ? 'rotate(45deg)' : 'rotate(0deg)',
+                transition: 'transform 0.15s ease',
+              }}
+            >
+              📌
+            </Typography>
             <Typography
               variant="button"
               sx={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', letterSpacing: 1, whiteSpace: 'nowrap' }}

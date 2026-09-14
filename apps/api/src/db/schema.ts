@@ -213,9 +213,9 @@ export const work_times = pgTable("work_times", {
 	end_time: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
 	comment: text(),
 }, (table) => [
+	index("idx_worktimes_org_start").using("btree", table.organization_id.asc().nullsLast().op("timestamptz_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
 	index("idx_worktimes_project").using("btree", table.project_id.asc().nullsLast().op("uuid_ops")),
-	index("idx_worktimes_user_start").using("btree", table.user_id.asc().nullsLast().op("timestamptz_ops"), table.start_time.asc().nullsLast().op("timestamptz_ops")),
-	index("idx_worktimes_org_start").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.start_time.asc().nullsLast().op("timestamptz_ops")),
+	index("idx_worktimes_user_start").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.user_id],
 			foreignColumns: [users.id],
@@ -417,32 +417,17 @@ export const versions = pgTable("versions", {
 	check("chk_versions_version_nr_positive", sql`version_nr >= 1`),
 ]);
 
-export const workflow_definitions = pgTable("workflow_definitions", {
-	workflow_def_id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
-	organization_id: uuid().notNull(),
-	name: text().notNull(),
-	description: text(),
-	steps: jsonb().default([]).notNull(),
-}, (table) => [
-	index("idx_workflow_definitions_org").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops")),
-	foreignKey({
-			columns: [table.organization_id],
-			foreignColumns: [organizations.id],
-			name: "workflow_definitions_organization_id_fkey"
-		}).onDelete("cascade"),
-]);
-
 export const workflows = pgTable("workflows", {
 	workflow_id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	workflow_def_id: uuid().notNull(),
 	source_table: text().notNull(),
 	source_table_uuid: uuid().notNull(),
-	step: text().notNull(),
-	step_status: text().notNull(),
 	workflow_data: jsonb().default({}).notNull(),
 	workflow_started: timestamp({ withTimezone: true, mode: 'string' }),
 	workflow_finished: timestamp({ withTimezone: true, mode: 'string' }),
 	workflow_to_be_finished_until: timestamp({ withTimezone: true, mode: 'string' }),
+	step: text(),
+	step_status: text(),
 	workflow_step_started: timestamp({ withTimezone: true, mode: 'string' }),
 	workflow_step_finished: timestamp({ withTimezone: true, mode: 'string' }),
 	workflow_step_to_be_finished_until: timestamp({ withTimezone: true, mode: 'string' }),
@@ -464,6 +449,21 @@ export const workflows = pgTable("workflows", {
 			name: "workflows_assigned_to_team_id_fkey"
 		}).onDelete("set null"),
 	check("chk_workflows_assignee_required", sql`(assigned_to_user_id IS NOT NULL) OR (assigned_to_team_id IS NOT NULL)`),
+]);
+
+export const workflow_definitions = pgTable("workflow_definitions", {
+	workflow_def_id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	name: text().notNull(),
+	description: text(),
+	steps: jsonb().default([]).notNull(),
+}, (table) => [
+	index("idx_workflow_definitions_org").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "workflow_definitions_organization_id_fkey"
+		}).onDelete("cascade"),
 ]);
 
 export const role_permissions = pgTable("role_permissions", {

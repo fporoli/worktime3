@@ -21,6 +21,21 @@ const STATUS_COLOR: Record<Status, 'default' | 'warning' | 'success' | 'error'> 
   rejected: 'error',
 };
 
+interface ReopenRequest {
+  id: string;
+  step_status: 'pending' | 'approved' | 'rejected';
+  workflow_data: { reason?: string; decisionNote?: string | null };
+  started: string | null;
+  finished: string | null;
+}
+
+const REOPEN_ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
+  'reason-required': (t) => t('timesheet.reopenReasonRequired'),
+  'no-manager-to-ask': (t) => t('timesheet.reopenNoManager'),
+  'already-requested': (t) => t('timesheet.reopenAlreadyRequested'),
+  'not-approved': (t) => t('timesheet.reopenNotApproved'),
+};
+
 /** First day of the current month, e.g. '2026-09-01'. */
 function currentPeriodStart(): string {
   const d = new Date();
@@ -55,6 +70,10 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(currentPeriodStart());
+  const [reopenRequest, setReopenRequest] = useState<ReopenRequest | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
+  const [requestingReopen, setRequestingReopen] = useState(false);
+  const [submitNote, setSubmitNote] = useState('');
 
   async function reload() {
     setLoading(true);
@@ -77,6 +96,49 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const current = periods.find((p) => p.period_start === period);
   const status = current?.status ?? 'open';
 
+  async function reloadReopenRequest(periodId: string) {
+    try {
+      const res = await fetch(`${API}/timesheet-periods/${periodId}/reopen-request`, { headers: await authHeaders() });
+      const data = await res.json();
+      setReopenRequest(data ?? null);
+    } catch { /* offline fallback */ }
+  }
+
+  useEffect(() => {
+    setReopenReason('');
+    if (current?.id && status === 'approved') {
+      reloadReopenRequest(current.id);
+    } else {
+      setReopenRequest(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, status]);
+
+  async function requestReopen() {
+    if (!current) return;
+    setError(null);
+    setSuccess(null);
+    setRequestingReopen(true);
+    try {
+      const res = await fetch(`${API}/timesheet-periods/${current.id}/request-reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ reason: reopenReason }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(REOPEN_ERROR_MESSAGES[data.error]?.(t) ?? t('timesheet.reopenRequestFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
+      setSuccess(t('timesheet.reopenRequestSent'));
+      await reloadReopenRequest(current.id);
+    } catch {
+      setError(t('timesheet.reopenRequestFailed', { error: 'offline' }));
+    } finally {
+      setRequestingReopen(false);
+    }
+  }
+
   async function submit() {
     setError(null);
     setSuccess(null);
@@ -84,7 +146,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ periodStart: period }),
+        body: JSON.stringify({ periodStart: period, note: submitNote }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -92,6 +154,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
         return;
       }
       setSuccess(data.autoApproved ? t('timesheet.autoApproved') : t('timesheet.submitted'));
+      setSubmitNote('');
       await reload();
     } catch {
       setError(t('timesheet.submitFailedOffline'));
@@ -134,9 +197,51 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
         {t('timesheet.viewing', { period: period.slice(0, 7) })}
       </Typography>
 
+      {(status === 'open' || status === 'rejected') && (
+        <TextField
+          size="small"
+          label={t('timesheet.submitNote')}
+          placeholder={t('timesheet.submitNotePlaceholder')}
+          value={submitNote}
+          onChange={(e) => setSubmitNote(e.target.value)}
+          sx={{ display: 'block', mb: 1, minWidth: 320, maxWidth: 480 }}
+        />
+      )}
       <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
         {status === 'approved' ? t('timesheet.approved') : status === 'submitted' ? t('timesheet.pending') : status === 'rejected' ? t('timesheet.resubmit') : t('timesheet.submit')}
       </Button>
+
+      {status === 'approved' && (
+        <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+          {reopenRequest?.step_status === 'pending' ? (
+            <Typography variant="body2">{t('timesheet.reopenPending')}</Typography>
+          ) : (
+            <>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('timesheet.requestReopen')}</Typography>
+              {reopenRequest?.step_status === 'rejected' && (
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  {t('timesheet.reopenRejected', { note: reopenRequest.workflow_data.decisionNote || '—' })}
+                </Typography>
+              )}
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <TextField
+                  size="small"
+                  label={t('timesheet.reopenReason')}
+                  placeholder={t('timesheet.reopenReasonPlaceholder')}
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  multiline
+                  minRows={2}
+                  sx={{ minWidth: 260, flex: 1 }}
+                />
+                <Button variant="outlined" size="small" onClick={requestReopen} disabled={requestingReopen || !reopenReason.trim()}>
+                  {t('timesheet.requestReopen')}
+                </Button>
+              </Box>
+            </>
+          )}
+        </Box>
+      )}
 
       {history.length > 0 && (
         <>

@@ -226,14 +226,6 @@ export const versionsRelations = relations(versions, ({one}) => ({
 	}),
 }));
 
-export const workflow_definitionsRelations = relations(workflow_definitions, ({one, many}) => ({
-	organization: one(organizations, {
-		fields: [workflow_definitions.organization_id],
-		references: [organizations.id]
-	}),
-	workflows: many(workflows),
-}));
-
 export const workflowsRelations = relations(workflows, ({one}) => ({
 	workflow_definition: one(workflow_definitions, {
 		fields: [workflows.workflow_def_id],
@@ -242,6 +234,14 @@ export const workflowsRelations = relations(workflows, ({one}) => ({
 	team: one(teams, {
 		fields: [workflows.assigned_to_team_id],
 		references: [teams.id]
+	}),
+}));
+
+export const workflow_definitionsRelations = relations(workflow_definitions, ({one, many}) => ({
+	workflows: many(workflows),
+	organization: one(organizations, {
+		fields: [workflow_definitions.organization_id],
+		references: [organizations.id]
 	}),
 }));
 

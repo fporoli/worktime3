@@ -28,7 +28,28 @@ interface PeriodRow {
   user_display_name: string;
   user_email: string;
   period_start: string;
-  submitted_at: string | null;
+}
+
+/** A workflow row assigned to the caller — generic across every workflow_definitions type. */
+interface ActionItem {
+  id: string;
+  source_table: string;
+  step_status: 'pending' | 'approved' | 'rejected';
+  workflow_data: { reason?: string; note?: string; decisionNote?: string | null };
+  started: string | null;
+  definition_name: string;
+  timesheet_period: PeriodRow | null;
+}
+
+/** Friendly label for a workflow_definitions name — unrecognized ones just show as-is, so new workflow types need no frontend change to appear. */
+function actionItemLabel(definitionName: string): string {
+  if (definitionName === 'approve timesheet') return 'Timesheet approval';
+  if (definitionName === 'reopen approved timesheet') return 'Reopen request';
+  return definitionName;
+}
+
+function actionItemDetail(item: ActionItem): string {
+  return item.workflow_data.reason || item.workflow_data.note || '—';
 }
 
 interface ApprovalsProps {
@@ -38,7 +59,7 @@ interface ApprovalsProps {
 }
 
 export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) {
-  const [pending, setPending] = useState<PeriodRow[]>([]);
+  const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [approved, setApproved] = useState<PeriodRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -47,12 +68,14 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [loading, setLoading] = useState(true);
 
   const [inspectingPeriod, setInspectingPeriod] = useState<PeriodRow | null>(null);
+  const [inspectingActionItemId, setInspectingActionItemId] = useState<string | null>(null);
   const [inspectingEntries, setInspectingEntries] = useState<Entry[]>([]);
   const [inspectingLoading, setInspectingLoading] = useState(false);
   const [inspectingError, setInspectingError] = useState<string | null>(null);
 
-  async function inspect(period: PeriodRow) {
+  async function inspect(period: PeriodRow, actionItemId: string | null) {
     setInspectingPeriod(period);
+    setInspectingActionItemId(actionItemId);
     setInspectingEntries([]);
     setInspectingLoading(true);
     setInspectingError(null);
@@ -75,13 +98,13 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   async function reload() {
     setLoading(true);
     try {
-      const [pRes, aRes] = await Promise.all([
-        fetch(`${API}/organizations/${orgId}/timesheet-periods?status=submitted`, { headers: await authHeaders() }),
+      const [iRes, aRes] = await Promise.all([
+        fetch(`${API}/workflows/assigned-to-me`, { headers: await authHeaders() }),
         fetch(`${API}/organizations/${orgId}/timesheet-periods?status=approved`, { headers: await authHeaders() }),
       ]);
-      const p = await pRes.json();
+      const i = await iRes.json();
       const a = await aRes.json();
-      if (Array.isArray(p)) setPending(p);
+      if (Array.isArray(i)) setActionItems(i);
       if (Array.isArray(a)) setApproved(a);
     } catch { /* offline fallback */ } finally {
       setLoading(false);
@@ -93,11 +116,11 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  async function approve(id: string) {
+  async function approveItem(id: string) {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${API}/timesheet-periods/${id}/approve`, { method: 'POST', headers: await authHeaders() });
+      const res = await fetch(`${API}/workflows/${id}/approve`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
       if (!data.ok) { setError(`Failed to approve (${data.error ?? 'unknown error'}).`); return; }
       setSuccess('Approved.');
@@ -107,23 +130,23 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     }
   }
 
-  async function reject(id: string) {
+  async function rejectItem(id: string) {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${API}/timesheet-periods/${id}/reject`, {
+      const res = await fetch(`${API}/workflows/${id}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ note }),
       });
       const data = await res.json();
-      if (!data.ok) { setError(`Failed to reject (${data.error ?? 'unknown error'}).`); return; }
-      setSuccess('Rejected — the employee can now edit and resubmit.');
+      if (!data.ok) { setError(`Failed to decline (${data.error ?? 'unknown error'}).`); return; }
+      setSuccess('Declined.');
       setRejectingId(null);
       setNote('');
       await reload();
     } catch {
-      setError('Failed to reject.');
+      setError('Failed to decline.');
     }
   }
 
@@ -146,57 +169,59 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Timesheet Approvals</Typography>
+      <Typography variant="h6">Approvals</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {role === 'admin'
-          ? "Review monthly timesheets submitted by your organization's members."
-          : 'Review monthly timesheets submitted by your direct reports.'}
+        Action items assigned to you — timesheet submissions and reopen requests from your direct reports.
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>Pending ({pending.length})</Typography>
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>Action items ({actionItems.length})</Typography>
       <Table size="small" sx={{ mb: 3 }}>
         <TableHead>
           <TableRow>
             <TableCell>Member</TableCell>
+            <TableCell>Type</TableCell>
             <TableCell>Period</TableCell>
-            <TableCell>Submitted</TableCell>
+            <TableCell>Details</TableCell>
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {pending.map((p) => (
-            <Fragment key={p.id}>
+          {actionItems.map((item) => (
+            <Fragment key={item.id}>
               <TableRow hover>
                 <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.user_display_name}</Typography>
-                  <Typography variant="caption" color="text.secondary">{p.user_email}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? '—'}</Typography>
+                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? ''}</Typography>
                 </TableCell>
-                <TableCell>{p.period_start.slice(0, 7)}</TableCell>
-                <TableCell>{p.submitted_at ? new Date(p.submitted_at).toLocaleString() : '—'}</TableCell>
+                <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
+                <TableCell>{item.timesheet_period?.period_start.slice(0, 7) ?? '—'}</TableCell>
+                <TableCell>{actionItemDetail(item)}</TableCell>
                 <TableCell align="right">
-                  <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p)}>Inspect</Button>
-                  <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approve(p.id)}>Approve</Button>
-                  <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === p.id ? null : p.id)}>Reject</Button>
+                  {item.timesheet_period && (
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>Inspect</Button>
+                  )}
+                  <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>Approve</Button>
+                  <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>Reject</Button>
                 </TableCell>
               </TableRow>
-              {rejectingId === p.id && (
+              {rejectingId === item.id && (
                 <TableRow>
-                  <TableCell colSpan={4} sx={{ bgcolor: 'action.hover' }}>
+                  <TableCell colSpan={5} sx={{ bgcolor: 'action.hover' }}>
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                      <TextField size="small" label="Reason" value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
-                      <Button size="small" color="error" variant="contained" onClick={() => reject(p.id)}>Confirm reject</Button>
+                      <TextField size="small" label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
+                      <Button size="small" color="error" variant="contained" onClick={() => rejectItem(item.id)}>Confirm reject</Button>
                     </Box>
                   </TableCell>
                 </TableRow>
               )}
             </Fragment>
           ))}
-          {pending.length === 0 && (
-            <TableRow><TableCell colSpan={4}>Nothing pending.</TableCell></TableRow>
+          {actionItems.length === 0 && (
+            <TableRow><TableCell colSpan={5}>Nothing pending.</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
@@ -214,7 +239,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <TableCell>{p.user_display_name}</TableCell>
                   <TableCell>{p.period_start.slice(0, 7)}</TableCell>
                   <TableCell align="right">
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p)}>Inspect</Button>
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p, null)}>Inspect</Button>
                     <Button size="small" onClick={() => reopen(p.id)}>Reopen</Button>
                   </TableCell>
                 </TableRow>
@@ -284,12 +309,12 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setInspectingPeriod(null)}>Close</Button>
-          {inspectingPeriod && pending.some((p) => p.id === inspectingPeriod.id) && (
+          {inspectingActionItemId && (
             <>
               <Button
                 color="error"
                 onClick={() => {
-                  const id = inspectingPeriod.id;
+                  const id = inspectingActionItemId;
                   setInspectingPeriod(null);
                   setRejectingId(id);
                 }}
@@ -299,9 +324,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
               <Button
                 variant="contained"
                 onClick={async () => {
-                  const id = inspectingPeriod.id;
+                  const id = inspectingActionItemId;
                   setInspectingPeriod(null);
-                  await approve(id);
+                  await approveItem(id);
                 }}
               >
                 Approve

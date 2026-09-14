@@ -88,10 +88,12 @@ interface ManagementProps {
   role: 'admin' | 'manager' | 'user';
   authHeaders: () => Promise<Record<string, string>>;
   onDataChanged?: () => void;
+  /** Which sub-view to show; driven by the left nav (Teams / Projects and Subprojects). */
+  tab: 'teams' | 'projects';
+  onTabChange: (tab: 'teams' | 'projects') => void;
 }
 
-export default function Management({ session, orgId, role, authHeaders, onDataChanged }: ManagementProps) {
-  const [tab, setTab] = useState<'teams' | 'projects'>('teams');
+export default function Management({ session, orgId, role, authHeaders, onDataChanged, tab, onTabChange }: ManagementProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -625,7 +627,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+      <Tabs value={tab} onChange={(_, v) => onTabChange(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tab value="teams" label={`Teams (${teams.length})`} />
         <Tab value="projects" label={`Projects & Subprojects (${projects.length})`} />
       </Tabs>

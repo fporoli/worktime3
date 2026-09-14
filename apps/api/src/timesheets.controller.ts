@@ -3,9 +3,10 @@ import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { timesheet_periods, users } from './db/schema';
+import { timesheet_periods, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
+import { WorkflowsService, REOPEN_TIMESHEET_WORKFLOW_NAME, APPROVE_TIMESHEET_WORKFLOW_NAME } from './workflows.service';
 
 const STATUSES = ['open', 'submitted', 'approved', 'rejected'] as const;
 type Status = (typeof STATUSES)[number];
@@ -24,6 +25,7 @@ export class TimesheetsController {
     private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
+    private readonly workflowsSvc: WorkflowsService,
   ) {}
 
   @Get('organizations/:orgId/timesheet-periods')
@@ -68,7 +70,7 @@ export class TimesheetsController {
   @Post('organizations/:orgId/timesheet-periods/submit')
   async submit(
     @Param('orgId') orgId: string,
-    @Body() body: { periodStart: string },
+    @Body() body: { periodStart: string; note?: string },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -79,6 +81,7 @@ export class TimesheetsController {
 
     const periodStart = (body.periodStart ?? '').trim();
     if (!/^\d{4}-\d{2}-01$/.test(periodStart)) return { ok: false, error: 'invalid-period-start' };
+    const note = (body.note ?? '').trim();
 
     const [existing] = await db
       .select({ id: timesheet_periods.id, status: timesheet_periods.status })
@@ -96,61 +99,101 @@ export class TimesheetsController {
 
     const now = new Date().toISOString();
     // No manager on record ("top of the chain") — nobody to route the request to, so it's approved on submit.
-    const autoApproved = !(await membershipManagerId(db, orgId, callerId));
+    const managerUserId = await membershipManagerId(db, orgId, callerId);
+    const autoApproved = !managerUserId;
     const reviewFields = autoApproved
       ? { status: 'approved' as const, reviewed_by_user_id: callerId, reviewed_at: now }
       : { status: 'submitted' as const, reviewed_by_user_id: null, reviewed_at: null };
 
+    let periodId: string;
     if (existing) {
       const patch = { ...reviewFields, submitted_at: now, review_note: null };
       await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, existing.id));
-      void this.audit
-        .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', existing.id, { periodStart })
-        .catch(() => {});
       void this.versions.record('timesheet_periods', existing.id, 'update_delta', callerId, patch).catch(() => {});
-      return { ok: true, id: existing.id, autoApproved };
+      periodId = existing.id;
+    } else {
+      const values = {
+        organization_id: orgId,
+        user_id: callerId,
+        period_start: periodStart,
+        period_end: nextMonthStart(periodStart),
+        ...reviewFields,
+        submitted_at: now,
+      };
+      const [created] = await db.insert(timesheet_periods).values(values).returning({ id: timesheet_periods.id });
+      void this.versions.record('timesheet_periods', created.id, 'insert', callerId, { id: created.id, ...values }).catch(() => {});
+      periodId = created.id;
     }
-    const values = {
-      organization_id: orgId,
-      user_id: callerId,
-      period_start: periodStart,
-      period_end: nextMonthStart(periodStart),
-      ...reviewFields,
-      submitted_at: now,
-    };
-    const [created] = await db.insert(timesheet_periods).values(values).returning({ id: timesheet_periods.id });
     void this.audit
-      .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', created.id, { periodStart })
+      .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', periodId, { periodStart, note: note || undefined })
       .catch(() => {});
-    void this.versions.record('timesheet_periods', created.id, 'insert', callerId, { id: created.id, ...values }).catch(() => {});
-    return { ok: true, id: created.id, autoApproved };
+
+    // Route to the owner's manager as an "approve timesheet" workflow — the manager acts on it via /workflows.
+    if (!autoApproved && managerUserId) {
+      const definition = await this.workflowsSvc.ensureDefinition(db, orgId, APPROVE_TIMESHEET_WORKFLOW_NAME, "A submitted month awaiting the employee's manager to approve or reject it.", [
+        {
+          key: 'manager_review',
+          label: 'Manager review',
+          assignTo: 'manager',
+          onApprove: { action: 'timesheet.approve' },
+          onReject: { action: 'timesheet.reject' },
+        },
+      ]);
+      await this.workflowsSvc.createWorkflow(db, {
+        workflowDefId: definition.workflow_def_id,
+        sourceTable: 'timesheet_periods',
+        sourceTableUuid: periodId,
+        step: 'manager_review',
+        assignedToUserId: [managerUserId],
+        // The employee's optional note to their manager lives right here, on the workflow row.
+        workflowData: { note: note || null },
+        actorUserId: callerId,
+      });
+    }
+
+    return { ok: true, id: periodId, autoApproved };
   }
 
   @Post('timesheet-periods/:id/approve')
   async approve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.review(id, req, 'approved');
+    return this.reviewOrDelegate(id, req, 'approved');
   }
 
   @Post('timesheet-periods/:id/reject')
   async reject(@Param('id') id: string, @Body() body: { note?: string }, @Req() req: AuthenticatedRequest) {
-    return this.review(id, req, 'rejected', body?.note);
+    return this.reviewOrDelegate(id, req, 'rejected', body?.note);
   }
 
-  private async review(
+  /**
+   * Period-id-based approve/reject, kept as the stable API the frontend
+   * calls — but the actual work now happens through WorkflowsService,
+   * against that period's "approve timesheet" workflow (created by
+   * `submit`). Falls back to the pre-workflow direct-mutation path only for
+   * periods submitted before this existed, which have no workflow row.
+   */
+  private async reviewOrDelegate(id: string, req: AuthenticatedRequest, outcome: 'approved' | 'rejected', note?: string) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unauthenticated' };
+
+    const pending = await this.workflowsSvc.findPending(db, 'timesheet_periods', id, APPROVE_TIMESHEET_WORKFLOW_NAME);
+    if (pending) return this.workflowsSvc.resolve(db, pending.id, callerId, outcome, note);
+    return this.legacyReview(db, id, callerId, outcome, note);
+  }
+
+  private async legacyReview(
+    db: NonNullable<ReturnType<DbService['getDb']>>,
     id: string,
-    req: AuthenticatedRequest,
+    callerId: string,
     newStatus: 'approved' | 'rejected',
     note?: string,
   ) {
-    const db = this.db.getDb();
-    if (!db) return { ok: true, offline: true };
     const [period] = await db
       .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
       .from(timesheet_periods)
       .where(eq(timesheet_periods.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
-    const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId) return { ok: false, error: 'unauthenticated' };
     // Only that person's own manager may review their period — an org admin may always override.
     const isAdmin = await isOrgAdmin(db, period.organization_id, callerId);
     if (!isAdmin && !(await isManagerOf(db, period.organization_id, callerId, period.user_id))) {
@@ -190,5 +233,92 @@ export class TimesheetsController {
     void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
     void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
     return { ok: true };
+  }
+
+  /**
+   * Self-service: the period's own owner asks their manager to reopen an
+   * already-approved month, with a reason. Creates one "reopen approved
+   * timesheet" workflow row, assigned to that person's manager — see
+   * WorkflowsController for how the manager actually approves/rejects it.
+   */
+  @Post('timesheet-periods/:id/request-reopen')
+  async requestReopen(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const [period] = await db
+      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
+      .from(timesheet_periods)
+      .where(eq(timesheet_periods.id, id));
+    if (!period) return { ok: false, error: 'period-not-found' };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unauthenticated' };
+    if (period.user_id !== callerId) return { ok: false, error: 'forbidden' };
+    if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
+
+    const reason = (body.reason ?? '').trim();
+    if (!reason) return { ok: false, error: 'reason-required' };
+
+    const managerUserId = await membershipManagerId(db, period.organization_id, callerId);
+    if (!managerUserId) return { ok: false, error: 'no-manager-to-ask' };
+
+    const existingPending = await this.workflowsSvc.findPending(db, 'timesheet_periods', id, REOPEN_TIMESHEET_WORKFLOW_NAME);
+    if (existingPending) return { ok: false, error: 'already-requested' };
+
+    const definition = await this.workflowsSvc.ensureDefinition(
+      db,
+      period.organization_id,
+      REOPEN_TIMESHEET_WORKFLOW_NAME,
+      "An employee's request to reopen a month their manager already approved, for correction.",
+      [
+        {
+          key: 'manager_review',
+          label: 'Manager review',
+          assignTo: 'manager',
+          onApprove: { action: 'timesheet.reopen' },
+          onReject: { action: 'none' },
+        },
+      ],
+    );
+    const workflow = await this.workflowsSvc.createWorkflow(db, {
+      workflowDefId: definition.workflow_def_id,
+      sourceTable: 'timesheet_periods',
+      sourceTableUuid: id,
+      step: 'manager_review',
+      assignedToUserId: [managerUserId],
+      // The requester's text lives right here, on the workflow row.
+      workflowData: { reason },
+      actorUserId: callerId,
+    });
+    void this.audit.record(period.organization_id, callerId, 'timesheet.request-reopen', 'timesheet_period', id, { reason }).catch(() => {});
+    return { ok: true, workflowId: workflow.id };
+  }
+
+  /** The most recent reopen-request workflow for this period (any status), so the owner's UI can show where it stands. */
+  @Get('timesheet-periods/:id/reopen-request')
+  async reopenRequest(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return null;
+    const [period] = await db
+      .select({ organization_id: timesheet_periods.organization_id, user_id: timesheet_periods.user_id })
+      .from(timesheet_periods)
+      .where(eq(timesheet_periods.id, id));
+    if (!period) return null;
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return null;
+    if (period.user_id !== callerId && !(await isOrgAdmin(db, period.organization_id, callerId))) return null;
+
+    const [row] = await db
+      .select({
+        id: workflows.workflow_id,
+        step_status: workflows.step_status,
+        workflow_data: workflows.workflow_data,
+        started: workflows.workflow_step_started,
+        finished: workflows.workflow_step_finished,
+      })
+      .from(workflows)
+      .where(and(eq(workflows.source_table, 'timesheet_periods'), eq(workflows.source_table_uuid, id)))
+      .orderBy(desc(workflows.workflow_started))
+      .limit(1);
+    return row ?? null;
   }
 }
