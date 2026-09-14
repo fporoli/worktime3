@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from './db.service';
 import { isOrgAdmin } from './access';
-import { workflows, workflow_definitions, timesheet_periods } from './db/schema';
+import { workflows, workflow_definitions, team_members, organization_memberships } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
 
@@ -17,7 +17,21 @@ interface WorkflowStepDefinition {
   assignTo: string;
   onApprove: { action: string };
   onReject: { action: string };
+  /** Human label for the kind of record this step's workflow concerns, e.g. "Timesheet Period". */
+  source?: string;
+  /** Name of the frontend formatter (see Timesheet.tsx's `getSourceTitle`) that renders that record's title. */
+  source_name?: string;
 }
+
+/** What a registered action handler receives — everything it needs, nothing about workflows itself. */
+export interface WorkflowActionContext {
+  sourceTable: string;
+  sourceTableUuid: string;
+  actorUserId: string;
+  decisionNote: string | null;
+}
+export type WorkflowActionHandler = (db: Db, ctx: WorkflowActionContext) => Promise<void>;
+export type SourceOrgResolver = (db: Db, sourceTableUuid: string) => Promise<string | null>;
 
 /**
  * Shared engine behind every workflow_definitions-driven approval in the
@@ -27,21 +41,59 @@ interface WorkflowStepDefinition {
  * WorkflowsController's generic `/workflows/:id/approve` endpoint and by
  * TimesheetsController's period-id-based approve/reject, which now delegate
  * here instead of mutating timesheet_periods directly.
+ *
+ * This service knows nothing about timesheets or any other specific source
+ * table — it only dispatches by name. A step's `onApprove`/`onReject.action`
+ * (e.g. "timesheet.approve") is looked up in `actionHandlers`, and a source
+ * table's owning organization is looked up in `sourceOrgResolvers`; both are
+ * registered by whichever module owns that kind of record (e.g.
+ * TimesheetsController registers the "timesheet.*" actions and the
+ * `timesheet_periods` org resolver in its `onModuleInit`).
  */
 @Injectable()
 export class WorkflowsService {
+  private readonly actionHandlers = new Map<string, WorkflowActionHandler>();
+  private readonly sourceOrgResolvers = new Map<string, SourceOrgResolver>();
+
   constructor(
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
   ) {}
 
-  /** Find-or-create a per-org workflow definition by name, so nobody has to set these up by hand. */
+  /** Register what happens when a step's onApprove/onReject names this action. */
+  registerAction(name: string, handler: WorkflowActionHandler): void {
+    this.actionHandlers.set(name, handler);
+  }
+
+  /** Register how to resolve a source table's owning organization (for the admin-override check and audit log). */
+  registerSourceOrgResolver(sourceTable: string, resolver: SourceOrgResolver): void {
+    this.sourceOrgResolvers.set(sourceTable, resolver);
+  }
+
+  /** Every team this user belongs to, across whatever memberships they hold — used to resolve team-assigned workflows. */
+  async callerTeamIds(db: Db, userId: string): Promise<string[]> {
+    const rows = await db
+      .select({ team_id: team_members.team_id })
+      .from(team_members)
+      .innerJoin(organization_memberships, eq(organization_memberships.id, team_members.membership_id))
+      .where(eq(organization_memberships.user_id, userId));
+    return rows.map((r) => r.team_id);
+  }
+
+  /**
+   * Find-or-create a per-org workflow definition by name, so nobody has to set these up by hand.
+   * The step config is entirely code-defined (there's no UI to edit it), so an existing row is kept
+   * in sync with whatever the caller just passed in rather than left stale from when it was first created.
+   */
   async ensureDefinition(db: Db, organizationId: string, name: string, description: string, steps: WorkflowStepDefinition[]) {
     const [existing] = await db
       .select({ workflow_def_id: workflow_definitions.workflow_def_id })
       .from(workflow_definitions)
       .where(and(eq(workflow_definitions.organization_id, organizationId), eq(workflow_definitions.name, name)));
-    if (existing) return existing;
+    if (existing) {
+      await db.update(workflow_definitions).set({ description, steps }).where(eq(workflow_definitions.workflow_def_id, existing.workflow_def_id));
+      return existing;
+    }
     const [created] = await db
       .insert(workflow_definitions)
       .values({ organization_id: organizationId, name, description, steps })
@@ -107,28 +159,27 @@ export class WorkflowsService {
       .select({
         source_table: workflows.source_table,
         source_table_uuid: workflows.source_table_uuid,
+        step: workflows.step,
         step_status: workflows.step_status,
         assigned_to_user_id: workflows.assigned_to_user_id,
+        assigned_to_team_id: workflows.assigned_to_team_id,
         workflow_data: workflows.workflow_data,
         definition_name: workflow_definitions.name,
+        steps: workflow_definitions.steps,
       })
       .from(workflows)
       .innerJoin(workflow_definitions, eq(workflow_definitions.workflow_def_id, workflows.workflow_def_id))
       .where(eq(workflows.workflow_id, workflowId));
     if (!workflow) return { ok: false, error: 'workflow-not-found' };
 
-    // Only timesheet_periods is wired up so far — resolve its organization for the admin-override check.
-    let organizationId: string | null = null;
-    if (workflow.source_table === 'timesheet_periods') {
-      const [period] = await db
-        .select({ organization_id: timesheet_periods.organization_id })
-        .from(timesheet_periods)
-        .where(eq(timesheet_periods.id, workflow.source_table_uuid));
-      organizationId = period?.organization_id ?? null;
-    }
-    const isAssignee = (workflow.assigned_to_user_id ?? []).includes(callerId);
+    const resolveOrg = this.sourceOrgResolvers.get(workflow.source_table);
+    const organizationId = resolveOrg ? await resolveOrg(db, workflow.source_table_uuid) : null;
+    const isDirectAssignee = (workflow.assigned_to_user_id ?? []).includes(callerId);
+    const isTeamAssignee = workflow.assigned_to_team_id
+      ? (await this.callerTeamIds(db, callerId)).includes(workflow.assigned_to_team_id)
+      : false;
     const isAdmin = organizationId ? await isOrgAdmin(db, organizationId, callerId) : false;
-    if (!isAssignee && !isAdmin) return { ok: false, error: 'forbidden' };
+    if (!isDirectAssignee && !isTeamAssignee && !isAdmin) return { ok: false, error: 'forbidden' };
     if (workflow.step_status !== 'pending') return { ok: false, error: 'not-pending' };
 
     const now = new Date().toISOString();
@@ -151,36 +202,24 @@ export class WorkflowsService {
   }
 
   /**
-   * What actually happens when a workflow's one step is resolved — keyed off
-   * the workflow_definition's name and the outcome. Deliberately simple (an
-   * if/else per known workflow type) rather than a generic action-
-   * interpreter: there are only two kinds of workflow so far, and a rule
-   * engine for them would be speculative. Extend this as more show up.
+   * What actually happens when a workflow's one step is resolved — dispatched purely by the step
+   * definition's `onApprove`/`onReject.action` name (e.g. "timesheet.approve") to whatever handler
+   * was registered for it. Unknown/unregistered actions, and "none", are simply no-ops: this service
+   * has no idea what any given action does, only who to ask.
    */
   private async runAction(
     db: Db,
-    workflow: { source_table: string; source_table_uuid: string; definition_name: string },
+    workflow: { source_table: string; source_table_uuid: string; step: string | null; steps: unknown },
     outcome: 'approved' | 'rejected',
     actorUserId: string,
     decisionNote: string | null,
   ) {
-    if (workflow.source_table !== 'timesheet_periods') return;
-
-    if (workflow.definition_name === REOPEN_TIMESHEET_WORKFLOW_NAME) {
-      if (outcome !== 'approved') return; // rejecting a reopen request leaves the timesheet exactly as it was.
-      const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, workflow.source_table_uuid));
-      void this.versions.record('timesheet_periods', workflow.source_table_uuid, 'update_delta', actorUserId, patch).catch(() => {});
-      return;
-    }
-
-    if (workflow.definition_name === APPROVE_TIMESHEET_WORKFLOW_NAME) {
-      const patch =
-        outcome === 'approved'
-          ? { status: 'approved' as const, reviewed_by_user_id: actorUserId, reviewed_at: new Date().toISOString(), review_note: null }
-          : { status: 'rejected' as const, reviewed_by_user_id: actorUserId, reviewed_at: new Date().toISOString(), review_note: decisionNote };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, workflow.source_table_uuid));
-      void this.versions.record('timesheet_periods', workflow.source_table_uuid, 'update_delta', actorUserId, patch).catch(() => {});
-    }
+    const stepDefs = Array.isArray(workflow.steps) ? (workflow.steps as WorkflowStepDefinition[]) : [];
+    const stepDef = stepDefs.find((s) => s.key === workflow.step);
+    const actionName = outcome === 'approved' ? stepDef?.onApprove?.action : stepDef?.onReject?.action;
+    if (!actionName || actionName === 'none') return;
+    const handler = this.actionHandlers.get(actionName);
+    if (!handler) return;
+    await handler(db, { sourceTable: workflow.source_table, sourceTableUuid: workflow.source_table_uuid, actorUserId, decisionNote });
   }
 }

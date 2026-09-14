@@ -4,11 +4,13 @@ import {
   Avatar,
   Box,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
+  FormControlLabel,
   Menu,
   MenuItem,
   TextField,
@@ -25,18 +27,22 @@ interface UserMenuProps {
   onLogout: () => void;
   /** Called once the language change is saved, so the caller can update the session. */
   onLocaleChange: (locale: Locale) => void;
+  /** Called once other settings (e.g. worktime ranges) are saved, so the caller can update the session. */
+  onSettingsChange: (settings: NonNullable<Session['settings']>) => void;
 }
 
-export default function UserMenu({ session, authHeaders, onLogout, onLocaleChange }: UserMenuProps) {
+export default function UserMenu({ session, authHeaders, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
   const t = useT();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedLocale, setSelectedLocale] = useState<Locale>((session.locale as Locale) ?? 'en');
+  const [useWorktimeRanges, setUseWorktimeRanges] = useState(session.settings?.useWorktimeMinutesRanges === true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function openSettings() {
     setSelectedLocale((session.locale as Locale) ?? 'en');
+    setUseWorktimeRanges(session.settings?.useWorktimeMinutesRanges === true);
     setError(null);
     setSettingsOpen(true);
     setAnchorEl(null);
@@ -45,11 +51,12 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
   async function saveSettings() {
     setSaving(true);
     setError(null);
+    const settings = { ...session.settings, useWorktimeMinutesRanges: useWorktimeRanges };
     try {
       const res = await fetch(`${API}/users/${session.userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ locale: selectedLocale }),
+        body: JSON.stringify({ locale: selectedLocale, settings }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -57,6 +64,7 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
         return;
       }
       onLocaleChange(selectedLocale);
+      onSettingsChange(settings);
       setSettingsOpen(false);
     } catch {
       setError('Could not reach the API.');
@@ -108,6 +116,13 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
           >
             {LOCALES.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
           </TextField>
+          <FormControlLabel
+            control={<Checkbox checked={useWorktimeRanges} onChange={(e) => setUseWorktimeRanges(e.target.checked)} />}
+            label={t('usermenu.useWorktimeRanges')}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
+            {t('usermenu.useWorktimeRangesHint')}
+          </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSettingsOpen(false)}>{t('usermenu.cancel')}</Button>

@@ -1,11 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, gt, gte, lt, ne, type SQL } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorktimeService } from './worktime.service';
 import { VersionsService } from './versions.service';
 import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isPeriodLocked } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { work_times, projects, subprojects } from './db/schema';
+import { work_times, projects, subprojects, users } from './db/schema';
 
 @Controller()
 export class WorktimeController {
@@ -18,7 +18,16 @@ export class WorktimeController {
   @Post('organizations/:orgId/work-time')
   async create(
     @Param('orgId') orgId: string,
-    @Body() body: { projectId?: string; subprojectId?: string; startTime: string; endTime: string; comment?: string },
+    @Body()
+    body: {
+      projectId?: string;
+      subprojectId?: string;
+      startTime: string;
+      endTime: string;
+      comment?: string;
+      /** Set once the user has seen the overlap warning and chose to add it anyway. */
+      acknowledgeOverlap?: boolean;
+    },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -28,6 +37,14 @@ export class WorktimeController {
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
     if (await isPeriodLocked(db, orgId, userId, body.startTime)) return { ok: false, error: 'period-locked' };
+    // Only "ranges" users care about overlap at all — everyone else logs duration-only entries that
+    // are expected to share the same 08:00 start, so there's nothing to warn about.
+    if (await this.usesWorktimeRanges(db, userId)) {
+      const overlaps = await this.findOverlaps(db, userId, orgId, body.startTime, body.endTime);
+      if (overlaps.length > 0 && !body.acknowledgeOverlap) {
+        return { ok: false, error: 'overlapping-entry-confirm', overlaps };
+      }
+    }
     const values = {
       user_id: userId,
       organization_id: orgId,
@@ -102,6 +119,8 @@ export class WorktimeController {
       startTime?: string;
       endTime?: string;
       comment?: string;
+      /** Set once the user has seen the overlap warning and chose to keep it anyway. */
+      acknowledgeOverlap?: boolean;
     },
     @Req() req: AuthenticatedRequest,
   ) {
@@ -114,6 +133,15 @@ export class WorktimeController {
     if (body.startTime !== undefined && body.startTime !== owned.entry.start_time && owned.entry.organization_id) {
       if (await isPeriodLocked(db, owned.entry.organization_id, owned.userId, body.startTime)) {
         return { ok: false, error: 'period-locked' };
+      }
+    }
+
+    if ((body.startTime !== undefined || body.endTime !== undefined) && owned.entry.organization_id && (await this.usesWorktimeRanges(db, owned.userId))) {
+      const effectiveStart = body.startTime ?? owned.entry.start_time;
+      const effectiveEnd = body.endTime ?? owned.entry.end_time;
+      const overlaps = await this.findOverlaps(db, owned.userId, owned.entry.organization_id, effectiveStart, effectiveEnd, id);
+      if (overlaps.length > 0 && !body.acknowledgeOverlap) {
+        return { ok: false, error: 'overlapping-entry-confirm', overlaps };
       }
     }
 
@@ -152,12 +180,17 @@ export class WorktimeController {
     req: AuthenticatedRequest,
   ): Promise<
     | { ok: false; error: string }
-    | { userId: string; entry: { organization_id: string | null; start_time: string } }
+    | { userId: string; entry: { organization_id: string | null; start_time: string; end_time: string } }
   > {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
     const [row] = await db
-      .select({ user_id: work_times.user_id, organization_id: work_times.organization_id, start_time: work_times.start_time })
+      .select({
+        user_id: work_times.user_id,
+        organization_id: work_times.organization_id,
+        start_time: work_times.start_time,
+        end_time: work_times.end_time,
+      })
       .from(work_times)
       .where(eq(work_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
@@ -166,5 +199,27 @@ export class WorktimeController {
       return { ok: false, error: 'period-locked' };
     }
     return { userId, entry: row };
+  }
+
+  /** Whether this user wants strict, non-overlapping start/end ranges (a per-user preference). */
+  private async usesWorktimeRanges(db: Db, userId: string): Promise<boolean> {
+    const [row] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
+    return (row?.settings as { useWorktimeMinutesRanges?: boolean } | null)?.useWorktimeMinutesRanges === true;
+  }
+
+  /** This user's other entries in the same organization overlapping [startTime, endTime), if any. */
+  private async findOverlaps(db: Db, userId: string, orgId: string, startTime: string, endTime: string, excludeId?: string) {
+    const conditions = [
+      eq(work_times.user_id, userId),
+      eq(work_times.organization_id, orgId),
+      lt(work_times.start_time, endTime),
+      gt(work_times.end_time, startTime),
+    ];
+    if (excludeId) conditions.push(ne(work_times.id, excludeId));
+    return db
+      .select({ id: work_times.id, start_time: work_times.start_time, end_time: work_times.end_time, comment: work_times.comment })
+      .from(work_times)
+      .where(and(...conditions))
+      .limit(5);
   }
 }

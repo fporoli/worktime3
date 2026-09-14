@@ -6,7 +6,7 @@ import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { users, user_identities, organizations, organization_memberships, roles, membership_roles } from './db/schema';
 
-const USER_COLUMNS = { id: users.id, email: users.email, display_name: users.display_name, status: users.status, locale: users.locale };
+const USER_COLUMNS = { id: users.id, email: users.email, display_name: users.display_name, status: users.status, locale: users.locale, settings: users.settings };
 
 @Controller('users')
 export class UsersController {

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
@@ -20,15 +20,21 @@ export class WorkflowsController {
     private readonly workflowsSvc: WorkflowsService,
   ) {}
 
-  /** Workflows with a step assigned to the caller — their action-item queue. Defaults to just the pending ones. */
+  /**
+   * Workflows with a step assigned to the caller, directly or through any team they belong to —
+   * their action-item queue. Defaults to just the pending ones.
+   */
   @Get('assigned-to-me')
   async assignedToMe(@Req() req: AuthenticatedRequest, @Query('status') status?: string) {
     const db = this.db.getDb();
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return [];
-    const conditions = [sql`${workflows.assigned_to_user_id} @> ARRAY[${callerId}]::uuid[]`, eq(workflows.step_status, status ?? 'pending')];
-    const rows = await db
+    const teamIds = await this.workflowsSvc.callerTeamIds(db, callerId);
+    const assignedToCaller = sql`${workflows.assigned_to_user_id} @> ARRAY[${callerId}]::uuid[]`;
+    const assignment = teamIds.length > 0 ? or(assignedToCaller, inArray(workflows.assigned_to_team_id, teamIds)) : assignedToCaller;
+    const conditions = [assignment, eq(workflows.step_status, status ?? 'pending')];
+    const rawRows = await db
       .select({
         id: workflows.workflow_id,
         source_table: workflows.source_table,
@@ -38,16 +44,25 @@ export class WorkflowsController {
         workflow_data: workflows.workflow_data,
         started: workflows.workflow_step_started,
         definition_name: workflow_definitions.name,
+        steps: workflow_definitions.steps,
       })
       .from(workflows)
       .innerJoin(workflow_definitions, eq(workflow_definitions.workflow_def_id, workflows.workflow_def_id))
       .where(and(...conditions))
       .orderBy(desc(workflows.workflow_step_started));
 
+    // The "corresponding object" label/formatter for this row's step come from its workflow_definitions'
+    // steps config (`source` / `source_name`) rather than being hardcoded per workflow type here.
+    const rows = rawRows.map(({ steps, ...r }) => {
+      const stepDefs = Array.isArray(steps) ? (steps as Array<{ key?: string; source?: string; source_name?: string }>) : [];
+      const stepDef = stepDefs.find((s) => s.key === r.step);
+      return { ...r, source: stepDef?.source ?? null, source_name: stepDef?.source_name ?? null };
+    });
+
     // Enrich timesheet_periods-sourced rows with the owner's name and which month it is —
     // generic-shaped rows otherwise, but this covers both workflow types today.
     const periodIds = rows.filter((r) => r.source_table === 'timesheet_periods').map((r) => r.source_table_uuid);
-    if (periodIds.length === 0) return rows;
+    if (periodIds.length === 0) return rows.map((r) => ({ ...r, timesheet_period: null }));
     const periodRows = await db
       .select({
         id: timesheet_periods.id,

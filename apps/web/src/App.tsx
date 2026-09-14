@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   Drawer,
   FormControl,
@@ -57,6 +58,8 @@ type Section = 'time' | 'timesheet' | 'management' | 'managementProjects' | 'hou
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
+const ASSISTANT_TAB_HEIGHT = 40;
+const ASSISTANT_PANEL_HEIGHT_MOBILE = '50vh';
 
 const WORK_TIME_ERROR_MESSAGES: Record<string, string> = {
   'period-locked': 'This month has already been submitted or approved and is locked. Ask your manager to reopen it, or use a different month.',
@@ -74,11 +77,29 @@ interface Option {
 /** The entry being edited, held in the shape the form controls need. */
 interface Draft {
   id: string;
-  start: string;
-  end: string;
+  date: string;
+  startTime: string;
+  durationMinutes: number;
   projectId: string;
   subprojectId: string;
   comment: string;
+}
+
+/** When "use worktime minutes ranges" is off, every entry is recorded as starting at this local time. */
+const DEFAULT_WORKTIME_START = '08:00';
+
+/** An existing entry that overlaps one the user is about to save. */
+interface OverlapEntry {
+  id: string;
+  start_time: string;
+  end_time: string;
+  comment: string | null;
+}
+
+/** A save blocked on the user acknowledging it overlaps an existing entry; resolved by resubmitting with the flag. */
+interface OverlapConfirm {
+  kind: 'add' | 'draft';
+  overlaps: OverlapEntry[];
 }
 
 /** The caller's role is scoped to whichever organization is currently active — not aggregated across all of them. */
@@ -89,23 +110,33 @@ function defaultRole(session: Session, orgId: string | null): 'admin' | 'manager
   return 'user';
 }
 
-/** ISO instant -> the `YYYY-MM-DDTHH:mm` local-time shape a datetime-local input wants. */
-function toLocalInput(iso: string): string {
+/** ISO instant -> local `{ date: 'YYYY-MM-DD', time: 'HH:mm' }`, the shape the date/time inputs want. */
+function splitLocal(iso: string): { date: string; time: string } {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
 }
 
 function timeOf(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/** Today at the given local hour, in the `YYYY-MM-DDTHH:mm` shape a datetime-local input wants. */
-function todayAt(hour: number): string {
-  const d = new Date();
-  d.setHours(hour, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** Whole minutes between two ISO instants. */
+function minutesBetween(startIso: string, endIso: string): number {
+  return Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
+}
+
+/** Combine a local `YYYY-MM-DD` date and `HH:mm` time into an ISO instant. */
+function toIso(date: string, time: string): string {
+  return new Date(`${date}T${time}`).toISOString();
+}
+
+/** `startIso` shifted forward by the given number of minutes, as an ISO instant. */
+function addMinutesIso(startIso: string, minutes: number): string {
+  return new Date(new Date(startIso).getTime() + minutes * 60000).toISOString();
 }
 
 export default function App() {
@@ -140,8 +171,9 @@ export default function App() {
     { id: '1', start_time: '2026-09-07T08:00:00Z', end_time: '2026-09-07T09:30:00Z', comment: 'Homepage hero' },
     { id: '2', start_time: '2026-09-06T08:00:00Z', end_time: '2026-09-06T09:00:00Z', comment: 'Bugfix' },
   ]);
-  const [start, setStart] = useState(() => todayAt(9));
-  const [end, setEnd] = useState(() => todayAt(10));
+  const [entryDate, setEntryDate] = useState(() => todayDate());
+  const [entryStartTime, setEntryStartTime] = useState(DEFAULT_WORKTIME_START);
+  const [entryDurationMinutes, setEntryDurationMinutes] = useState(60);
   const [comment, setComment] = useState('');
   const [projects, setProjects] = useState<Option[]>([]);
   const [subprojectsByProject, setSubprojectsByProject] = useState<Record<string, Option[]>>({});
@@ -149,6 +181,8 @@ export default function App() {
   const [subprojectId, setSubprojectId] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [workTimeError, setWorkTimeError] = useState<string | null>(null);
+  const [overlapConfirm, setOverlapConfirm] = useState<OverlapConfirm | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void> } | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantPinned, setAssistantPinned] = useState(false);
   const assistantCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,6 +196,7 @@ export default function App() {
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
+  const useWorktimeRanges = session?.settings?.useWorktimeMinutesRanges === true;
 
   const NAV_GROUPS: Array<{ header: string; items: Array<{ id: string; section: Section; label: string; visible: boolean; indent?: boolean }> }> = [
     {
@@ -314,17 +349,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.projectId]);
 
-  // The login/register response doesn't carry the user's saved language preference — fetch it once per session.
+  // The login/register response doesn't carry the user's saved language/settings preferences — fetch them once per session.
   useEffect(() => {
-    if (!session || session.locale) return;
+    if (!session || (session.locale && session.settings)) return;
     (async () => {
       try {
         const res = await fetch(`${API}/users/me`, { headers: await authHeaders() });
         const data = await res.json();
-        if (data.ok && data.locale) {
+        if (data.ok) {
           setSession((prev) => {
             if (!prev) return prev;
-            const updated = { ...prev, locale: data.locale };
+            const updated = { ...prev, locale: data.locale ?? prev.locale, settings: data.settings ?? prev.settings ?? {} };
             saveSession(updated);
             return updated;
           });
@@ -354,12 +389,14 @@ export default function App() {
     );
   }
 
-  async function addEntry() {
+  async function addEntry(acknowledgeOverlap = false) {
     setWorkTimeError(null);
+    const startTime = toIso(entryDate, useWorktimeRanges ? entryStartTime : DEFAULT_WORKTIME_START);
+    const endTime = addMinutesIso(startTime, entryDurationMinutes);
     const e: Entry = {
       id: String(Date.now()),
-      start_time: new Date(start).toISOString(),
-      end_time: new Date(end).toISOString(),
+      start_time: startTime,
+      end_time: endTime,
       comment,
       project_id: projectId || null,
       subproject_id: subprojectId || null,
@@ -380,13 +417,19 @@ export default function App() {
           projectId: projectId || undefined,
           subprojectId: subprojectId || undefined,
           comment,
+          acknowledgeOverlap: acknowledgeOverlap || undefined,
         }),
       });
       const data = await res.json();
       if (data.ok === false) {
+        if (data.error === 'overlapping-entry-confirm') {
+          setOverlapConfirm({ kind: 'add', overlaps: data.overlaps ?? [] });
+          return;
+        }
         setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not add the entry (${data.error ?? 'unknown error'}).`);
         return;
       }
+      setOverlapConfirm(null);
       setEntries((p) => [...p, e]);
       await reloadEntries();
     } catch {
@@ -394,12 +437,13 @@ export default function App() {
     }
   }
 
-  async function saveDraft() {
+  async function saveDraft(acknowledgeOverlap = false) {
     if (!draft) return;
     setWorkTimeError(null);
+    const draftStartTime = toIso(draft.date, useWorktimeRanges ? draft.startTime : DEFAULT_WORKTIME_START);
     const patch = {
-      startTime: new Date(draft.start).toISOString(),
-      endTime: new Date(draft.end).toISOString(),
+      startTime: draftStartTime,
+      endTime: addMinutesIso(draftStartTime, draft.durationMinutes),
       projectId: draft.projectId || null,
       subprojectId: draft.subprojectId || null,
       comment: draft.comment,
@@ -426,19 +470,49 @@ export default function App() {
       const res = await fetch(`${API}/work-time/${draft.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, acknowledgeOverlap: acknowledgeOverlap || undefined }),
       });
       const data = await res.json();
       if (data.ok === false) {
+        if (data.error === 'overlapping-entry-confirm') {
+          setOverlapConfirm({ kind: 'draft', overlaps: data.overlaps ?? [] });
+          return;
+        }
         setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not save the change (${data.error ?? 'unknown error'}).`);
         return;
       }
+      setOverlapConfirm(null);
       applyLocally();
       setDraft(null);
       await reloadEntries();
     } catch {
       applyLocally(); // offline demo: API unreachable, keep the optimistic local edit
       setDraft(null);
+    }
+  }
+
+  /** Dismiss the edit dialog, and any overlap warning it triggered. */
+  function closeDraft() {
+    setDraft(null);
+    setOverlapConfirm((prev) => (prev?.kind === 'draft' ? null : prev));
+  }
+
+  async function removeEntry(id: string) {
+    setWorkTimeError(null);
+    try {
+      const res = await fetch(`${API}/work-time/${id}`, {
+        method: 'DELETE',
+        headers: await authHeaders(),
+      });
+      const data = await res.json();
+      if (data.ok === false) {
+        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not remove the entry (${data.error ?? 'unknown error'}).`);
+        return;
+      }
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+      await reloadEntries();
+    } catch {
+      setEntries((prev) => prev.filter((e) => e.id !== id)); // offline demo: API unreachable, keep the optimistic local removal
     }
   }
 
@@ -452,8 +526,8 @@ export default function App() {
     setSession(null);
   }
 
-  const addRangeInvalid = !(new Date(end) > new Date(start));
-  const draftRangeInvalid = !!draft && !(new Date(draft.end) > new Date(draft.start));
+  const addDurationInvalid = !(entryDurationMinutes > 0);
+  const draftDurationInvalid = !!draft && !(draft.durationMinutes > 0);
 
   const navList = (
     <List>
@@ -504,6 +578,14 @@ export default function App() {
     </List>
   );
 
+  // Reserve room for the fixed-position assistant flyout so the main content actually resizes around
+  // it, rather than being overlaid: a real flex sibling (desktop, to its right) or a real block spacer
+  // (mobile, below the page content) matching its current width/height, since a `position: fixed`
+  // element never participates in layout on its own.
+  const assistantReservedWidth = !isMobile && orgId ? (assistantOpen ? ASSISTANT_TAB_WIDTH + ASSISTANT_PANEL_WIDTH : ASSISTANT_TAB_WIDTH) : 0;
+  const assistantReservedHeight =
+    isMobile && orgId ? (assistantOpen ? `calc(${ASSISTANT_TAB_HEIGHT}px + ${ASSISTANT_PANEL_HEIGHT_MOBILE})` : `${ASSISTANT_TAB_HEIGHT}px`) : '0px';
+
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar ref={setAppBarNode} position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
@@ -544,6 +626,11 @@ export default function App() {
               setSession(updated);
               saveSession(updated);
             }}
+            onSettingsChange={(newSettings) => {
+              const updated = { ...session, settings: newSettings };
+              setSession(updated);
+              saveSession(updated);
+            }}
           />
         </Toolbar>
       </AppBar>
@@ -567,17 +654,45 @@ export default function App() {
         {navList}
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ height: appBarHeight, flexShrink: 0 }} />
-        <Container maxWidth={false} sx={{ py: 3, display: 'grid', gap: 2 }}>
+        <Container
+          maxWidth={false}
+          sx={{
+            py: 3,
+            display: 'grid',
+            gap: 2,
+            overflowX: 'auto',
+          }}
+        >
           {section === 'time' && (
             <>
               {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
               <Paper sx={{ p: 2 }}>
                 <Typography variant="h6">{t('time.logWorkTime')}</Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-                  <TextField label={t('time.start')} type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} size="small" />
-                  <TextField label={t('time.end')} type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} size="small" error={addRangeInvalid} helperText={addRangeInvalid ? t('time.endMustBeAfterStart') : ' '} />
+                  <TextField label={t('time.date')} type="date" value={entryDate} onChange={(e) => e.target.value && setEntryDate(e.target.value)} size="small" />
+                  {useWorktimeRanges && (
+                    <TextField
+                      label={t('time.start')}
+                      type="time"
+                      value={entryStartTime}
+                      onChange={(e) => e.target.value && setEntryStartTime(e.target.value)}
+                      size="small"
+                      slotProps={{ htmlInput: { step: 300 } }}
+                    />
+                  )}
+                  <TextField
+                    label={t('time.durationMinutes')}
+                    type="number"
+                    value={entryDurationMinutes}
+                    onChange={(e) => setEntryDurationMinutes(Number(e.target.value))}
+                    size="small"
+                    slotProps={{ htmlInput: { step: 5, min: 5 } }}
+                    error={addDurationInvalid}
+                    helperText={addDurationInvalid ? t('time.durationMustBePositive') : ' '}
+                    sx={{ maxWidth: 160 }}
+                  />
                   <TextField
                     select
                     label={t('time.project')}
@@ -602,7 +717,7 @@ export default function App() {
                     {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
                   </TextField>
                   <TextField label={t('time.comment')} value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
-                  <Button variant="contained" onClick={addEntry} disabled={addRangeInvalid}>{t('time.add')}</Button>
+                  <Button variant="contained" onClick={() => addEntry()} disabled={addDurationInvalid}>{t('time.add')}</Button>
                 </Box>
               </Paper>
               <Paper sx={{ p: 2 }}>
@@ -661,16 +776,34 @@ export default function App() {
                         <TableCell align="right">
                           <Button
                             size="small"
-                            onClick={() => setDraft({
-                              id: e.id,
-                              start: toLocalInput(e.start_time),
-                              end: toLocalInput(e.end_time),
-                              projectId: e.project_id ?? '',
-                              subprojectId: e.subproject_id ?? '',
-                              comment: e.comment ?? '',
-                            })}
+                            onClick={() => {
+                              const { date, time } = splitLocal(e.start_time);
+                              setOverlapConfirm((prev) => (prev?.kind === 'draft' ? null : prev));
+                              setDraft({
+                                id: e.id,
+                                date,
+                                startTime: time,
+                                durationMinutes: minutesBetween(e.start_time, e.end_time),
+                                projectId: e.project_id ?? '',
+                                subprojectId: e.subproject_id ?? '',
+                                comment: e.comment ?? '',
+                              });
+                            }}
                           >
                             {t('time.edit')}
+                          </Button>
+                          <Button
+                            size="small"
+                            color="error"
+                            onClick={() =>
+                              setConfirmDialog({
+                                title: t('time.removeEntry'),
+                                message: t('time.removeEntryConfirm'),
+                                onConfirm: () => removeEntry(e.id),
+                              })
+                            }
+                          >
+                            {t('time.remove')}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -727,9 +860,72 @@ export default function App() {
             )}
           </Suspense>
         </Container>
+        {isMobile && orgId && (
+          <Box sx={{ height: assistantReservedHeight, flexShrink: 0, transition: 'height 0.2s ease' }} />
+        )}
       </Box>
 
-      {orgId && (
+      {!isMobile && orgId && (
+        <Box sx={{ width: assistantReservedWidth, flexShrink: 0, transition: 'width 0.2s ease' }} />
+      )}
+
+      {orgId && (isMobile ? (
+        // Mobile: a bottom-docked bar instead of a right-edge flyout, so it never eats the width
+        // tables/columns need on a narrow screen. Tap to pin; there's no hover to auto-open here.
+        <Box
+          sx={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: assistantOpen ? `calc(${ASSISTANT_TAB_HEIGHT}px + ${ASSISTANT_PANEL_HEIGHT_MOBILE})` : ASSISTANT_TAB_HEIGHT,
+            maxHeight: '85vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            transition: 'height 0.2s ease',
+            zIndex: (t) => t.zIndex.drawer + 2,
+            boxShadow: 3,
+          }}
+        >
+          <Box
+            onClick={toggleAssistantPin}
+            role="button"
+            aria-label={assistantPinned ? 'Unpin assistant' : 'Pin assistant open'}
+            title={assistantPinned ? 'Unpin assistant' : 'Tap to keep the assistant open'}
+            sx={{
+              height: ASSISTANT_TAB_HEIGHT,
+              flexShrink: 0,
+              bgcolor: assistantPinned ? 'primary.dark' : 'primary.main',
+              color: 'primary.contrastText',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1,
+              cursor: 'pointer',
+              '&:hover': { bgcolor: 'primary.dark' },
+            }}
+          >
+            <Typography
+              aria-hidden
+              sx={{
+                fontSize: '1.1rem',
+                lineHeight: 1,
+                transform: assistantPinned ? 'rotate(45deg)' : 'rotate(0deg)',
+                transition: 'transform 0.15s ease',
+              }}
+            >
+              📌
+            </Typography>
+            <Typography variant="button" sx={{ letterSpacing: 1 }}>Assistant</Typography>
+          </Box>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <Suspense fallback={<LinearProgress sx={{ m: 2 }} />}>
+              <Assistant orgId={orgId} authHeaders={authHeaders} />
+            </Suspense>
+          </Box>
+        </Box>
+      ) : (
         <Box
           onMouseEnter={openAssistantPanel}
           onMouseLeave={scheduleCloseAssistantPanel}
@@ -790,15 +986,34 @@ export default function App() {
             </Suspense>
           </Box>
         </Box>
-      )}
+      ))}
 
-      <Dialog open={!!draft} onClose={() => setDraft(null)} fullWidth maxWidth="sm">
+      <Dialog open={!!draft} onClose={closeDraft} fullWidth maxWidth="sm">
         <DialogTitle>Edit entry</DialogTitle>
         {draft && (
           <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
             {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
-            <TextField label="Start" type="datetime-local" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} size="small" sx={{ mt: 1 }} />
-            <TextField label="End" type="datetime-local" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} size="small" error={draftRangeInvalid} helperText={draftRangeInvalid ? 'End must be after start' : ' '} />
+            <TextField label="Date" type="date" value={draft.date} onChange={(e) => e.target.value && setDraft({ ...draft, date: e.target.value })} size="small" sx={{ mt: 1 }} />
+            {useWorktimeRanges && (
+              <TextField
+                label="Start time"
+                type="time"
+                value={draft.startTime}
+                onChange={(e) => e.target.value && setDraft({ ...draft, startTime: e.target.value })}
+                size="small"
+                slotProps={{ htmlInput: { step: 300 } }}
+              />
+            )}
+            <TextField
+              label="Duration (minutes)"
+              type="number"
+              value={draft.durationMinutes}
+              onChange={(e) => setDraft({ ...draft, durationMinutes: Number(e.target.value) })}
+              size="small"
+              slotProps={{ htmlInput: { step: 5, min: 5 } }}
+              error={draftDurationInvalid}
+              helperText={draftDurationInvalid ? 'Duration must be greater than zero.' : ' '}
+            />
             <TextField
               select
               label="Project"
@@ -824,8 +1039,56 @@ export default function App() {
           </DialogContent>
         )}
         <DialogActions>
-          <Button onClick={() => setDraft(null)}>Cancel</Button>
-          <Button variant="contained" onClick={saveDraft} disabled={draftRangeInvalid}>Save</Button>
+          <Button onClick={closeDraft}>Cancel</Button>
+          <Button variant="contained" onClick={() => saveDraft()} disabled={draftDurationInvalid}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!overlapConfirm} onClose={() => setOverlapConfirm(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Overlapping entry</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 1, pt: 1 }}>
+          <Typography variant="body2">
+            This is an additional booking — it overlaps {overlapConfirm && overlapConfirm.overlaps.length > 1 ? 'these existing entries' : 'an existing entry'} on that day:
+          </Typography>
+          {overlapConfirm?.overlaps.map((o) => (
+            <Typography key={o.id} variant="body2" color="text.secondary">
+              {timeOf(o.start_time)} – {timeOf(o.end_time)}{o.comment ? ` (${o.comment})` : ''}
+            </Typography>
+          ))}
+          <Typography variant="body2">Add it anyway?</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOverlapConfirm(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (overlapConfirm?.kind === 'add') addEntry(true);
+              else if (overlapConfirm?.kind === 'draft') saveDraft(true);
+            }}
+          >
+            Add anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!confirmDialog} onClose={() => setConfirmDialog(null)}>
+        <DialogTitle>{confirmDialog?.title ?? 'Confirm'}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>{confirmDialog?.message}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDialog(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={async () => {
+              const action = confirmDialog?.onConfirm;
+              setConfirmDialog(null);
+              if (action) await action();
+            }}
+          >
+            {t('time.remove')}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

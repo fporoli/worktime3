@@ -19,6 +19,7 @@ import {
   Typography,
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
+import { getSourceTitle } from './Timesheet';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -38,6 +39,10 @@ interface ActionItem {
   workflow_data: { reason?: string; note?: string; decisionNote?: string | null };
   started: string | null;
   definition_name: string;
+  /** Human label for the kind of record this workflow concerns, e.g. "Timesheet Period" — from the step's `source`. */
+  source: string | null;
+  /** Which formatter in `SOURCE_TITLE_FNS` renders this record's title — from the step's `source_name`. */
+  source_name: string | null;
   timesheet_period: PeriodRow | null;
 }
 
@@ -50,6 +55,23 @@ function actionItemLabel(definitionName: string): string {
 
 function actionItemDetail(item: ActionItem): string {
   return item.workflow_data.reason || item.workflow_data.note || '—';
+}
+
+/**
+ * Registry of `source_name` -> title formatter, keyed by the name a workflow_definitions step
+ * configures. Lets a new source type show a "Corresponding object" title with no change here —
+ * only a new entry in this map once its formatter exists.
+ */
+const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
+  getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
+};
+
+/** "<source> <formatted title>", e.g. "Timesheet Period 01.09.2026-01.10.2026" — or just the source, or '—' if neither is configured. */
+function correspondingObject(item: ActionItem): string {
+  if (!item.source) return '—';
+  const fn = item.source_name ? SOURCE_TITLE_FNS[item.source_name] : undefined;
+  const title = fn?.(item);
+  return title ? `${item.source} ${title}` : item.source;
 }
 
 interface ApprovalsProps {
@@ -66,6 +88,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   const [inspectingPeriod, setInspectingPeriod] = useState<PeriodRow | null>(null);
   const [inspectingActionItemId, setInspectingActionItemId] = useState<string | null>(null);
@@ -167,30 +190,56 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     }
   }
 
+  const filteredActionItems = actionItems.filter((item) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = [
+      item.timesheet_period?.user_display_name,
+      item.timesheet_period?.user_email,
+      actionItemLabel(item.definition_name),
+      correspondingObject(item),
+      actionItemDetail(item),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Approvals</Typography>
+      <Typography variant="h6">Workflow</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Action items assigned to you — timesheet submissions and reopen requests from your direct reports.
+        Open workflows assigned to you, directly or through a team — timesheet submissions and reopen requests.
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>Action items ({actionItems.length})</Typography>
+      <TextField
+        size="small"
+        placeholder="Search by member, type, or corresponding object…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        sx={{ mb: 2, maxWidth: 320, display: 'block' }}
+      />
+
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>
+        Action items ({filteredActionItems.length}{search.trim() ? ` of ${actionItems.length}` : ''})
+      </Typography>
       <Table size="small" sx={{ mb: 3 }}>
         <TableHead>
           <TableRow>
             <TableCell>Member</TableCell>
             <TableCell>Type</TableCell>
-            <TableCell>Period</TableCell>
+            <TableCell>Corresponding object</TableCell>
             <TableCell>Details</TableCell>
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {actionItems.map((item) => (
+          {filteredActionItems.map((item) => (
             <Fragment key={item.id}>
               <TableRow hover>
                 <TableCell>
@@ -198,7 +247,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? ''}</Typography>
                 </TableCell>
                 <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
-                <TableCell>{item.timesheet_period?.period_start.slice(0, 7) ?? '—'}</TableCell>
+                <TableCell>{correspondingObject(item)}</TableCell>
                 <TableCell>{actionItemDetail(item)}</TableCell>
                 <TableCell align="right">
                   {item.timesheet_period && (
@@ -220,8 +269,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
               )}
             </Fragment>
           ))}
-          {actionItems.length === 0 && (
-            <TableRow><TableCell colSpan={5}>Nothing pending.</TableCell></TableRow>
+          {filteredActionItems.length === 0 && (
+            <TableRow><TableCell colSpan={5}>{actionItems.length === 0 ? 'Nothing pending.' : 'No action items match your search.'}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

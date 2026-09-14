@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, OnModuleInit, Param, Post, Query, Req } from '@nestjs/common';
 import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, membershipManagerId } from './access';
@@ -20,13 +20,45 @@ export function nextMonthStart(periodStart: string): string {
 }
 
 @Controller()
-export class TimesheetsController {
+export class TimesheetsController implements OnModuleInit {
   constructor(
     private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
     private readonly workflowsSvc: WorkflowsService,
   ) {}
+
+  /**
+   * Timesheets own what "timesheet.*" workflow actions actually do, and how to resolve a
+   * timesheet_periods row's organization — WorkflowsService only knows the names, not the behavior.
+   */
+  onModuleInit() {
+    this.workflowsSvc.registerSourceOrgResolver('timesheet_periods', async (db, sourceTableUuid) => {
+      const [period] = await db
+        .select({ organization_id: timesheet_periods.organization_id })
+        .from(timesheet_periods)
+        .where(eq(timesheet_periods.id, sourceTableUuid));
+      return period?.organization_id ?? null;
+    });
+
+    this.workflowsSvc.registerAction('timesheet.approve', async (db, ctx) => {
+      const patch = { status: 'approved' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: null };
+      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
+      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+    });
+
+    this.workflowsSvc.registerAction('timesheet.reject', async (db, ctx) => {
+      const patch = { status: 'rejected' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: ctx.decisionNote };
+      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
+      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+    });
+
+    this.workflowsSvc.registerAction('timesheet.reopen', async (db, ctx) => {
+      const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
+      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
+      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+    });
+  }
 
   @Get('organizations/:orgId/timesheet-periods')
   async list(
@@ -137,6 +169,8 @@ export class TimesheetsController {
           assignTo: 'manager',
           onApprove: { action: 'timesheet.approve' },
           onReject: { action: 'timesheet.reject' },
+          source: 'Timesheet Period',
+          source_name: 'getSourceTitle',
         },
       ]);
       await this.workflowsSvc.createWorkflow(db, {
@@ -276,6 +310,8 @@ export class TimesheetsController {
           assignTo: 'manager',
           onApprove: { action: 'timesheet.reopen' },
           onReject: { action: 'none' },
+          source: 'Timesheet Period',
+          source_name: 'getSourceTitle',
         },
       ],
     );

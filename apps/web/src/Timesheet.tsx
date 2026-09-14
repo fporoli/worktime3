@@ -57,6 +57,31 @@ function shiftMonth(periodStart: string, delta: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
+/** 'YYYY-MM-DD' -> 'DD.MM.YYYY'. */
+function toDisplayDate(isoDate: string): string {
+  const [y, m, d] = isoDate.slice(0, 10).split('-');
+  return `${d}.${m}.${y}`;
+}
+
+/**
+ * A generic, human title for a timesheet period, e.g. '01.09.2026-01.10.2026' for September 2026 —
+ * its start date through the (exclusive) start of the next month. Referenced by name
+ * ("getSourceTitle") from `workflow_definitions.steps[].source_name`, so a workflow row whose source
+ * is a timesheet period can show a "Corresponding object" title without Workflow/Approvals code
+ * needing to know anything about timesheets.
+ */
+export function getSourceTitle(periodStart: string): string {
+  return `${toDisplayDate(periodStart)}-${toDisplayDate(nextMonthStart(periodStart))}`;
+}
+
+/** First day of the month after `periodStart` (a 'YYYY-MM-DD' string). */
+function nextMonthStart(periodStart: string): string {
+  const [y, m] = periodStart.slice(0, 10).split('-').map(Number);
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+}
+
 interface TimesheetProps {
   orgId: string;
   userId: string;
@@ -204,7 +229,20 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
           placeholder={t('timesheet.submitNotePlaceholder')}
           value={submitNote}
           onChange={(e) => setSubmitNote(e.target.value)}
-          sx={{ display: 'block', mb: 1, minWidth: 320, maxWidth: 480 }}
+          multiline
+          rows={1}        
+          sx={{
+            display: 'block',
+            mb: 1.5,
+            width: '500px',
+            minWidth: '500px',
+            maxWidth: '1000px',
+            '& textarea': {
+              resize: 'both',
+              minHeight: 40,
+              minWidth: 500,
+            },
+          }}
         />
       )}
       <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
