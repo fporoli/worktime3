@@ -145,3 +145,5 @@ vite.config.ts.timestamp-*
 
 # Local Postgres database files
 data-local/
+data-dev/
+.DS_Store

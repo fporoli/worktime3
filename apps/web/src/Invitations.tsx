@@ -62,7 +62,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
 
   async function reloadRoles() {
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/roles`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) {
         setRoles(data.filter((r) => r.name !== 'owner'));
@@ -98,7 +98,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
     setSuccess(null);
     setLastInviteLink(null);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/invitations`, {
+      const res = await fetch(`${API}/organizations/${orgId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ email: trimmed, roleId }),
