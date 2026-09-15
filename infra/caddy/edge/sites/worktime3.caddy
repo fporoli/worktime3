@@ -1,0 +1,18 @@
+# worktime3's site block for the shared edge Caddy (infra/caddy/edge/). Deployed by
+# deploy-vps.yml: copied to /opt/edge/sites/worktime3.caddy on every deploy, then the
+# edge Caddy is reloaded to pick up changes. Do not edit the copy on the VPS directly —
+# it gets overwritten on the next deploy; edit this file instead.
+#
+# Proxies to worktime3's containers by their explicit container_name (not the bare
+# service name) — the edge Caddy only sees them over the shared "edge" network, where
+# a bare service name alias could collide with another project's same-named service
+# (e.g. worktime2 also has a service called "api").
+wt.turbotapir.com {
+  reverse_proxy worktime3-web:80
+}
+wtservice.turbotapir.com {
+  reverse_proxy worktime3-api:8000
+}
+wtauth.turbotapir.com {
+  reverse_proxy worktime3-keycloak:8080
+}

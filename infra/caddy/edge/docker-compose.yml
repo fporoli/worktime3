@@ -1,0 +1,27 @@
+# Shared reverse-proxy edge, fronting every project on this VPS (worktime3 and others,
+# e.g. worktime2) that needs port 80/443 — only one process can bind those, so each
+# project runs its own app containers but not its own Caddy.
+#
+# Lives at /opt/edge on the VPS, independent of any single project's git checkout or
+# deploy pipeline. Bootstrapped once by hand; after that it just keeps running, and
+# each project drops its own site file into ./sites/ on every deploy and reloads this
+# Caddy (see worktime3's .github/workflows/deploy-vps.yml for that project's half).
+name: edge
+services:
+  caddy:
+    image: caddy:2
+    container_name: edge-caddy
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      # Persists issued certs across restarts/redeploys — without this, every restart
+      # would re-request from Let's Encrypt and risk its rate limits.
+      - caddy_data:/data
+    networks: [edge]
+    restart: unless-stopped
+networks:
+  edge:
+    external: true
+volumes:
+  caddy_data:

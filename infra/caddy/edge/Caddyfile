@@ -1,0 +1,4 @@
+# Each project owns and deploys its own file under sites/ (e.g. sites/worktime3.caddy,
+# sites/worktime2.caddy) — this top-level file just pulls all of them in, so no project's
+# deploy pipeline needs to touch a file another project also edits.
+import /etc/caddy/sites/*.caddy

@@ -1,3 +1,9 @@
+# Explicit project name: without it, Compose derives the project name from this
+# directory's basename ("compose"), which collides with any other project that
+# also keeps its compose file in a directory called "compose" (e.g. worktime2) —
+# both would get containers named compose-api-1, compose-web-1, etc. on the same
+# Docker host, and `docker compose up` for one would clobber the other's containers.
+name: worktime3
 services:
   pg:
     image: postgres:16
@@ -29,7 +35,10 @@ services:
       pg: { condition: service_healthy }
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
-    # No host port here — caddy is the single entrypoint, proxying wtauth.turbotapir.com to this container.
+    # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
+    # entrypoint, proxying wtauth.turbotapir.com to this container over the edge network.
+    container_name: worktime3-keycloak
+    networks: [default, edge]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
@@ -48,7 +57,10 @@ services:
       migrate: { condition: service_completed_successfully }
   api:
     image: ${API_IMAGE:?required}
-    # No host port here — caddy is the single entrypoint, proxying wtservice.turbotapir.com to this container.
+    # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
+    # entrypoint, proxying wtservice.turbotapir.com to this container over the edge network.
+    container_name: worktime3-api
+    networks: [default, edge]
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@pg:5432/worktime
       NODE_ENV: production
@@ -70,16 +82,16 @@ services:
       migrate: { condition: service_completed_successfully }
   web:
     image: ${WEB_IMAGE:?required}
-    # No host port here — caddy is the single entrypoint, proxying wt.turbotapir.com to this container.
-  caddy:
-    image: caddy:2
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ../infra/caddy/Caddyfile.vps:/etc/caddy/Caddyfile:ro
-      # Persists issued certs across redeploys — without this, every `up` would
-      # re-request from Let's Encrypt and risk its rate limits.
-      - caddy_data:/data
-    depends_on: [api, web, keycloak]
+    # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
+    # entrypoint, proxying wt.turbotapir.com to this container over the edge network.
+    container_name: worktime3-web
+    networks: [default, edge]
+networks:
+  default:
+  # Pre-existing network owned by the shared edge Caddy stack (infra/caddy/edge/),
+  # which also fronts other projects (e.g. worktime2) on this VPS. Created once via
+  # `docker network create edge` as part of setting up that stack — not by this project.
+  edge:
+    external: true
 volumes:
   pgdata:
-  caddy_data:
