@@ -16,6 +16,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/worktime3 && git pull
-            API_IMAGE=ghcr.io/${{ github.repository }}/api:${{ inputs.image_tag }} WEB_IMAGE=ghcr.io/${{ github.repository }}/web:${{ inputs.image_tag }} docker compose -f compose/docker-compose.vps.yml up -d --build
+            API_IMAGE=ghcr.io/${{ github.repository }}/api:${{ inputs.image_tag }} WEB_IMAGE=ghcr.io/${{ github.repository }}/web:${{ inputs.image_tag }} docker compose -f compose/docker-compose.vps.yml up -d --build --remove-orphans
             cp infra/caddy/edge/sites/worktime3.caddy /opt/edge/sites/worktime3.caddy
             docker exec edge-caddy caddy reload --config /etc/caddy/Caddyfile
