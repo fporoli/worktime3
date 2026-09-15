@@ -52,6 +52,8 @@ services:
       KC_HOSTNAME: wtauth.turbotapir.com
       KC_HTTP_ENABLED: "true"
       KC_PROXY_HEADERS: xforwarded
+    volumes:
+      - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start", "--import-realm"]
     depends_on:
       migrate: { condition: service_completed_successfully }
