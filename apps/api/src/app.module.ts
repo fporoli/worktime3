@@ -22,6 +22,9 @@ import { StaticDataController } from './static-data.controller';
 import { AuditController } from './audit.controller';
 import { AssistantController } from './assistant.controller';
 import { AssistantService } from './assistant.service';
+import { NotificationsController } from './notifications.controller';
+import { NotificationsService } from './notifications.service';
+import { NotificationsGateway } from './notifications.gateway';
 import { DbService } from './db.service';
 
 @Module({
@@ -41,6 +44,7 @@ import { DbService } from './db.service';
     StaticDataController,
     AuditController,
     AssistantController,
+    NotificationsController,
   ],
   providers: [
     DbService,
@@ -50,6 +54,8 @@ import { DbService } from './db.service';
     VersionsService,
     WorkflowsService,
     AssistantService,
+    NotificationsService,
+    NotificationsGateway,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })

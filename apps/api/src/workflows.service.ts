@@ -5,6 +5,7 @@ import { isOrgAdmin } from './access';
 import { workflows, workflow_definitions, team_members, organization_memberships } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
+import { NotificationsService } from './notifications.service';
 
 /** Employee asks their manager to reopen an already-approved month, with a reason. */
 export const REOPEN_TIMESHEET_WORKFLOW_NAME = 'reopen approved timesheet';
@@ -60,6 +61,7 @@ export class WorkflowsService {
   constructor(
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Register what happens when a step's onApprove/onReject names this action. */
@@ -103,7 +105,7 @@ export class WorkflowsService {
     return created;
   }
 
-  /** Create one workflow row with a single pending step, assigned to one or more users. The requester's text lives in `workflowData`. */
+  /** Create one workflow row with a single pending step, assigned to one or more users and/or a team. The requester's text lives in `workflowData`. */
   async createWorkflow(
     db: Db,
     params: {
@@ -111,9 +113,12 @@ export class WorkflowsService {
       sourceTable: string;
       sourceTableUuid: string;
       step: string;
-      assignedToUserId: string[];
+      assignedToUserId?: string[];
+      assignedToTeamId?: string;
       workflowData: Record<string, unknown>;
       actorUserId: string;
+      /** Human copy for the notification sent to every resolved assignee. */
+      notification: { title: string; body?: string };
     },
   ) {
     const now = new Date().toISOString();
@@ -121,16 +126,76 @@ export class WorkflowsService {
       workflow_def_id: params.workflowDefId,
       source_table: params.sourceTable,
       source_table_uuid: params.sourceTableUuid,
-      workflow_data: params.workflowData,
+      // Captures who to notify back on resolve() — generically, for every workflow type,
+      // without a per-source-table lookup.
+      workflow_data: { ...params.workflowData, submittedByUserId: params.actorUserId },
       workflow_started: now,
       step: params.step,
       step_status: 'pending',
       workflow_step_started: now,
-      assigned_to_user_id: params.assignedToUserId,
+      assigned_to_user_id: params.assignedToUserId ?? null,
+      assigned_to_team_id: params.assignedToTeamId ?? null,
     };
     const [workflow] = await db.insert(workflows).values(values).returning({ id: workflows.workflow_id });
     void this.versions.record('workflows', workflow.id, 'insert', params.actorUserId, { id: workflow.id, ...values }).catch(() => {});
+
+    void this.notifyAssignees(db, {
+      sourceTable: params.sourceTable,
+      assignedToUserId: params.assignedToUserId,
+      assignedToTeamId: params.assignedToTeamId,
+      excludeUserId: params.actorUserId,
+      type: 'workflow.assigned',
+      title: params.notification.title,
+      body: params.notification.body,
+      sourceTableUuid: params.sourceTableUuid,
+      workflowId: workflow.id,
+    }).catch((err) => console.error('notify-assignees-failed', err));
+
     return workflow;
+  }
+
+  /** Resolve a workflow's assignees (direct users and/or a team's members) and notify each of them once. */
+  private async notifyAssignees(
+    db: Db,
+    params: {
+      sourceTable: string;
+      assignedToUserId?: string[];
+      assignedToTeamId?: string;
+      excludeUserId: string;
+      type: string;
+      title: string;
+      body?: string;
+      sourceTableUuid: string;
+      workflowId: string;
+    },
+  ) {
+    const recipientIds = new Set(params.assignedToUserId ?? []);
+    if (params.assignedToTeamId) {
+      const rows = await db
+        .select({ user_id: organization_memberships.user_id })
+        .from(team_members)
+        .innerJoin(organization_memberships, eq(organization_memberships.id, team_members.membership_id))
+        .where(eq(team_members.team_id, params.assignedToTeamId));
+      for (const row of rows) recipientIds.add(row.user_id);
+    }
+    recipientIds.delete(params.excludeUserId);
+    if (recipientIds.size === 0) return;
+
+    const resolveOrg = this.sourceOrgResolvers.get(params.sourceTable);
+    const organizationId = resolveOrg ? await resolveOrg(db, params.sourceTableUuid) : null;
+    if (!organizationId) return;
+
+    await this.notifications.notifyMany({
+      organizationId,
+      recipientUserIds: [...recipientIds],
+      type: params.type,
+      title: params.title,
+      body: params.body,
+      sourceTable: params.sourceTable,
+      sourceTableUuid: params.sourceTableUuid,
+      workflowId: params.workflowId,
+      data: { workflowId: params.workflowId, sourceTable: params.sourceTable, sourceTableUuid: params.sourceTableUuid },
+    });
   }
 
   /** The pending workflow (if any) for a record — lets a record-specific endpoint (e.g. timesheet-periods/:id/approve) delegate to it. */
@@ -199,6 +264,23 @@ export class WorkflowsService {
 
     if (organizationId) {
       void this.audit.record(organizationId, callerId, `workflow.${outcome}`, 'workflow', workflowId, note ? { note } : undefined).catch(() => {});
+
+      const submittedByUserId = (workflow.workflow_data as Record<string, unknown> | null)?.submittedByUserId as string | undefined;
+      if (submittedByUserId && submittedByUserId !== callerId) {
+        void this.notifications
+          .notifyMany({
+            organizationId,
+            recipientUserIds: [submittedByUserId],
+            type: outcome === 'approved' ? 'workflow.approved' : 'workflow.rejected',
+            title: outcome === 'approved' ? 'Your submission was approved' : 'Your submission was rejected',
+            body: decisionNote ?? undefined,
+            sourceTable: workflow.source_table,
+            sourceTableUuid: workflow.source_table_uuid,
+            workflowId,
+            data: { workflowId, sourceTable: workflow.source_table, sourceTableUuid: workflow.source_table_uuid },
+          })
+          .catch((err) => console.error('notify-submitter-failed', err));
+      }
     }
     return { ok: true };
   }

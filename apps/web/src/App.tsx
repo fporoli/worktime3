@@ -40,6 +40,8 @@ import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import UserMenu from './UserMenu';
+import NotificationBell from './NotificationBell';
+import { useNotifications, type Notification } from './useNotifications';
 
 const Management = lazy(() => import('./Management'));
 const Invitations = lazy(() => import('./Invitations'));
@@ -253,6 +255,18 @@ export default function App() {
       }
     }
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  const { items: notifications, unreadCount, live: liveNotification, clearLive, markRead, markAllRead } = useNotifications(session, authHeaders);
+
+  /** No router — notifications navigate by flipping `section`, same as the nav drawer. */
+  function navigateToNotification(n: Notification) {
+    if (n.type === 'workflow.assigned') {
+      setSection('approvals');
+      return;
+    }
+    if (n.source_table === 'expense_reports') setSection('expenseReports');
+    else if (n.source_table === 'timesheet_periods') setSection('timesheet');
   }
 
   /** Switch the active organization: role is derived automatically; back out of a section it can no longer see. */
@@ -636,6 +650,16 @@ export default function App() {
               </Typography>
             )
           )}
+
+          <NotificationBell
+            items={notifications}
+            unreadCount={unreadCount}
+            live={liveNotification}
+            clearLive={clearLive}
+            markRead={markRead}
+            markAllRead={markAllRead}
+            onItemClick={navigateToNotification}
+          />
 
           <UserMenu
             session={session}

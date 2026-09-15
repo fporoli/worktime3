@@ -633,6 +633,39 @@ export const membership_roles = pgTable("membership_roles", {
 		}).onDelete("set null"),
 	primaryKey({ columns: [table.membership_id, table.role_id], name: "membership_roles_pkey"}),
 ]);
+export const notifications = pgTable("notifications", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	recipient_user_id: uuid().notNull(),
+	type: text().notNull(),
+	title: text().notNull(),
+	body: text(),
+	source_table: text().notNull(),
+	source_table_uuid: uuid().notNull(),
+	workflow_id: uuid(),
+	data: jsonb().default({}).notNull(),
+	read_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_notifications_recipient_created").using("btree", table.recipient_user_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("idx_notifications_recipient_unread").using("btree", table.recipient_user_id.asc().nullsLast().op("uuid_ops")).where(sql`read_at IS NULL`),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "notifications_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.recipient_user_id],
+			foreignColumns: [users.id],
+			name: "notifications_recipient_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.workflow_id],
+			foreignColumns: [workflows.workflow_id],
+			name: "notifications_workflow_id_fkey"
+		}).onDelete("cascade"),
+]);
+
 export const audit = pgView("audit", {	uuid: uuid(),
 	entity: varchar({ length: 64 }),
 	entity_uuid: varchar({ length: 255 }),

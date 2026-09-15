@@ -268,6 +268,7 @@ export class ExpenseReportsController implements OnModuleInit {
         assignedToUserId: [managerUserId],
         workflowData: { note: note || null },
         actorUserId: callerId,
+        notification: { title: 'New expense report to review', body: note || undefined },
       });
     }
 

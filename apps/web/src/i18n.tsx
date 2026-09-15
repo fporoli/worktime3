@@ -59,6 +59,12 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.save': 'Save',
     'usermenu.cancel': 'Cancel',
 
+    'notifications.ariaLabel': 'Notifications',
+    'notifications.title': 'Notifications',
+    'notifications.empty': 'No notifications yet',
+    'notifications.markAllRead': 'Mark all as read',
+    'notifications.viewAction': 'View',
+
     'time.logWorkTime': 'Log work time (all roles)',
     'time.start': 'Start',
     'time.end': 'End',
@@ -227,6 +233,12 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.useWorktimeRangesHint': 'Erfasst genaue Start-/Endzeiten, die sich nicht überschneiden dürfen. Ist dies deaktiviert, zählt nur die Gesamtdauer je Eintrag, und jeder Eintrag beginnt um 08:00 Uhr.',
     'usermenu.save': 'Speichern',
     'usermenu.cancel': 'Abbrechen',
+
+    'notifications.ariaLabel': 'Benachrichtigungen',
+    'notifications.title': 'Benachrichtigungen',
+    'notifications.empty': 'Noch keine Benachrichtigungen',
+    'notifications.markAllRead': 'Alle als gelesen markieren',
+    'notifications.viewAction': 'Anzeigen',
 
     'time.logWorkTime': 'Arbeitszeit erfassen (alle Rollen)',
     'time.start': 'Beginn',
@@ -397,6 +409,12 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.save': 'Enregistrer',
     'usermenu.cancel': 'Annuler',
 
+    'notifications.ariaLabel': 'Notifications',
+    'notifications.title': 'Notifications',
+    'notifications.empty': 'Aucune notification pour le moment',
+    'notifications.markAllRead': 'Tout marquer comme lu',
+    'notifications.viewAction': 'Voir',
+
     'time.logWorkTime': 'Saisir le temps de travail (tous rôles)',
     'time.start': 'Début',
     'time.end': 'Fin',
@@ -565,6 +583,12 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.useWorktimeRangesHint': "Registra orari di inizio/fine precisi che non possono sovrapporsi. Se disattivato, conta solo la durata totale di ogni voce e ogni voce inizia alle 08:00.",
     'usermenu.save': 'Salva',
     'usermenu.cancel': 'Annulla',
+
+    'notifications.ariaLabel': 'Notifiche',
+    'notifications.title': 'Notifiche',
+    'notifications.empty': 'Nessuna notifica per ora',
+    'notifications.markAllRead': 'Segna tutte come lette',
+    'notifications.viewAction': 'Visualizza',
 
     'time.logWorkTime': 'Registra orario di lavoro (tutti i ruoli)',
     'time.start': 'Inizio',

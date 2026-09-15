@@ -37,6 +37,7 @@
     <include file="019-revert-workflow-steps.sql" relativeToChangelogFile="true"/>
     <include file="020-expenses.sql" relativeToChangelogFile="true"/>
     <include file="021-expenses-value.sql" relativeToChangelogFile="true"/>
+    <include file="022-notifications.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 
