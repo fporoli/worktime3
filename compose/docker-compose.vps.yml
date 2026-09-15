@@ -5,43 +5,29 @@
 # Docker host, and `docker compose up` for one would clobber the other's containers.
 name: worktime3
 services:
-  pg:
-    image: postgres:16
-    # No host port — reachable only from other containers on this network. Direct
-    # internet exposure isn't needed; everything talks to Postgres over the compose
-    # network, and the whole point of this environment is HTTPS-only via Caddy.
-    environment:
-      POSTGRES_DB: worktime
-      POSTGRES_USER: worktime
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U worktime"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-  # One-shot: applies infra/liquibase/changelog via Liquibase, then exits.
+  # One-shot: applies infra/liquibase/changelog via Liquibase, then exits. Talks to the
+  # shared Postgres server in the edge stack (infra/caddy/edge/), not a local container —
+  # worktime3 keeps its own role/database (both named "worktime") on that shared server.
   migrate:
     build: { context: ../infra/liquibase, dockerfile: Dockerfile }
     volumes:
       - ../infra/liquibase/changelog:/liquibase/changelog:ro
     command:
       - --changelog-file=db.changelog-master.xml
-      - --url=jdbc:postgresql://pg:5432/worktime
+      - --url=jdbc:postgresql://edge-pg:5432/worktime
       - --username=worktime
       - --password=${POSTGRES_PASSWORD:?required}
       - update
-    depends_on:
-      pg: { condition: service_healthy }
+    networks: [edge]
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
     # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
     # entrypoint, proxying wtauth.turbotapir.com to this container over the edge network.
     container_name: worktime3-keycloak
-    networks: [default, edge]
+    networks: [edge]
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
+      KC_DB_URL: jdbc:postgresql://edge-pg:5432/worktime?currentSchema=auth
       KC_DB_USERNAME: worktime
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?required}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:?required}
@@ -62,9 +48,9 @@ services:
     # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
     # entrypoint, proxying wtservice.turbotapir.com to this container over the edge network.
     container_name: worktime3-api
-    networks: [default, edge]
+    networks: [edge]
     environment:
-      DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@pg:5432/worktime
+      DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@edge-pg:5432/worktime
       NODE_ENV: production
       # main.ts defaults to 8001 when unset; the Dockerfile's EXPOSE and the edge
       # Caddy's reverse_proxy both assume 8000, so this must be set explicitly.
@@ -90,13 +76,13 @@ services:
     # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
     # entrypoint, proxying wt.turbotapir.com to this container over the edge network.
     container_name: worktime3-web
-    networks: [default, edge]
+    networks: [edge]
 networks:
-  default:
-  # Pre-existing network owned by the shared edge Caddy stack (infra/caddy/edge/),
-  # which also fronts other projects (e.g. worktime2) on this VPS. Created once via
-  # `docker network create edge` as part of setting up that stack — not by this project.
+  # Pre-existing network owned by the shared edge stack (infra/caddy/edge/), which also
+  # runs the shared Postgres server and fronts other projects (e.g. worktime2) on this
+  # VPS. Created once via `docker network create edge` as part of setting up that stack
+  # — not by this project. Every service here now lives on it — nothing is local-only
+  # anymore, since even Postgres moved to the shared stack — so there's no separate
+  # project-private network to declare.
   edge:
     external: true
-volumes:
-  pgdata:

@@ -1,0 +1,12 @@
+# Shared Adminer UI for the shared Postgres server (see the pg/adminer services in
+# ../docker-compose.yml) — pick the target database inside Adminer itself, one instance
+# covers every project on this VPS. Caddy gates it with Basic Auth as a defense-in-depth
+# layer in front of Adminer's own login. The hash below is bcrypt of a generated password
+# that is NOT stored in this repo — see whoever set this up for the credentials, or
+# regenerate with: docker run --rm caddy:2 caddy hash-password --plaintext '<new password>'
+db.turbotapir.com {
+  basic_auth {
+    admin $2a$14$opJQuMHuwSkeIxPw6zrQN.FRI2gLhHY7zKXCK2EigQ6qf6r0LiDXK
+  }
+  reverse_proxy edge-adminer:8080
+}

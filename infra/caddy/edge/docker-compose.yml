@@ -7,6 +7,12 @@
 # mail.turbotapir.com (see sites/mail.caddy), one inbox shared across every project
 # instead of a per-project catcher.
 #
+# And one shared Postgres server: each project gets its own role + database on it
+# (worktime3 keeps its existing role/db name "worktime", just pointed at host "edge-pg"
+# instead of a per-project "pg" container) rather than running its own Postgres. Adminer
+# gives a web UI to manage any project's database, proxied at db.turbotapir.com behind
+# Caddy basic_auth (see sites/db.caddy) — pick the target database inside Adminer itself.
+#
 # Lives at /opt/edge on the VPS, independent of any single project's git checkout or
 # deploy pipeline. Bootstrapped once by hand; after that it just keeps running, and
 # each project drops its own site file into ./sites/ on every deploy and reloads this
@@ -37,9 +43,38 @@ services:
       - mailpit_data:/data
     networks: [edge]
     restart: unless-stopped
+  pg:
+    image: postgres:16
+    container_name: edge-pg
+    environment:
+      # Bootstrap superuser for the shared server itself, distinct from each project's
+      # own role (e.g. worktime3's "worktime" role) — used only to create/manage those
+      # per-project roles and databases, never by an application directly.
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${EDGE_PG_ADMIN_PASSWORD:?required}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [edge]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  adminer:
+    image: adminer
+    container_name: edge-adminer
+    environment:
+      ADMINER_DEFAULT_SERVER: edge-pg
+    networks: [edge]
+    restart: unless-stopped
+    depends_on:
+      pg: { condition: service_healthy }
 networks:
   edge:
     external: true
 volumes:
   caddy_data:
   mailpit_data:
+  pg_data:
