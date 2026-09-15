@@ -1,0 +1,446 @@
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  LinearProgress,
+  MenuItem,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
+import { useT } from './i18n';
+
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
+
+interface Option {
+  id: string;
+  name: string;
+}
+
+interface StaticDataRow {
+  enum_name: string;
+  values: Record<string, string>;
+}
+
+/**
+ * `expense_subcategory` static_data keys are "<category key>$<sub-category key>" (e.g.
+ * "travel$taxi"), so one enum can serve every category's sub-categories while still letting the
+ * UI filter down to just the options under whichever category is selected. The `expenses.sub_category`
+ * column itself stores only the plain sub-key ("taxi") — the "$" scoping is a static_data-only
+ * convention, not part of the domain data.
+ */
+function subCategoryOptions(subCategories: Record<string, string>, category: string): Array<{ key: string; label: string }> {
+  const prefix = `${category}$`;
+  return Object.entries(subCategories)
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([k, label]) => ({ key: k.slice(prefix.length), label }));
+}
+
+export function subCategoryLabel(subCategories: Record<string, string>, category: string, subCategory: string | null): string | null {
+  if (!subCategory) return null;
+  return subCategories[`${category}$${subCategory}`] ?? subCategory;
+}
+
+export interface ExpenseRow {
+  id: string;
+  expense_date: string;
+  category: string;
+  sub_category: string | null;
+  original_value: string;
+  original_currency: string;
+  currency: string;
+  value: string;
+  quantity: string | null;
+  comment: string | null;
+  project_id: string | null;
+  subproject_id: string | null;
+  project_name: string | null;
+  subproject_name: string | null;
+  expense_report_id: string | null;
+  expense_report_status: string | null;
+}
+
+/** The form fields shared by "add new" and "edit existing" — kept as strings, matching what the TextFields hold. */
+interface ExpenseForm {
+  expenseDate: string;
+  category: string;
+  subCategory: string;
+  originalValue: string;
+  originalCurrency: string;
+  currency: string;
+  value: string;
+  quantity: string;
+  comment: string;
+  projectId: string;
+  subprojectId: string;
+}
+
+function emptyForm(defaultCurrency: string): ExpenseForm {
+  return {
+    expenseDate: new Date().toISOString().slice(0, 10),
+    category: '',
+    subCategory: '',
+    originalValue: '',
+    originalCurrency: defaultCurrency,
+    currency: defaultCurrency,
+    value: '0',
+    quantity: '',
+    comment: '',
+    projectId: '',
+    subprojectId: '',
+  };
+}
+
+function formFromRow(row: ExpenseRow): ExpenseForm {
+  return {
+    expenseDate: row.expense_date.slice(0, 10),
+    category: row.category,
+    subCategory: row.sub_category ?? '',
+    originalValue: row.original_value,
+    originalCurrency: row.original_currency,
+    currency: row.currency,
+    value: row.value,
+    quantity: row.quantity ?? '',
+    comment: row.comment ?? '',
+    projectId: row.project_id ?? '',
+    subprojectId: row.subproject_id ?? '',
+  };
+}
+
+const ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
+  'expense-mapped': (t) => t('expenses.mappedCannotDelete'),
+  'forbidden': (t) => t('expenses.forbidden'),
+};
+
+interface ExpensesProps {
+  orgId: string;
+  userId: string;
+  authHeaders: () => Promise<Record<string, string>>;
+}
+
+export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) {
+  const t = useT();
+  const [entries, setEntries] = useState<ExpenseRow[]>([]);
+  const [projects, setProjects] = useState<Option[]>([]);
+  const [subprojectsByProject, setSubprojectsByProject] = useState<Record<string, Option[]>>({});
+  const [categories, setCategories] = useState<Record<string, string>>({});
+  const [subCategories, setSubCategories] = useState<Record<string, string>>({});
+  const [form, setForm] = useState<ExpenseForm>(emptyForm(''));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function reload() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/expenses?userId=${userId}`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (Array.isArray(data.entries)) setEntries(data.entries);
+    } catch { /* offline fallback */ } finally {
+      setLoading(false);
+    }
+  }
+
+  async function reloadStaticData() {
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/static-data/expenses`, { headers: await authHeaders() });
+      const data: StaticDataRow[] = await res.json();
+      if (!Array.isArray(data)) return;
+      setCategories(data.find((r) => r.enum_name === 'expense_category')?.values ?? {});
+      setSubCategories(data.find((r) => r.enum_name === 'expense_subcategory')?.values ?? {});
+    } catch { /* offline fallback */ }
+  }
+
+  /** The org's default reporting currency — pre-fills new expenses' `currency` field. */
+  async function loadDefaultCurrency() {
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}`, { headers: await authHeaders() });
+      const data = await res.json();
+      const currency = typeof data?.default_currency === 'string' ? data.default_currency : '';
+      if (currency) setForm((prev) => (prev.currency ? prev : { ...prev, currency }));
+    } catch { /* offline fallback */ }
+  }
+
+  async function reloadProjects() {
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/projects`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (Array.isArray(data)) setProjects(data);
+    } catch { /* offline fallback */ }
+  }
+
+  /**
+   * Always re-fetches (no "already cached" skip) — a project's subproject list can change
+   * elsewhere (Management) at any time, and an empty result is a valid, truthy `[]` that a
+   * cache-presence check can't tell apart from "not fetched yet". Called on project selection
+   * and again whenever the subproject dropdown is opened, so it can't go stale mid-session.
+   */
+  async function loadSubprojects(pid: string) {
+    if (!pid) return;
+    try {
+      const res = await fetch(`${API}/projects/${pid}/subprojects`, { headers: await authHeaders() });
+      const data = await res.json();
+      setSubprojectsByProject((prev) => ({ ...prev, [pid]: Array.isArray(data) ? data : [] }));
+    } catch { /* offline fallback */ }
+  }
+
+  useEffect(() => {
+    reload();
+    reloadStaticData();
+    reloadProjects();
+    loadDefaultCurrency();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, userId]);
+
+  function updateForm(patch: Partial<ExpenseForm>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    if (patch.projectId) loadSubprojects(patch.projectId);
+  }
+
+  function payloadFrom(f: ExpenseForm) {
+    return {
+      expenseDate: f.expenseDate,
+      category: f.category,
+      subCategory: f.subCategory || undefined,
+      originalValue: Number(f.originalValue),
+      originalCurrency: f.originalCurrency.toUpperCase(),
+      currency: f.currency.toUpperCase(),
+      value: f.value ? Number(f.value) : 0,
+      quantity: f.quantity ? Number(f.quantity) : undefined,
+      comment: f.comment || undefined,
+      projectId: f.projectId || undefined,
+      subprojectId: f.subprojectId || undefined,
+    };
+  }
+
+  const formValid =
+    !!form.expenseDate && !!form.category && Number(form.originalValue) > 0 &&
+    /^[A-Za-z]{3}$/.test(form.originalCurrency) && /^[A-Za-z]{3}$/.test(form.currency);
+
+  async function add() {
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/expenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify(payloadFrom(form)),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
+      setForm(emptyForm(form.currency));
+      await reload();
+    } catch {
+      setError(t('expenses.saveFailedOffline'));
+    }
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`${API}/expenses/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify(payloadFrom(form)),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
+      setEditingId(null);
+      setForm(emptyForm(form.currency));
+      await reload();
+    } catch {
+      setError(t('expenses.saveFailedOffline'));
+    }
+  }
+
+  async function remove(id: string) {
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`${API}/expenses/${id}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
+      await reload();
+    } catch {
+      setError(t('expenses.saveFailedOffline'));
+    }
+  }
+
+  function startEdit(row: ExpenseRow) {
+    setEditingId(row.id);
+    setForm(formFromRow(row));
+    if (row.project_id) loadSubprojects(row.project_id);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(emptyForm(form.currency));
+  }
+
+  const subprojects = subprojectsByProject[form.projectId] ?? [];
+
+  return (
+    <Paper sx={{ p: 2 }}>
+      <Typography variant="h6">{t('expenses.title')}</Typography>
+      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress sx={{ mt: 1 }} />}
+
+      <Typography variant="subtitle1" sx={{ mt: 2 }}>{editingId ? t('expenses.editExpense') : t('expenses.logExpense')}</Typography>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+        <TextField label={t('time.date')} type="date" value={form.expenseDate} onChange={(e) => e.target.value && updateForm({ expenseDate: e.target.value })} size="small" />
+        <TextField select label={t('expenses.category')} value={form.category} onChange={(e) => updateForm({ category: e.target.value, subCategory: '' })} size="small" sx={{ minWidth: 160 }}>
+          {Object.entries(categories).map(([key, label]) => (<MenuItem key={key} value={key}>{label}</MenuItem>))}
+        </TextField>
+        <TextField
+          select
+          label={t('expenses.subCategory')}
+          value={form.subCategory}
+          onChange={(e) => updateForm({ subCategory: e.target.value })}
+          size="small"
+          sx={{ minWidth: 160 }}
+          disabled={!form.category}
+        >
+          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
+          {subCategoryOptions(subCategories, form.category).map(({ key, label }) => (<MenuItem key={key} value={key}>{label}</MenuItem>))}
+        </TextField>
+        <TextField
+          select
+          label={t('time.project')}
+          value={form.projectId}
+          onChange={(e) => updateForm({ projectId: e.target.value, subprojectId: '' })}
+          size="small"
+          sx={{ minWidth: 160 }}
+        >
+          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
+          {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
+        </TextField>
+        <TextField
+          select
+          label={t('time.subproject')}
+          value={form.subprojectId}
+          onChange={(e) => updateForm({ subprojectId: e.target.value })}
+          size="small"
+          sx={{ minWidth: 160 }}
+          disabled={!form.projectId || subprojects.length === 0}
+        >
+          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
+          {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
+        </TextField>
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+        <TextField
+          label={t('expenses.originalValue')}
+          type="number"
+          value={form.originalValue}
+          onChange={(e) => updateForm({ originalValue: e.target.value })}
+          size="small"
+          slotProps={{ htmlInput: { step: 0.01, min: 0.01 } }}
+          sx={{ maxWidth: 140 }}
+        />
+        <TextField label={t('expenses.originalCurrency')} value={form.originalCurrency} onChange={(e) => updateForm({ originalCurrency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+        <TextField
+          label={t('expenses.value')}
+          type="number"
+          value={form.value}
+          onChange={(e) => updateForm({ value: e.target.value })}
+          size="small"
+          slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
+          sx={{ maxWidth: 140 }}
+        />
+        <TextField label={t('expenses.currency')} value={form.currency} onChange={(e) => updateForm({ currency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1, alignItems: 'flex-start' }}>
+        <TextField
+          label={t('expenses.quantity')}
+          type="number"
+          value={form.quantity}
+          onChange={(e) => updateForm({ quantity: e.target.value })}
+          size="small"
+          slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
+          sx={{ maxWidth: 120 }}
+        />
+        <TextField
+          label={t('time.comment')}
+          value={form.comment}
+          onChange={(e) => updateForm({ comment: e.target.value })}
+          size="small"
+          multiline
+          minRows={2}
+          sx={{ flex: 1, minWidth: 260, '& textarea': { resize: 'vertical' } }}
+        />
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
+        {editingId ? (
+          <>
+            <Button variant="contained" onClick={saveEdit} disabled={!formValid}>{t('expenses.save')}</Button>
+            <Button onClick={cancelEdit}>{t('expenses.cancel')}</Button>
+          </>
+        ) : (
+          <Button variant="contained" onClick={add} disabled={!formValid}>{t('time.add')}</Button>
+        )}
+      </Box>
+
+      <Typography variant="subtitle1" sx={{ mt: 3 }}>{t('expenses.entries')}</Typography>
+      <Table size="small" sx={{ mt: 1 }}>
+        <TableHead>
+          <TableRow>
+            <TableCell>{t('time.date')}</TableCell>
+            <TableCell>{t('expenses.category')}</TableCell>
+            <TableCell align="right">{t('expenses.originalValue')}</TableCell>
+            <TableCell>{t('time.project')}</TableCell>
+            <TableCell>{t('time.subproject')}</TableCell>
+            <TableCell>{t('expenses.report')}</TableCell>
+            <TableCell align="right" />
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {entries.map((row) => (
+            <TableRow key={row.id} hover>
+              <TableCell>{row.expense_date.slice(0, 10)}</TableCell>
+              <TableCell>{categories[row.category] ?? row.category}{row.sub_category ? ` / ${subCategoryLabel(subCategories, row.category, row.sub_category) ?? row.sub_category}` : ''}</TableCell>
+              <TableCell align="right">{row.original_value} {row.original_currency}</TableCell>
+              <TableCell>{row.project_name ?? '—'}</TableCell>
+              <TableCell>{row.subproject_name ?? '—'}</TableCell>
+              <TableCell>
+                {row.expense_report_id ? (
+                  <Chip size="small" label={t('expenses.inReport', { status: row.expense_report_status ?? '' })} />
+                ) : (
+                  <Chip size="small" variant="outlined" label={t('expenses.unmapped')} />
+                )}
+              </TableCell>
+              <TableCell align="right">
+                <Button size="small" onClick={() => startEdit(row)}>{t('time.edit')}</Button>
+                <Button size="small" color="error" onClick={() => remove(row.id)}>{t('time.remove')}</Button>
+              </TableCell>
+            </TableRow>
+          ))}
+          {entries.length === 0 && (
+            <TableRow><TableCell colSpan={7}>{t('expenses.noEntries')}</TableCell></TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </Paper>
+  );
+}

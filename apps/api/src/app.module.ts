@@ -15,6 +15,8 @@ import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { WorktimeController } from './worktime.controller';
 import { TimesheetsController } from './timesheets.controller';
+import { ExpensesController } from './expenses.controller';
+import { ExpenseReportsController } from './expense-reports.controller';
 import { WorkflowsController } from './workflows.controller';
 import { StaticDataController } from './static-data.controller';
 import { AuditController } from './audit.controller';
@@ -33,6 +35,8 @@ import { DbService } from './db.service';
     ProjectsController,
     WorktimeController,
     TimesheetsController,
+    ExpensesController,
+    ExpenseReportsController,
     WorkflowsController,
     StaticDataController,
     AuditController,

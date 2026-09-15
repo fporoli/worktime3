@@ -20,6 +20,8 @@ import {
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 import { getSourceTitle } from './Timesheet';
+import { getExpenseReportTitle } from './ExpenseReports';
+import type { ExpenseRow } from './Expenses';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -29,6 +31,15 @@ interface PeriodRow {
   user_display_name: string;
   user_email: string;
   period_start: string;
+}
+
+interface ExpenseReportRow {
+  id: string;
+  user_id: string;
+  user_display_name: string;
+  user_email: string;
+  status: string;
+  date_submitted: string | null;
 }
 
 /** A workflow row assigned to the caller — generic across every workflow_definitions type. */
@@ -44,12 +55,14 @@ interface ActionItem {
   /** Which formatter in `SOURCE_TITLE_FNS` renders this record's title — from the step's `source_name`. */
   source_name: string | null;
   timesheet_period: PeriodRow | null;
+  expense_report: ExpenseReportRow | null;
 }
 
 /** Friendly label for a workflow_definitions name — unrecognized ones just show as-is, so new workflow types need no frontend change to appear. */
 function actionItemLabel(definitionName: string): string {
   if (definitionName === 'approve timesheet') return 'Timesheet approval';
   if (definitionName === 'reopen approved timesheet') return 'Reopen request';
+  if (definitionName === 'approve expense report') return 'Expense report approval';
   return definitionName;
 }
 
@@ -64,6 +77,7 @@ function actionItemDetail(item: ActionItem): string {
  */
 const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
   getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
+  getExpenseReportTitle: (item) => (item.expense_report ? getExpenseReportTitle(item.expense_report) : null),
 };
 
 /** "<source> <formatted title>", e.g. "Timesheet Period 01.09.2026-01.10.2026" — or just the source, or '—' if neither is configured. */
@@ -96,6 +110,12 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [inspectingLoading, setInspectingLoading] = useState(false);
   const [inspectingError, setInspectingError] = useState<string | null>(null);
 
+  const [inspectingReport, setInspectingReport] = useState<ExpenseReportRow | null>(null);
+  const [inspectingReportActionItemId, setInspectingReportActionItemId] = useState<string | null>(null);
+  const [inspectingExpenses, setInspectingExpenses] = useState<ExpenseRow[]>([]);
+  const [inspectingReportLoading, setInspectingReportLoading] = useState(false);
+  const [inspectingReportError, setInspectingReportError] = useState<string | null>(null);
+
   async function inspect(period: PeriodRow, actionItemId: string | null) {
     setInspectingPeriod(period);
     setInspectingActionItemId(actionItemId);
@@ -115,6 +135,23 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       setInspectingError('Failed to load timesheet entries.');
     } finally {
       setInspectingLoading(false);
+    }
+  }
+
+  async function inspectReport(report: ExpenseReportRow, actionItemId: string | null) {
+    setInspectingReport(report);
+    setInspectingReportActionItemId(actionItemId);
+    setInspectingExpenses([]);
+    setInspectingReportLoading(true);
+    setInspectingReportError(null);
+    try {
+      const res = await fetch(`${API}/expense-reports/${report.id}/items`, { headers: await authHeaders() });
+      const data = await res.json();
+      setInspectingExpenses(Array.isArray(data) ? data : []);
+    } catch {
+      setInspectingReportError('Failed to load expense report items.');
+    } finally {
+      setInspectingReportLoading(false);
     }
   }
 
@@ -196,6 +233,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     const haystack = [
       item.timesheet_period?.user_display_name,
       item.timesheet_period?.user_email,
+      item.expense_report?.user_display_name,
+      item.expense_report?.user_email,
       actionItemLabel(item.definition_name),
       correspondingObject(item),
       actionItemDetail(item),
@@ -243,8 +282,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
             <Fragment key={item.id}>
               <TableRow hover>
                 <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? '—'}</Typography>
-                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? ''}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? '—'}</Typography>
+                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? ''}</Typography>
                 </TableCell>
                 <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
                 <TableCell>{correspondingObject(item)}</TableCell>
@@ -252,6 +291,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 <TableCell align="right">
                   {item.timesheet_period && (
                     <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>Inspect</Button>
+                  )}
+                  {item.expense_report && (
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>Inspect</Button>
                   )}
                   <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>Approve</Button>
                   <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>Reject</Button>
@@ -375,6 +417,74 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 onClick={async () => {
                   const id = inspectingActionItemId;
                   setInspectingPeriod(null);
+                  await approveItem(id);
+                }}
+              >
+                Approve
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!inspectingReport} onClose={() => setInspectingReport(null)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          {inspectingReport ? `Review Expense Report: ${inspectingReport.user_display_name}` : 'Review Expense Report'}
+        </DialogTitle>
+        <DialogContent dividers>
+          {inspectingReportError && <Alert severity="error" sx={{ mb: 2 }}>{inspectingReportError}</Alert>}
+          {inspectingReportLoading && <LinearProgress sx={{ mb: 2 }} />}
+          {inspectingReport && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{inspectingReport.user_email}</Typography>
+          )}
+          {inspectingExpenses.length === 0 && !inspectingReportLoading ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No expenses in this report.</Typography>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Date</TableCell>
+                  <TableCell>Category</TableCell>
+                  <TableCell align="right">Value</TableCell>
+                  <TableCell>Project</TableCell>
+                  <TableCell>Subproject</TableCell>
+                  <TableCell>Comment</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {inspectingExpenses.map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
+                    <TableCell>{e.category}{e.sub_category ? ` / ${e.sub_category}` : ''}</TableCell>
+                    <TableCell align="right">{e.original_value} {e.original_currency}</TableCell>
+                    <TableCell>{e.project_name ?? '—'}</TableCell>
+                    <TableCell>{e.subproject_name ?? '—'}</TableCell>
+                    <TableCell>{e.comment ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInspectingReport(null)}>Close</Button>
+          {inspectingReportActionItemId && (
+            <>
+              <Button
+                color="error"
+                onClick={() => {
+                  const id = inspectingReportActionItemId;
+                  setInspectingReport(null);
+                  setRejectingId(id);
+                }}
+              >
+                Reject...
+              </Button>
+              <Button
+                variant="contained"
+                onClick={async () => {
+                  const id = inspectingReportActionItemId;
+                  setInspectingReport(null);
                   await approveItem(id);
                 }}
               >

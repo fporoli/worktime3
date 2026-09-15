@@ -35,6 +35,8 @@
     <include file="017-index-worktimes-org-start.sql" relativeToChangelogFile="true"/>
     <include file="018-workflow-steps.sql" relativeToChangelogFile="true"/>
     <include file="019-revert-workflow-steps.sql" relativeToChangelogFile="true"/>
+    <include file="020-expenses.sql" relativeToChangelogFile="true"/>
+    <include file="021-expenses-value.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

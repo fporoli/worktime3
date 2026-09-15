@@ -1,4 +1,4 @@
-import { pgTable, index, foreignKey, unique, uuid, varchar, jsonb, timestamp, boolean, integer, check, text, uniqueIndex, date, inet, primaryKey, pgView, pgEnum, customType } from "drizzle-orm/pg-core"
+import { pgTable, index, foreignKey, unique, uuid, varchar, jsonb, timestamp, boolean, integer, check, text, uniqueIndex, date, numeric, char, inet, primaryKey, pgView, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 const citext = customType<{ data: string }>({
@@ -327,36 +327,107 @@ export const teams = pgTable("teams", {
 	unique("uq_org_team_name").on(table.organization_id, table.name),
 ]);
 
-export const organizations = pgTable("organizations", {
+export const expense_reports = pgTable("expense_reports", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
-	parent_organization_id: uuid(),
-	slug: citext("slug").notNull(),
-	name: varchar({ length: 100 }).notNull(),
-	type: organization_type().default('personal').notNull(),
-	avatar_url: varchar({ length: 1024 }),
-	created_by_user_id: uuid().notNull(),
-	is_active: boolean().default(true).notNull(),
-	country: varchar({ length: 2 }),
-	settings: jsonb().default({}).notNull(),
-	enforce_sso: boolean().default(false).notNull(),
-	enforce_mfa: boolean().default(false).notNull(),
-	allowed_email_domains: text().array().default([""]).notNull(),
-	session_duration_minutes: integer().default(1440).notNull(),
-	ip_allowlist: inet().array().default([""]).notNull(),
-	sso_config: jsonb().default({}).notNull(),
+	organization_id: uuid().notNull(),
+	user_id: uuid().notNull(),
+	status: text().default('in_preparation').notNull(),
+	date_submitted: timestamp({ withTimezone: true, mode: 'string' }),
+	reviewed_by_user_id: uuid(),
+	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	review_note: text(),
+	data: jsonb().default({}).notNull(),
 }, (table) => [
-	index("idx_organizations_parent").using("btree", table.parent_organization_id.asc().nullsLast().op("uuid_ops")),
+	index("idx_expense_reports_org_status").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")),
+	index("idx_expense_reports_user").using("btree", table.user_id.asc().nullsLast().op("timestamptz_ops"), table.date_submitted.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
-			columns: [table.parent_organization_id],
-			foreignColumns: [table.id],
-			name: "organizations_parent_organization_id_fkey"
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "expense_reports_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "expense_reports_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.reviewed_by_user_id],
+			foreignColumns: [users.id],
+			name: "expense_reports_reviewed_by_user_id_fkey"
+		}).onDelete("set null"),
+	check("chk_expense_reports_status", sql`status = ANY (ARRAY['in_preparation'::text, 'submitted'::text, 'approved'::text, 'rejected'::text, 'submitted_processing'::text, 'processing_finished'::text, 'request_payment'::text, 'finished'::text])`),
+]);
+
+export const expense_report_items = pgTable("expense_report_items", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	expense_report_id: uuid().notNull(),
+	expense_id: uuid().notNull(),
+	organization_id: uuid().notNull(),
+}, (table) => [
+	index("idx_expense_report_items_org").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops")),
+	index("idx_expense_report_items_report").using("btree", table.expense_report_id.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.expense_report_id],
+			foreignColumns: [expense_reports.id],
+			name: "expense_report_items_expense_report_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.expense_id],
+			foreignColumns: [expenses.id],
+			name: "expense_report_items_expense_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "expense_report_items_organization_id_fkey"
+		}).onDelete("cascade"),
+	unique("uq_expense_report_items_expense").on(table.expense_id),
+]);
+
+export const expenses = pgTable("expenses", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	user_id: uuid().notNull(),
+	organization_id: uuid().notNull(),
+	project_id: uuid(),
+	subproject_id: uuid(),
+	expense_date: date().notNull(),
+	category: varchar({ length: 128 }).notNull(),
+	sub_category: varchar({ length: 128 }),
+	billing_type: varchar({ length: 128 }),
+	original_value: numeric({ precision: 12, scale:  2 }).notNull(),
+	original_currency: char({ length: 3 }).notNull(),
+	currency: char({ length: 3 }).notNull(),
+	quantity: numeric({ precision: 10, scale:  2 }),
+	comment: text(),
+	value: numeric({ precision: 12, scale:  2 }).default('0').notNull(),
+}, (table) => [
+	index("idx_expenses_org_date").using("btree", table.organization_id.asc().nullsLast().op("date_ops"), table.expense_date.asc().nullsLast().op("date_ops")),
+	index("idx_expenses_project").using("btree", table.project_id.asc().nullsLast().op("uuid_ops")),
+	index("idx_expenses_user_date").using("btree", table.user_id.asc().nullsLast().op("date_ops"), table.expense_date.asc().nullsLast().op("date_ops")),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "expenses_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "expenses_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.project_id],
+			foreignColumns: [projects.id],
+			name: "expenses_project_id_fkey"
 		}).onDelete("set null"),
 	foreignKey({
-			columns: [table.created_by_user_id],
-			foreignColumns: [users.id],
-			name: "organizations_created_by_user_id_fkey"
-		}),
-	unique("organizations_slug_key").on(table.slug),
+			columns: [table.subproject_id],
+			foreignColumns: [subprojects.id],
+			name: "expenses_subproject_id_fkey"
+		}).onDelete("set null"),
+	check("chk_expenses_original_value_positive", sql`original_value > (0)::numeric`),
+	check("chk_expenses_quantity_non_negative", sql`(quantity IS NULL) OR (quantity >= (0)::numeric)`),
+	check("chk_expenses_original_currency_format", sql`original_currency ~ '^[A-Z]{3}$'::text`),
+	check("chk_expenses_currency_format", sql`currency ~ '^[A-Z]{3}$'::text`),
 ]);
 
 export const organization_memberships = pgTable("organization_memberships", {
@@ -389,6 +460,38 @@ export const organization_memberships = pgTable("organization_memberships", {
 			name: "organization_memberships_manager_user_id_fkey"
 		}).onDelete("set null"),
 	unique("uq_org_user_membership").on(table.organization_id, table.user_id),
+]);
+
+export const organizations = pgTable("organizations", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	parent_organization_id: uuid(),
+	slug: citext("slug").notNull(),
+	name: varchar({ length: 100 }).notNull(),
+	type: organization_type().default('personal').notNull(),
+	avatar_url: varchar({ length: 1024 }),
+	created_by_user_id: uuid().notNull(),
+	is_active: boolean().default(true).notNull(),
+	country: varchar({ length: 2 }),
+	settings: jsonb().default({}).notNull(),
+	enforce_sso: boolean().default(false).notNull(),
+	enforce_mfa: boolean().default(false).notNull(),
+	allowed_email_domains: text().array().default([""]).notNull(),
+	session_duration_minutes: integer().default(1440).notNull(),
+	ip_allowlist: inet().array().default([""]).notNull(),
+	sso_config: jsonb().default({}).notNull(),
+}, (table) => [
+	index("idx_organizations_parent").using("btree", table.parent_organization_id.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.parent_organization_id],
+			foreignColumns: [table.id],
+			name: "organizations_parent_organization_id_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.created_by_user_id],
+			foreignColumns: [users.id],
+			name: "organizations_created_by_user_id_fkey"
+		}),
+	unique("organizations_slug_key").on(table.slug),
 ]);
 
 export const versions = pgTable("versions", {

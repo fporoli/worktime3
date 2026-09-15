@@ -9,6 +9,8 @@ export interface Membership {
   slug: string;
   name: string;
   role: string;
+  /** Every role this membership holds — `role` collapses this to a single display role, which hides e.g. a `billing_admin`-only membership. */
+  roles: string[];
   status: string;
 }
 

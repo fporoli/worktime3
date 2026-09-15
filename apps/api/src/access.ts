@@ -67,6 +67,12 @@ export async function isOrgManagerOrAdmin(db: Executor, organizationId: string, 
   return names.includes('owner') || names.includes('admin') || names.includes('manager');
 }
 
+/** True when the user is an active owner, admin, or billing_admin of the organization. */
+export async function isOrgBillingAdmin(db: Executor, organizationId: string, userId: string): Promise<boolean> {
+  const names = await activeRoleNames(db, organizationId, userId);
+  return names.includes('owner') || names.includes('admin') || names.includes('billing_admin');
+}
+
 /**
  * The caller's single highest-privilege role name in the organization — a
  * membership can hold several roles at once, so this collapses them to the

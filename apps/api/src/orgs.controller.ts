@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, canManageRole, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
@@ -39,7 +39,11 @@ const ORG_COLUMNS = {
   name: organizations.name,
   type: organizations.type,
   avatar_url: organizations.avatar_url,
+  settings: organizations.settings,
 };
+
+/** Default reporting currency when an org hasn't set one in `settings.defaultCurrency` yet. */
+const FALLBACK_DEFAULT_CURRENCY = 'CHF';
 
 @Controller('organizations')
 export class OrgsController {
@@ -56,13 +60,16 @@ export class OrgsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, id, callerId))) return null;
     const [org] = await db.select(ORG_COLUMNS).from(organizations).where(eq(organizations.id, id));
-    return org ?? null;
+    if (!org) return null;
+    const { settings, ...rest } = org;
+    const defaultCurrency = (settings as Record<string, unknown> | null)?.defaultCurrency;
+    return { ...rest, default_currency: typeof defaultCurrency === 'string' ? defaultCurrency : FALLBACK_DEFAULT_CURRENCY };
   }
 
   @Patch(':id')
   async update(
     @Param('id') id: string,
-    @Body() body: { name?: string; avatarUrl?: string | null },
+    @Body() body: { name?: string; avatarUrl?: string | null; defaultCurrency?: string },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -71,14 +78,22 @@ export class OrgsController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
     if (body.name !== undefined && !body.name.trim()) return { ok: false, error: 'name-required' };
+    if (body.defaultCurrency !== undefined && !/^[A-Za-z]{3}$/.test(body.defaultCurrency)) {
+      return { ok: false, error: 'invalid-default-currency' };
+    }
 
     const patch: Partial<typeof organizations.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.avatarUrl !== undefined) patch.avatar_url = body.avatarUrl;
+    // Merged into the existing settings JSON rather than a dedicated column — same bucket
+    // every other org-level, rarely-queried setting already lives in (see 006-fold-org-settings-and-sso.sql).
+    if (body.defaultCurrency !== undefined) {
+      patch.settings = sql`${organizations.settings} || jsonb_build_object('defaultCurrency', ${body.defaultCurrency.toUpperCase()}::text)`;
+    }
     if (Object.keys(patch).length > 0) {
       await db.update(organizations).set(patch).where(eq(organizations.id, id));
-      void this.audit.record(id, callerId, 'organization.update', 'organization', id, patch).catch(() => {});
-      void this.versions.record('organizations', id, 'update_delta', callerId, patch).catch(() => {});
+      void this.audit.record(id, callerId, 'organization.update', 'organization', id, { ...patch, settings: body.defaultCurrency }).catch(() => {});
+      void this.versions.record('organizations', id, 'update_delta', callerId, { ...patch, settings: body.defaultCurrency }).catch(() => {});
     }
     return { ok: true };
   }

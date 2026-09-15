@@ -26,6 +26,7 @@ interface OrgDetails {
   name: string;
   type: string;
   avatar_url: string | null;
+  default_currency: string;
 }
 
 interface DomainItem {
@@ -55,6 +56,7 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
   const [org, setOrg] = useState<OrgDetails | null>(null);
   const [orgName, setOrgName] = useState('');
   const [orgLogoUrl, setOrgLogoUrl] = useState('');
+  const [defaultCurrency, setDefaultCurrency] = useState('');
   const [domains, setDomains] = useState<DomainItem[]>([]);
   const [newDomain, setNewDomain] = useState('');
   const [newDomainAutoJoin, setNewDomainAutoJoin] = useState(false);
@@ -71,6 +73,7 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
         setOrg(data);
         setOrgName(data.name ?? '');
         setOrgLogoUrl(data.avatar_url ?? '');
+        setDefaultCurrency(data.default_currency ?? '');
       }
     } catch { /* offline fallback */ }
   }
@@ -103,13 +106,13 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
   }, [orgId]);
 
   async function handleSaveOrg() {
-    if (!orgName.trim()) return;
+    if (!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)) return;
     setError(null);
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ name: orgName.trim(), avatarUrl: orgLogoUrl.trim() || null }),
+        body: JSON.stringify({ name: orgName.trim(), avatarUrl: orgLogoUrl.trim() || null, defaultCurrency: defaultCurrency.toUpperCase() }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -188,7 +191,16 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
             <TextField label="Organization Name" value={orgName} onChange={(e) => setOrgName(e.target.value)} size="small" sx={{ minWidth: 220 }} />
             <TextField label="Logo URL" value={orgLogoUrl} onChange={(e) => setOrgLogoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} placeholder="https://…" />
-            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim()}>Save</Button>
+            <TextField
+              label="Default currency"
+              value={defaultCurrency}
+              onChange={(e) => setDefaultCurrency(e.target.value.toUpperCase())}
+              size="small"
+              slotProps={{ htmlInput: { maxLength: 3 } }}
+              sx={{ maxWidth: 130 }}
+              helperText="Pre-fills new expenses' reporting currency"
+            />
+            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)}>Save</Button>
             {org && <Chip label={`slug: ${org.slug}`} size="small" variant="outlined" />}
           </Box>
         </Box>

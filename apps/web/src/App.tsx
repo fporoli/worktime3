@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
   Drawer,
   FormControl,
   IconButton,
@@ -46,6 +47,9 @@ const AdminSettings = lazy(() => import('./AdminSettings'));
 const OrganizationSettings = lazy(() => import('./OrganizationSettings'));
 const Timesheet = lazy(() => import('./Timesheet'));
 const Approvals = lazy(() => import('./Approvals'));
+const Expenses = lazy(() => import('./Expenses'));
+const ExpenseReports = lazy(() => import('./ExpenseReports'));
+const ExpenseProcessing = lazy(() => import('./ExpenseProcessing'));
 const Assistant = lazy(() => import('./Assistant'));
 const TeamHours = lazy(() => import('./TeamHours'));
 const AuditLog = lazy(() => import('./AuditLog'));
@@ -54,7 +58,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'timesheet' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings';
+type Section = 'time' | 'timesheet' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -197,13 +201,18 @@ export default function App() {
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
   const useWorktimeRanges = session?.settings?.useWorktimeMinutesRanges === true;
+  // `role` collapses a membership to a single display role, which hides a billing_admin-only
+  // membership — check the full roles list directly for the finance-processing nav entry.
+  const isBillingAdmin = session?.memberships.find((m) => m.organizationId === orgId)?.roles.includes('billing_admin') ?? false;
 
-  const NAV_GROUPS: Array<{ header: string; items: Array<{ id: string; section: Section; label: string; visible: boolean; indent?: boolean }> }> = [
+  const NAV_GROUPS: Array<{ header: string; items: Array<{ id: string; section: Section; label: string; visible: boolean; indent?: boolean; dividerBefore?: boolean }> }> = [
     {
       header: t('nav.myWork'),
       items: [
         { id: 'time', section: 'time', label: t('nav.timeTracking'), visible: true },
         { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
+        { id: 'expenses', section: 'expenses', label: t('nav.expenses'), visible: true, dividerBefore: true },
+        { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), visible: true },
       ],
     },
     {
@@ -223,6 +232,7 @@ export default function App() {
       items: [
         { id: 'orgSettings', section: 'orgSettings', label: t('nav.organizationSettings'), visible: role === 'admin' },
         { id: 'audit', section: 'audit', label: t('nav.auditLog'), visible: role === 'admin' },
+        { id: 'expenseProcessing', section: 'expenseProcessing', label: t('nav.expenseProcessing'), visible: role === 'admin' || isBillingAdmin },
         { id: 'admin', section: 'admin', label: t('nav.adminSettings'), visible: role === 'admin' },
       ],
     },
@@ -251,12 +261,15 @@ export default function App() {
     if (session) {
       const nextRole = defaultRole(session, newOrgId);
       const nextCanManage = nextRole === 'manager' || nextRole === 'admin';
+      const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles.includes('billing_admin') ?? false;
       const stillVisible =
-        section === 'time' || section === 'timesheet'
+        section === 'time' || section === 'timesheet' || section === 'expenses' || section === 'expenseReports'
           ? true
-          : section === 'admin' || section === 'audit' || section === 'orgSettings'
-            ? nextRole === 'admin'
-            : nextCanManage; // covers management, managementProjects, hours, invitations, approvals, users
+          : section === 'expenseProcessing'
+            ? nextRole === 'admin' || nextIsBillingAdmin
+            : section === 'admin' || section === 'audit' || section === 'orgSettings'
+              ? nextRole === 'admin'
+              : nextCanManage; // covers management, managementProjects, hours, invitations, approvals, users
       if (!stillVisible) setSection('time');
     }
     if (isMobile) setMobileNavOpen(false);
@@ -292,9 +305,14 @@ export default function App() {
     if (assistantCloseTimer.current) clearTimeout(assistantCloseTimer.current);
   }, []);
 
-  /** Fetch a project's subprojects once and keep them; both the add form and the edit dialog read this. */
-  async function ensureSubprojects(pid: string) {
-    if (!pid || subprojectsByProject[pid]) return;
+  /**
+   * Always re-fetches (no "already cached" skip) — a project's subproject list can change
+   * elsewhere (Management) at any time, and an empty result is a valid, truthy `[]` that a
+   * cache-presence check can't tell apart from "not fetched yet". Both the add form and the
+   * edit dialog read this, re-run whenever their project selection changes.
+   */
+  async function loadSubprojects(pid: string) {
+    if (!pid) return;
     try {
       const res = await fetch(`${API}/projects/${pid}/subprojects`, { headers: await authHeaders() });
       const data = await res.json();
@@ -340,12 +358,12 @@ export default function App() {
 
   // Subprojects depend on the chosen project, in the add form and in the dialog alike.
   useEffect(() => {
-    ensureSubprojects(projectId);
+    loadSubprojects(projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   useEffect(() => {
-    if (draft) ensureSubprojects(draft.projectId);
+    if (draft) loadSubprojects(draft.projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.projectId]);
 
@@ -556,20 +574,22 @@ export default function App() {
                 {group.header}
               </ListSubheader>
               {visibleItems.map((n) => (
-                <ListItemButton
-                  key={n.id}
-                  selected={section === n.section}
-                  onClick={() => {
-                    setSection(n.section);
-                    if (isMobile) setMobileNavOpen(false);
-                  }}
-                  sx={n.indent ? { pl: 4 } : undefined}
-                >
-                  <ListItemText
-                    primary={n.label}
-                    slotProps={n.indent ? { primary: { fontSize: '0.9rem' } } : undefined}
-                  />
-                </ListItemButton>
+                <li key={n.id} style={{ listStyle: 'none' }}>
+                  {n.dividerBefore && <Divider sx={{ mx: 1, my: 0.5 }} />}
+                  <ListItemButton
+                    selected={section === n.section}
+                    onClick={() => {
+                      setSection(n.section);
+                      if (isMobile) setMobileNavOpen(false);
+                    }}
+                    sx={n.indent ? { pl: 4 } : undefined}
+                  >
+                    <ListItemText
+                      primary={n.label}
+                      slotProps={n.indent ? { primary: { fontSize: '0.9rem' } } : undefined}
+                    />
+                  </ListItemButton>
+                </li>
               ))}
             </ul>
           </li>
@@ -716,7 +736,17 @@ export default function App() {
                     <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
                     {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
                   </TextField>
-                  <TextField label={t('time.comment')} value={comment} onChange={(e) => setComment(e.target.value)} size="small" />
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1, alignItems: 'flex-start' }}>
+                  <TextField
+                    label={t('time.comment')}
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    size="small"
+                    multiline
+                    minRows={2}
+                    sx={{ flex: 1, minWidth: 260, '& textarea': { resize: 'vertical' } }}
+                  />
                   <Button variant="contained" onClick={() => addEntry()} disabled={addDurationInvalid}>{t('time.add')}</Button>
                 </Box>
               </Paper>
@@ -821,6 +851,12 @@ export default function App() {
             {section === 'timesheet' && orgId && (
               <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
             )}
+            {section === 'expenses' && orgId && (
+              <Expenses orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
+            {section === 'expenseReports' && orgId && (
+              <ExpenseReports orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
 
             {(section === 'management' || section === 'managementProjects') && canManage && orgId && (
               <Management
@@ -833,7 +869,7 @@ export default function App() {
                 onDataChanged={() => {
                   reloadProjects();
                   setSubprojectsByProject({});
-                  if (projectId) ensureSubprojects(projectId);
+                  if (projectId) loadSubprojects(projectId);
                 }}
               />
             )}
@@ -857,6 +893,9 @@ export default function App() {
             )}
             {section === 'orgSettings' && role === 'admin' && orgId && (
               <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'expenseProcessing' && (role === 'admin' || isBillingAdmin) && orgId && (
+              <ExpenseProcessing orgId={orgId} authHeaders={authHeaders} />
             )}
           </Suspense>
         </Container>
@@ -1035,7 +1074,15 @@ export default function App() {
               <MenuItem value=""><em>None</em></MenuItem>
               {draftSubprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
             </TextField>
-            <TextField label="Comment" value={draft.comment} onChange={(e) => setDraft({ ...draft, comment: e.target.value })} size="small" />
+            <TextField
+              label="Comment"
+              value={draft.comment}
+              onChange={(e) => setDraft({ ...draft, comment: e.target.value })}
+              size="small"
+              multiline
+              minRows={2}
+              sx={{ '& textarea': { resize: 'vertical' } }}
+            />
           </DialogContent>
         )}
         <DialogActions>
