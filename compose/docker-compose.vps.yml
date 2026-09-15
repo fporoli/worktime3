@@ -75,10 +75,10 @@ services:
       # falling back to the insecure hardcoded dev secret — set a real random value.
       API_JWT_SECRET: ${API_JWT_SECRET:?required}
       APP_BASE_URL: https://wt.turbotapir.com
-      # Real relay, optional: unset SMTP_HOST leaves mail sends failing silently
-      # (fire-and-forget, never breaks a request) until these are provided.
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
+      # Defaults to the shared Mailpit catcher on the edge network (see
+      # infra/caddy/edge/) — override via compose/.env to point at a real relay instead.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-worktime@localhost}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}

@@ -1,6 +1,11 @@
-# Shared reverse-proxy edge, fronting every project on this VPS (worktime3 and others,
+# Shared infra edge, fronting every project on this VPS (worktime3 and others,
 # e.g. worktime2) that needs port 80/443 — only one process can bind those, so each
 # project runs its own app containers but not its own Caddy.
+#
+# Also runs one shared Mailpit SMTP catcher — projects' api containers connect to it
+# by container name over the "edge" network, and its web UI is proxied by Caddy at
+# mail.turbotapir.com (see sites/mail.caddy), one inbox shared across every project
+# instead of a per-project catcher.
 #
 # Lives at /opt/edge on the VPS, independent of any single project's git checkout or
 # deploy pipeline. Bootstrapped once by hand; after that it just keeps running, and
@@ -20,8 +25,21 @@ services:
       - caddy_data:/data
     networks: [edge]
     restart: unless-stopped
+  mailpit:
+    image: axllent/mailpit
+    container_name: mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
+      # intentional. Fine here — SMTP traffic to it never leaves the edge network.
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    volumes:
+      - mailpit_data:/data
+    networks: [edge]
+    restart: unless-stopped
 networks:
   edge:
     external: true
 volumes:
   caddy_data:
+  mailpit_data:

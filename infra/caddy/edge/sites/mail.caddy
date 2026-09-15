@@ -1,0 +1,11 @@
+# Shared Mailpit web UI — one inbox for every project's outgoing mail on this VPS
+# (see the mailpit service in ../docker-compose.yml). Mailpit itself has no login,
+# so Caddy gates it with Basic Auth. The hash below is bcrypt of a generated password
+# that is NOT stored in this repo — see whoever set this up for the credentials, or
+# regenerate with: docker run --rm caddy:2 caddy hash-password --plaintext '<new password>'
+mail.turbotapir.com {
+  basic_auth {
+    admin $2a$14$1KdNs5KtSWfofAa9FNLXROpDST/1sgfgESYNHOKT2q68H3rcCVuA.
+  }
+  reverse_proxy mailpit:8025
+}
