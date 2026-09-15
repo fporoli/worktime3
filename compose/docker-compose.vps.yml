@@ -64,6 +64,9 @@ services:
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@pg:5432/worktime
       NODE_ENV: production
+      # main.ts defaults to 8001 when unset; the Dockerfile's EXPOSE and the edge
+      # Caddy's reverse_proxy both assume 8000, so this must be set explicitly.
+      API_PORT: "8000"
       JWT_ISSUER: https://wtauth.turbotapir.com/realms/worktime
       JWT_AUDIENCE: worktime-web
       # NODE_ENV=production makes jwt.ts refuse to boot without this instead of silently
