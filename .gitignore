@@ -147,3 +147,4 @@ vite.config.ts.timestamp-*
 data-local/
 data-dev/
 .DS_Store
+.vscode/settings.json
