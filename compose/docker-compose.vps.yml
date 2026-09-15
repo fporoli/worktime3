@@ -1,7 +1,9 @@
 services:
   pg:
     image: postgres:16
-    ports: ["5433:5432"]
+    # No host port — reachable only from other containers on this network. Direct
+    # internet exposure isn't needed; everything talks to Postgres over the compose
+    # network, and the whole point of this environment is HTTPS-only via Caddy.
     environment:
       POSTGRES_DB: worktime
       POSTGRES_USER: worktime
@@ -27,7 +29,7 @@ services:
       pg: { condition: service_healthy }
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
-    ports: ["8093:8080"]
+    # No host port here — caddy is the single entrypoint, proxying wtauth.turbotapir.com to this container.
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
@@ -35,14 +37,27 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?required}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:?required}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?required}
+      # Standard "behind a TLS-terminating reverse proxy" recipe: without KC_HOSTNAME,
+      # Keycloak's issuer/redirect URLs come out wrong; KC_HTTP_ENABLED lets Caddy reach
+      # it over plain HTTP internally since Caddy itself is the one terminating TLS.
+      KC_HOSTNAME: wtauth.turbotapir.com
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
     command: ["start", "--import-realm"]
     depends_on:
       migrate: { condition: service_completed_successfully }
   api:
     image: ${API_IMAGE:?required}
-    ports: ["8003:8000"]
+    # No host port here — caddy is the single entrypoint, proxying wtservice.turbotapir.com to this container.
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:?required}@pg:5432/worktime
+      NODE_ENV: production
+      JWT_ISSUER: https://wtauth.turbotapir.com/realms/worktime
+      JWT_AUDIENCE: worktime-web
+      # NODE_ENV=production makes jwt.ts refuse to boot without this instead of silently
+      # falling back to the insecure hardcoded dev secret — set a real random value.
+      API_JWT_SECRET: ${API_JWT_SECRET:?required}
+      APP_BASE_URL: https://wt.turbotapir.com
       # Real relay, optional: unset SMTP_HOST leaves mail sends failing silently
       # (fire-and-forget, never breaks a request) until these are provided.
       SMTP_HOST: ${SMTP_HOST:-}
@@ -55,10 +70,16 @@ services:
       migrate: { condition: service_completed_successfully }
   web:
     image: ${WEB_IMAGE:?required}
-    ports: ["3003:80"]
+    # No host port here — caddy is the single entrypoint, proxying wt.turbotapir.com to this container.
   caddy:
     image: caddy:2
-    ports: ["3003:3003", "8003:8003", "8093:8093"]
-    volumes: ["../infra/caddy/Caddyfile.vps:/etc/caddy/Caddyfile:ro"]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ../infra/caddy/Caddyfile.vps:/etc/caddy/Caddyfile:ro
+      # Persists issued certs across redeploys — without this, every `up` would
+      # re-request from Let's Encrypt and risk its rate limits.
+      - caddy_data:/data
+    depends_on: [api, web, keycloak]
 volumes:
   pgdata:
+  caddy_data:

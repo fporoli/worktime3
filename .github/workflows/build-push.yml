@@ -58,3 +58,8 @@ jobs:
           labels: ${{ steps.web-meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Vite inlines these at build time (see apps/web/Dockerfile) — baked to the VPS's
+          # real domains since that's this workflow's one real deploy target today.
+          build-args: |
+            VITE_API_URL=https://wtservice.turbotapir.com/api/v1
+            VITE_KEYCLOAK_URL=https://wtauth.turbotapir.com

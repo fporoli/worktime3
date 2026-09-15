@@ -1,10 +1,12 @@
-# Caddy VPS (ENV_NUMBER=3) — fill {$DOMAIN} via environment
-:3003 {
+# Caddy VPS (ENV_NUMBER=3) — real domains, HTTPS-only. Caddy auto-provisions and
+# renews Let's Encrypt certs for these hostnames; certs persist in the caddy_data
+# volume (see docker-compose.vps.yml) so a redeploy doesn't re-issue them.
+wt.turbotapir.com {
   reverse_proxy web:80
 }
-:8003 {
+wtservice.turbotapir.com {
   reverse_proxy api:8000
 }
-:8093 {
+wtauth.turbotapir.com {
   reverse_proxy keycloak:8080
 }
