@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Query, Req } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { and, eq, ilike, or } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { VersionsService } from './versions.service';
 import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { users, user_identities, organizations, organization_memberships, roles, membership_roles } from './db/schema';
+import { membershipsOf } from './auth.controller';
+import { mintLocalToken } from './jwt';
 
 const USER_COLUMNS = { id: users.id, email: users.email, display_name: users.display_name, status: users.status, locale: users.locale, settings: users.settings };
 
@@ -85,6 +87,50 @@ export class UsersController {
     }
 
     return { ok: true, user: found, memberships: [...byOrg.values()] };
+  }
+
+  /** Search members of an organization the caller administers for temporary impersonation. */
+  @Get('search')
+  async search(@Query('orgId') orgId: string | undefined, @Query('q') query: string | undefined, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, users: [] };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId || !orgId || !(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
+    const normalized = (query ?? '').trim();
+    if (normalized.length < 2) return { ok: true, users: [] };
+    const rows = await db
+      .select({ id: users.id, email: users.email, displayName: users.display_name, status: organization_memberships.status })
+      .from(organization_memberships)
+      .innerJoin(users, eq(users.id, organization_memberships.user_id))
+      .where(and(
+        eq(organization_memberships.organization_id, orgId),
+        or(ilike(users.email, `%${normalized}%`), ilike(users.display_name, `%${normalized}%`)),
+      ))
+      .limit(20);
+    return { ok: true, users: rows };
+  }
+
+  /** Mint a short-lived local token for a member of an organization the caller administers. */
+  @Post(':id/impersonate')
+  async impersonate(@Param('id') id: string, @Body() body: { orgId?: string }, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId || !body.orgId || !(await isOrgAdmin(db, body.orgId, callerId))) return { ok: false, error: 'forbidden' };
+    const [member] = await db
+      .select({ id: users.id, email: users.email, displayName: users.display_name })
+      .from(organization_memberships)
+      .innerJoin(users, eq(users.id, organization_memberships.user_id))
+      .where(and(eq(organization_memberships.organization_id, body.orgId), eq(organization_memberships.user_id, id), eq(organization_memberships.status, 'active')));
+    if (!member) return { ok: false, error: 'user-not-member' };
+    return {
+      ok: true,
+      userId: member.id,
+      email: member.email,
+      displayName: member.displayName,
+      token: await mintLocalToken(member.id, member.email, 60 * 60),
+      memberships: await membershipsOf(db, member.id),
+    };
   }
 
   @Patch(':id')

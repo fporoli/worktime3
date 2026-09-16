@@ -39,7 +39,7 @@ export function slugBase(email: string): string {
     .slice(0, 40);
 }
 
-interface SessionMembership {
+export interface SessionMembership {
   organizationId: string;
   slug: string;
   name: string;
@@ -50,7 +50,7 @@ interface SessionMembership {
   status: string;
 }
 
-interface Session {
+export interface Session {
   userId: string;
   email: string;
   displayName: string;
@@ -59,7 +59,7 @@ interface Session {
   memberships: SessionMembership[];
 }
 
-async function membershipsOf(db: Db, userId: string): Promise<SessionMembership[]> {
+export async function membershipsOf(db: Db, userId: string): Promise<SessionMembership[]> {
   const rows = await db
     .select({
       organizationId: organization_memberships.organization_id,

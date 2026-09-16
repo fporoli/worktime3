@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Avatar,
@@ -24,6 +24,11 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 interface UserMenuProps {
   session: Session;
   authHeaders: () => Promise<Record<string, string>>;
+  currentOrgId: string | null;
+  canSwitchUser: boolean;
+  adminSession: Session | null;
+  onSwitchSession: (session: Session, organizationId: string) => void;
+  onReturnToAdmin: () => void;
   onLogout: () => void;
   /** Called once the language change is saved, so the caller can update the session. */
   onLocaleChange: (locale: Locale) => void;
@@ -31,7 +36,14 @@ interface UserMenuProps {
   onSettingsChange: (settings: NonNullable<Session['settings']>) => void;
 }
 
-export default function UserMenu({ session, authHeaders, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
+interface SearchUser {
+  id: string;
+  email: string;
+  displayName: string;
+  status: string;
+}
+
+export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
   const t = useT();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -39,6 +51,31 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
   const [useWorktimeRanges, setUseWorktimeRanges] = useState(session.settings?.useWorktimeMinutesRanges === true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searchUsers, setSearchUsers] = useState<SearchUser[]>([]);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    if (!switchOpen || !currentOrgId || search.trim().length < 2) {
+      setSearchUsers([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/users/search?orgId=${encodeURIComponent(currentOrgId)}&q=${encodeURIComponent(search.trim())}`, { headers: await authHeaders() });
+        const data = await res.json();
+        if (!cancelled) setSearchUsers(data.ok && Array.isArray(data.users) ? data.users : []);
+      } catch {
+        if (!cancelled) setSearchUsers([]);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [authHeaders, currentOrgId, search, switchOpen]);
 
   function openSettings() {
     setSelectedLocale((session.locale as Locale) ?? 'en');
@@ -46,6 +83,38 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
     setError(null);
     setSettingsOpen(true);
     setAnchorEl(null);
+  }
+
+  function openSwitchUser() {
+    setSearch('');
+    setSearchUsers([]);
+    setError(null);
+    setSwitchOpen(true);
+    setAnchorEl(null);
+  }
+
+  async function switchUser(user: SearchUser) {
+    if (!currentOrgId) return;
+    setSwitching(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API}/users/${user.id}/impersonate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ orgId: currentOrgId }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(`Could not switch user (${data.error ?? 'unknown error'}).`);
+        return;
+      }
+      onSwitchSession(data as Session, currentOrgId);
+      setSwitchOpen(false);
+    } catch {
+      setError('Could not reach the API.');
+    } finally {
+      setSwitching(false);
+    }
   }
 
   async function saveSettings() {
@@ -99,6 +168,8 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
         </Box>
         <Divider />
         <MenuItem onClick={openSettings}>{t('usermenu.settings')}</MenuItem>
+        {canSwitchUser && <MenuItem onClick={openSwitchUser}>Switch User...</MenuItem>}
+        {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>Return to my account</MenuItem>}
         <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>{t('usermenu.logout')}</MenuItem>
       </Menu>
 
@@ -128,6 +199,33 @@ export default function UserMenu({ session, authHeaders, onLogout, onLocaleChang
           <Button onClick={() => setSettingsOpen(false)}>{t('usermenu.cancel')}</Button>
           <Button variant="contained" onClick={saveSettings} disabled={saving}>{t('usermenu.save')}</Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog open={switchOpen} onClose={() => !switching && setSwitchOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Switch User</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+          {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+          <TextField
+            autoFocus
+            label="Search by name or email"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            size="small"
+            helperText="Enter at least two characters."
+          />
+          <Box sx={{ display: 'grid', gap: 0.5 }}>
+            {searchUsers.map((user) => (
+              <Button key={user.id} onClick={() => switchUser(user)} disabled={switching} sx={{ justifyContent: 'flex-start', textTransform: 'none' }}>
+                <Box sx={{ textAlign: 'left' }}>
+                  <Typography variant="body2">{user.displayName}</Typography>
+                  <Typography variant="caption" color="text.secondary">{user.email}</Typography>
+                </Box>
+              </Button>
+            ))}
+            {search.trim().length >= 2 && searchUsers.length === 0 && <Typography variant="body2" color="text.secondary">No organization members found.</Typography>}
+          </Box>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setSwitchOpen(false)} disabled={switching}>{t('usermenu.cancel')}</Button></DialogActions>
       </Dialog>
     </>
   );

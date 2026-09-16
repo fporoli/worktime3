@@ -41,7 +41,13 @@ const SESSION_KEY = 'worktime.session';
 export function loadSession(): Session | null {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    if (!raw) return null;
+    const session: unknown = JSON.parse(raw);
+    if (!session || typeof session !== 'object' || !Array.isArray((session as { memberships?: unknown }).memberships)) {
+      clearSession();
+      return null;
+    }
+    return session as Session;
   } catch {
     return null;
   }
@@ -182,10 +188,10 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
       <Typography variant="h4" gutterBottom>Worktime</Typography>
       <Paper sx={{ p: 3 }}>
         <Tabs value={mode} onChange={(_, v) => setMode(v)} variant="fullWidth" sx={{ mb: 2 }}>
-          <Tab value="login" label="Login" />
-          <Tab value="register" label="Register" />
-          <Tab value="invite" label="Invited" />
-          <Tab value="reset" label="Reset" />
+          <Tab value="login" label="Login" onClick={() => setMode('login')} />
+          <Tab value="register" label="Register" onClick={() => setMode('register')} />
+          <Tab value="invite" label="Invited" onClick={() => setMode('invite')} />
+          <Tab value="reset" label="Reset" onClick={() => setMode('reset')} />
         </Tabs>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {notice && <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert>}

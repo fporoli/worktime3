@@ -167,6 +167,7 @@ export default function App() {
   }, [appBarNode]);
 
   const [session, setSession] = useState<Session | null>(() => loadSession());
+  const [adminSession, setAdminSession] = useState<Session | null>(null);
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(
     () => session?.memberships[0]?.organizationId ?? null,
   );
@@ -287,6 +288,23 @@ export default function App() {
       if (!stillVisible) setSection('time');
     }
     if (isMobile) setMobileNavOpen(false);
+  }
+
+  function switchUserSession(nextSession: Session, organizationId: string) {
+    if (session && !adminSession) setAdminSession(session);
+    setSession(nextSession);
+    saveSession(nextSession);
+    setCurrentOrgId(organizationId);
+    setSection('time');
+  }
+
+  function returnToAdmin() {
+    if (!adminSession) return;
+    setSession(adminSession);
+    saveSession(adminSession);
+    setCurrentOrgId(adminSession.memberships[0]?.organizationId ?? null);
+    setAdminSession(null);
+    setSection('time');
   }
 
   /** Reveal the assistant flyout; cancels any pending auto-close from a previous hover-out. */
@@ -413,6 +431,8 @@ export default function App() {
       <Login
         onLoggedIn={(s) => {
           setSession(s);
+          setAdminSession(null);
+          saveSession(s);
           const firstOrg = s.memberships[0]?.organizationId ?? null;
           setCurrentOrgId(firstOrg);
           setSection('time');
@@ -664,6 +684,11 @@ export default function App() {
           <UserMenu
             session={session}
             authHeaders={authHeaders}
+            currentOrgId={currentOrgId}
+            canSwitchUser={role === 'admin' && !adminSession}
+            adminSession={adminSession}
+            onSwitchSession={switchUserSession}
+            onReturnToAdmin={returnToAdmin}
             onLogout={logout}
             onLocaleChange={(newLocale) => {
               const updated = { ...session, locale: newLocale };
