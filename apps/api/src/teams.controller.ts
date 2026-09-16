@@ -55,13 +55,20 @@ export class TeamsController {
     }
     const name = (body.name ?? '').trim();
     if (!name) return { ok: false, error: 'name-required' };
-    // Only an org admin may designate the team lead — a manager creating a team can't hand themself that.
-    if (body.leadUserId !== undefined && !(await isOrgAdmin(db, orgId, callerId))) {
-      return { ok: false, error: 'forbidden-lead' };
+    // The creator becomes the team's lead by default, so they can manage its members
+    // right away. Only an org admin may instead hand initial leadership to someone else.
+    let leadUserId: string | null;
+    if (body.leadUserId !== undefined) {
+      if (body.leadUserId !== callerId && !(await isOrgAdmin(db, orgId, callerId))) {
+        return { ok: false, error: 'forbidden-lead' };
+      }
+      leadUserId = body.leadUserId;
+    } else {
+      leadUserId = callerId;
     }
     const [team] = await db
       .insert(teams)
-      .values({ organization_id: orgId, name, description: body.description ?? null, lead_user_id: body.leadUserId ?? null })
+      .values({ organization_id: orgId, name, description: body.description ?? null, lead_user_id: leadUserId })
       .returning({
         id: teams.id,
         organization_id: teams.organization_id,
@@ -81,7 +88,10 @@ export class TeamsController {
   ) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
-    const [team] = await db.select({ organization_id: teams.organization_id }).from(teams).where(eq(teams.id, id));
+    const [team] = await db
+      .select({ organization_id: teams.organization_id, lead_user_id: teams.lead_user_id })
+      .from(teams)
+      .where(eq(teams.id, id));
     if (!team) return { ok: false, error: 'team-not-found' };
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
@@ -89,8 +99,8 @@ export class TeamsController {
     if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
       return { ok: false, error: 'forbidden' };
     }
-    // Only an org admin may reassign the team lead.
-    if (body.leadUserId !== undefined && !(await isOrgAdmin(db, team.organization_id, callerId))) {
+    // Only an org admin, or the team's current lead, may reassign the lead.
+    if (body.leadUserId !== undefined && team.lead_user_id !== callerId && !(await isOrgAdmin(db, team.organization_id, callerId))) {
       return { ok: false, error: 'forbidden-lead' };
     }
 

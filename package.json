@@ -13,7 +13,7 @@
     "test": "npm run test --workspaces",
     "db:migrate": "node infra/liquibase/migrate.mjs",
     "db:seed": "psql $DATABASE_URL -f infra/postgres/seeds/seed.dev.sql",
-    "db:testseed": "psql $DATABASE_URL -v org="''" -f infra/postgres/seeds/seed.test.sql",
+    "db:testseed": "psql $DATABASE_URL -v org=\"''\" -f infra/postgres/seeds/seed.test.sql",
     "db:introspect": "npm run db:introspect --workspace=@worktime3/api"
   },
   "engines": {

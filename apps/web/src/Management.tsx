@@ -249,6 +249,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     return false;
   }
 
+  /** Reassigning a team's lead is restricted to org admins and that team's current lead. */
+  function canEditTeamLead(team: TeamItem | null): boolean {
+    if (role === 'admin') return true;
+    return !!team && team.lead_user_id === session.userId;
+  }
+
   function openCreateTeam() {
     setEditingTeam(null);
     setTeamName('');
@@ -268,9 +274,11 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function handleSaveTeam() {
     if (!teamName.trim()) return;
     setError(null);
-    // Only an org admin may set/change the team lead — omit the field entirely for a manager,
-    // so their save can't be rejected just for carrying a value they're not allowed to set.
-    const leadPatch = role === 'admin' ? { leadUserId: teamLeadId || null } : {};
+    // Only an org admin or the team's current lead may set/change the team lead — omit the
+    // field entirely otherwise, so a save can't be rejected just for carrying a value the
+    // caller isn't allowed to set. On creation the server defaults the lead to the creator.
+    const canEditLead = canEditTeamLead(editingTeam);
+    const leadPatch = canEditLead ? { leadUserId: teamLeadId || null } : {};
     const lead = members.find((m) => m.user_id === teamLeadId);
     try {
       if (editingTeam) {
@@ -287,7 +295,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                   ...t,
                   name: teamName.trim(),
                   description: teamDesc.trim() || null,
-                  ...(role === 'admin' ? { lead_user_id: teamLeadId || null, lead_display_name: lead?.display_name ?? null } : {}),
+                  ...(canEditLead ? { lead_user_id: teamLeadId || null, lead_display_name: lead?.display_name ?? null } : {}),
                 }
               : t,
           ),
@@ -306,8 +314,10 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           organization_id: orgId,
           name: teamName.trim(),
           description: teamDesc.trim() || null,
-          lead_user_id: role === 'admin' ? teamLeadId || null : null,
-          lead_display_name: role === 'admin' ? (lead?.display_name ?? null) : null,
+          // A creator who isn't an admin can't have set leadUserId (the field is hidden for
+          // them), so the server defaults the lead to the creator themself in that case.
+          lead_user_id: canEditLead ? teamLeadId || null : session.userId,
+          lead_display_name: canEditLead ? (lead?.display_name ?? null) : session.displayName,
           member_count: 0,
         };
         setTeams((prev) => [...prev, newTeam]);
@@ -886,7 +896,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
             multiline
             rows={2}
           />
-          {role === 'admin' && (
+          {canEditTeamLead(editingTeam) && (
             <TextField
               select
               label="Team Lead"
@@ -898,6 +908,11 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
               <MenuItem value=""><em>None</em></MenuItem>
               {members.map((m) => (<MenuItem key={m.user_id} value={m.user_id}>{m.display_name} ({m.email})</MenuItem>))}
             </TextField>
+          )}
+          {!editingTeam && !canEditTeamLead(editingTeam) && (
+            <Typography variant="caption" color="text.secondary">
+              You'll be set as this team's lead, so you can manage its members afterwards.
+            </Typography>
           )}
         </DialogContent>
         <DialogActions>

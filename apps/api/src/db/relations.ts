@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, expense_reports, expense_report_items, expenses, organization_memberships, versions, workflow_definitions, workflows, role_permissions, permissions, team_members, membership_roles } from "./schema";
+import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, expense_reports, expense_report_items, expenses, organization_memberships, notifications, workflows, versions, workflow_definitions, role_permissions, permissions, team_members, membership_roles } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -36,6 +36,7 @@ export const usersRelations = relations(users, ({many}) => ({
 		relationName: "organization_memberships_manager_user_id_users_id"
 	}),
 	organizations: many(organizations),
+	notifications: many(notifications),
 	versions_created_by_user_id: many(versions, {
 		relationName: "versions_created_by_user_id_users_id"
 	}),
@@ -79,6 +80,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 		fields: [organizations.created_by_user_id],
 		references: [users.id]
 	}),
+	notifications: many(notifications),
 	workflow_definitions: many(workflow_definitions),
 }));
 
@@ -278,6 +280,33 @@ export const organization_membershipsRelations = relations(organization_membersh
 	membership_roles: many(membership_roles),
 }));
 
+export const notificationsRelations = relations(notifications, ({one}) => ({
+	organization: one(organizations, {
+		fields: [notifications.organization_id],
+		references: [organizations.id]
+	}),
+	user: one(users, {
+		fields: [notifications.recipient_user_id],
+		references: [users.id]
+	}),
+	workflow: one(workflows, {
+		fields: [notifications.workflow_id],
+		references: [workflows.workflow_id]
+	}),
+}));
+
+export const workflowsRelations = relations(workflows, ({one, many}) => ({
+	notifications: many(notifications),
+	workflow_definition: one(workflow_definitions, {
+		fields: [workflows.workflow_def_id],
+		references: [workflow_definitions.workflow_def_id]
+	}),
+	team: one(teams, {
+		fields: [workflows.assigned_to_team_id],
+		references: [teams.id]
+	}),
+}));
+
 export const versionsRelations = relations(versions, ({one}) => ({
 	user_created_by_user_id: one(users, {
 		fields: [versions.created_by_user_id],
@@ -288,17 +317,6 @@ export const versionsRelations = relations(versions, ({one}) => ({
 		fields: [versions.lastmodified_by_user_id],
 		references: [users.id],
 		relationName: "versions_lastmodified_by_user_id_users_id"
-	}),
-}));
-
-export const workflowsRelations = relations(workflows, ({one}) => ({
-	workflow_definition: one(workflow_definitions, {
-		fields: [workflows.workflow_def_id],
-		references: [workflow_definitions.workflow_def_id]
-	}),
-	team: one(teams, {
-		fields: [workflows.assigned_to_team_id],
-		references: [teams.id]
 	}),
 }));
 
