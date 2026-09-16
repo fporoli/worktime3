@@ -21,7 +21,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import UserLookup from './UserLookup';
 import { LOCALES, useT, type Locale } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -245,8 +244,6 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
           </TableBody>
         </Table>
       </Box>
-
-      <UserLookup authHeaders={authHeaders} />
 
       {/* ========================================================================= */}
       {/* DIALOG: CREATE / EDIT ENUM                                                */}

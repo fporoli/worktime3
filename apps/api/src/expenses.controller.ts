@@ -22,8 +22,8 @@ export class ExpensesController {
       category: string;
       subCategory?: string;
       billingType?: string;
-      originalValue: number;
-      originalCurrency: string;
+      originalValue?: number;
+      originalCurrency?: string;
       currency: string;
       value?: number;
       quantity?: number;
@@ -48,8 +48,8 @@ export class ExpensesController {
       category: body.category,
       sub_category: body.subCategory ?? null,
       billing_type: body.billingType ?? null,
-      original_value: String(body.originalValue),
-      original_currency: body.originalCurrency,
+      original_value: body.originalValue !== undefined ? String(body.originalValue) : null,
+      original_currency: body.originalCurrency ?? null,
       currency: body.currency,
       value: body.value !== undefined ? String(body.value) : undefined,
       quantity: body.quantity !== undefined ? String(body.quantity) : null,
@@ -120,8 +120,8 @@ export class ExpensesController {
       category?: string;
       subCategory?: string | null;
       billingType?: string | null;
-      originalValue?: number;
-      originalCurrency?: string;
+      originalValue?: number | null;
+      originalCurrency?: string | null;
       currency?: string;
       value?: number;
       quantity?: number | null;
@@ -141,7 +141,7 @@ export class ExpensesController {
     if (body.category !== undefined) patch.category = body.category;
     if (body.subCategory !== undefined) patch.sub_category = body.subCategory;
     if (body.billingType !== undefined) patch.billing_type = body.billingType;
-    if (body.originalValue !== undefined) patch.original_value = String(body.originalValue);
+    if (body.originalValue !== undefined) patch.original_value = body.originalValue === null ? null : String(body.originalValue);
     if (body.originalCurrency !== undefined) patch.original_currency = body.originalCurrency;
     if (body.currency !== undefined) patch.currency = body.currency;
     if (body.value !== undefined) patch.value = String(body.value);

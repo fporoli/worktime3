@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Chip,
+  Collapse,
   LinearProgress,
   MenuItem,
   Paper,
@@ -15,7 +16,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useT } from './i18n';
+import { useI18n } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -27,6 +28,7 @@ interface Option {
 interface StaticDataRow {
   enum_name: string;
   values: Record<string, string>;
+  translation: Record<string, Record<string, string>>;
 }
 
 /**
@@ -53,8 +55,8 @@ export interface ExpenseRow {
   expense_date: string;
   category: string;
   sub_category: string | null;
-  original_value: string;
-  original_currency: string;
+  original_value: string | null;
+  original_currency: string | null;
   currency: string;
   value: string;
   quantity: string | null;
@@ -103,8 +105,8 @@ function formFromRow(row: ExpenseRow): ExpenseForm {
     expenseDate: row.expense_date.slice(0, 10),
     category: row.category,
     subCategory: row.sub_category ?? '',
-    originalValue: row.original_value,
-    originalCurrency: row.original_currency,
+    originalValue: row.original_value ?? '',
+    originalCurrency: row.original_currency ?? '',
     currency: row.currency,
     value: row.value,
     quantity: row.quantity ?? '',
@@ -126,17 +128,20 @@ interface ExpensesProps {
 }
 
 export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [entries, setEntries] = useState<ExpenseRow[]>([]);
   const [projects, setProjects] = useState<Option[]>([]);
   const [subprojectsByProject, setSubprojectsByProject] = useState<Record<string, Option[]>>({});
   const [categories, setCategories] = useState<Record<string, string>>({});
   const [subCategories, setSubCategories] = useState<Record<string, string>>({});
+  const [categoryTranslations, setCategoryTranslations] = useState<Record<string, Record<string, string>>>({});
+  const [subCategoryTranslations, setSubCategoryTranslations] = useState<Record<string, Record<string, string>>>({});
   const [form, setForm] = useState<ExpenseForm>(emptyForm(''));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showAdditional, setShowAdditional] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -154,18 +159,34 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       const res = await fetch(`${API}/organizations/${orgId}/static-data/expenses`, { headers: await authHeaders() });
       const data: StaticDataRow[] = await res.json();
       if (!Array.isArray(data)) return;
-      setCategories(data.find((r) => r.enum_name === 'expense_category')?.values ?? {});
-      setSubCategories(data.find((r) => r.enum_name === 'expense_subcategory')?.values ?? {});
+      const categoryRow = data.find((r) => r.enum_name === 'expense_category');
+      const subCategoryRow = data.find((r) => r.enum_name === 'expense_subcategory');
+      setCategories(categoryRow?.values ?? {});
+      setCategoryTranslations(categoryRow?.translation ?? {});
+      setSubCategories(subCategoryRow?.values ?? {});
+      setSubCategoryTranslations(subCategoryRow?.translation ?? {});
     } catch { /* offline fallback */ }
   }
 
-  /** The org's default reporting currency — pre-fills new expenses' `currency` field. */
+  /** `values` is the enum's base-language label; `translation[locale]` overrides it when set. */
+  function categoryLabel(key: string): string {
+    return categoryTranslations[locale]?.[key] ?? categories[key] ?? key;
+  }
+
+  function translatedSubCategoryLabel(category: string, subCategory: string | null): string | null {
+    if (!subCategory) return null;
+    const key = `${category}$${subCategory}`;
+    return subCategoryTranslations[locale]?.[key] ?? subCategories[key] ?? subCategory;
+  }
+
+  /** The org's default currency — pre-fills a new expense's `originalCurrency`, which in turn
+   * defaults `currency` to match (see `updateForm`) until the user diverges them themselves. */
   async function loadDefaultCurrency() {
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, { headers: await authHeaders() });
       const data = await res.json();
       const currency = typeof data?.default_currency === 'string' ? data.default_currency : '';
-      if (currency) setForm((prev) => (prev.currency ? prev : { ...prev, currency }));
+      if (currency) setForm((prev) => (prev.originalCurrency ? prev : { ...prev, originalCurrency: currency, currency }));
     } catch { /* offline fallback */ }
   }
 
@@ -201,7 +222,15 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   }, [orgId, userId]);
 
   function updateForm(patch: Partial<ExpenseForm>) {
-    setForm((prev) => ({ ...prev, ...patch }));
+    setForm((prev) => {
+      const next = { ...prev, ...patch };
+      // `currency` defaults to whatever `originalCurrency` is, until the user gives it its
+      // own value — at which point they've diverged and this stops following.
+      if (patch.originalCurrency !== undefined && prev.currency === prev.originalCurrency) {
+        next.currency = patch.originalCurrency;
+      }
+      return next;
+    });
     if (patch.projectId) loadSubprojects(patch.projectId);
   }
 
@@ -210,8 +239,8 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       expenseDate: f.expenseDate,
       category: f.category,
       subCategory: f.subCategory || undefined,
-      originalValue: Number(f.originalValue),
-      originalCurrency: f.originalCurrency.toUpperCase(),
+      originalValue: f.originalValue ? Number(f.originalValue) : undefined,
+      originalCurrency: f.originalCurrency ? f.originalCurrency.toUpperCase() : undefined,
       currency: f.currency.toUpperCase(),
       value: f.value ? Number(f.value) : 0,
       quantity: f.quantity ? Number(f.quantity) : undefined,
@@ -221,9 +250,12 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     };
   }
 
-  const formValid =
-    !!form.expenseDate && !!form.category && Number(form.originalValue) > 0 &&
-    /^[A-Za-z]{3}$/.test(form.originalCurrency) && /^[A-Za-z]{3}$/.test(form.currency);
+  // Amount and receipt currency live in the collapsed "Additional data" section — both are
+  // optional, but if given at all, amount must be positive and currency a 3-letter code.
+  const additionalDataValid =
+    (form.originalValue === '' || Number(form.originalValue) > 0) &&
+    (form.originalCurrency === '' || /^[A-Za-z]{3}$/.test(form.originalCurrency));
+  const formValid = !!form.expenseDate && !!form.category && additionalDataValid && /^[A-Za-z]{3}$/.test(form.currency);
 
   async function add() {
     setError(null);
@@ -240,6 +272,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         return;
       }
       setForm(emptyForm(form.currency));
+      setShowAdditional(false);
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -263,6 +296,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       }
       setEditingId(null);
       setForm(emptyForm(form.currency));
+      setShowAdditional(false);
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -288,12 +322,14 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   function startEdit(row: ExpenseRow) {
     setEditingId(row.id);
     setForm(formFromRow(row));
+    setShowAdditional(true);
     if (row.project_id) loadSubprojects(row.project_id);
   }
 
   function cancelEdit() {
     setEditingId(null);
     setForm(emptyForm(form.currency));
+    setShowAdditional(false);
   }
 
   const subprojects = subprojectsByProject[form.projectId] ?? [];
@@ -309,7 +345,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
         <TextField label={t('time.date')} type="date" value={form.expenseDate} onChange={(e) => e.target.value && updateForm({ expenseDate: e.target.value })} size="small" />
         <TextField select label={t('expenses.category')} value={form.category} onChange={(e) => updateForm({ category: e.target.value, subCategory: '' })} size="small" sx={{ minWidth: 160 }}>
-          {Object.entries(categories).map(([key, label]) => (<MenuItem key={key} value={key}>{label}</MenuItem>))}
+          {Object.keys(categories).map((key) => (<MenuItem key={key} value={key}>{categoryLabel(key)}</MenuItem>))}
         </TextField>
         <TextField
           select
@@ -321,7 +357,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
           disabled={!form.category}
         >
           <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
-          {subCategoryOptions(subCategories, form.category).map(({ key, label }) => (<MenuItem key={key} value={key}>{label}</MenuItem>))}
+          {subCategoryOptions(subCategories, form.category).map(({ key }) => (<MenuItem key={key} value={key}>{translatedSubCategoryLabel(form.category, key)}</MenuItem>))}
         </TextField>
         <TextField
           select
@@ -349,18 +385,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       </Box>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
         <TextField
-          label={t('expenses.originalValue')}
-          type="number"
-          value={form.originalValue}
-          onChange={(e) => updateForm({ originalValue: e.target.value })}
-          size="small"
-          slotProps={{ htmlInput: { step: 0.01, min: 0.01 } }}
-          sx={{ maxWidth: 140 }}
-        />
-        <TextField label={t('expenses.originalCurrency')} value={form.originalCurrency} onChange={(e) => updateForm({ originalCurrency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
-      </Box>
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-        <TextField
           label={t('expenses.value')}
           type="number"
           value={form.value}
@@ -373,15 +397,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       </Box>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1, alignItems: 'flex-start' }}>
         <TextField
-          label={t('expenses.quantity')}
-          type="number"
-          value={form.quantity}
-          onChange={(e) => updateForm({ quantity: e.target.value })}
-          size="small"
-          slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
-          sx={{ maxWidth: 120 }}
-        />
-        <TextField
           label={t('time.comment')}
           value={form.comment}
           onChange={(e) => updateForm({ comment: e.target.value })}
@@ -391,6 +406,40 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
           sx={{ flex: 1, minWidth: 260, '& textarea': { resize: 'vertical' } }}
         />
       </Box>
+
+      <Typography
+        component="button"
+        type="button"
+        onClick={() => setShowAdditional((v) => !v)}
+        variant="body2"
+        color="primary"
+        sx={{ mt: 1.5, background: 'none', border: 'none', p: 0, cursor: 'pointer', fontWeight: 600 }}
+      >
+        {showAdditional ? '▾' : '▸'} {t('expenses.additionalData')}
+      </Typography>
+      <Collapse in={showAdditional}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+          <TextField
+            label={t('expenses.originalValue')}
+            type="number"
+            value={form.originalValue}
+            onChange={(e) => updateForm({ originalValue: e.target.value })}
+            size="small"
+            slotProps={{ htmlInput: { step: 0.01, min: 0.01 } }}
+            sx={{ maxWidth: 140 }}
+          />
+          <TextField label={t('expenses.originalCurrency')} value={form.originalCurrency} onChange={(e) => updateForm({ originalCurrency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
+          <TextField
+            label={t('expenses.quantity')}
+            type="number"
+            value={form.quantity}
+            onChange={(e) => updateForm({ quantity: e.target.value })}
+            size="small"
+            slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
+            sx={{ maxWidth: 120 }}
+          />
+        </Box>
+      </Collapse>
       <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
         {editingId ? (
           <>
@@ -408,7 +457,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
           <TableRow>
             <TableCell>{t('time.date')}</TableCell>
             <TableCell>{t('expenses.category')}</TableCell>
-            <TableCell align="right">{t('expenses.originalValue')}</TableCell>
+            <TableCell align="right">{t('expenses.value')}</TableCell>
             <TableCell>{t('time.project')}</TableCell>
             <TableCell>{t('time.subproject')}</TableCell>
             <TableCell>{t('expenses.report')}</TableCell>
@@ -419,8 +468,8 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
           {entries.map((row) => (
             <TableRow key={row.id} hover>
               <TableCell>{row.expense_date.slice(0, 10)}</TableCell>
-              <TableCell>{categories[row.category] ?? row.category}{row.sub_category ? ` / ${subCategoryLabel(subCategories, row.category, row.sub_category) ?? row.sub_category}` : ''}</TableCell>
-              <TableCell align="right">{row.original_value} {row.original_currency}</TableCell>
+              <TableCell>{categoryLabel(row.category)}{row.sub_category ? ` / ${translatedSubCategoryLabel(row.category, row.sub_category) ?? row.sub_category}` : ''}</TableCell>
+              <TableCell align="right">{row.value} {row.currency}</TableCell>
               <TableCell>{row.project_name ?? '—'}</TableCell>
               <TableCell>{row.subproject_name ?? '—'}</TableCell>
               <TableCell>

@@ -456,7 +456,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <TableRow key={e.id}>
                     <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
                     <TableCell>{e.category}{e.sub_category ? ` / ${e.sub_category}` : ''}</TableCell>
-                    <TableCell align="right">{e.original_value} {e.original_currency}</TableCell>
+                    <TableCell align="right">{e.value} {e.currency}</TableCell>
                     <TableCell>{e.project_name ?? '—'}</TableCell>
                     <TableCell>{e.subproject_name ?? '—'}</TableCell>
                     <TableCell>{e.comment ?? '—'}</TableCell>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Container, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Container, Divider, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { ensureSsoInit, keycloak, startSsoLogin } from './auth';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -184,10 +184,39 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
   }
 
   return (
-    <Container maxWidth="sm" sx={{ py: 6 }}>
-      <Typography variant="h4" gutterBottom>Worktime</Typography>
-      <Paper sx={{ p: 3 }}>
-        <Tabs value={mode} onChange={(_, v) => setMode(v)} variant="fullWidth" sx={{ mb: 2 }}>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(180deg, #eef2fb 0%, #f5f6fa 320px)',
+        py: 6,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 3 }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'primary.contrastText',
+            backgroundImage: 'linear-gradient(135deg, #1a56db 0%, #0f3fa8 100%)',
+            fontWeight: 700,
+            fontSize: '1.1rem',
+          }}
+        >
+          W
+        </Box>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>Worktime</Typography>
+      </Box>
+      <Container maxWidth="xs" disableGutters>
+      <Paper elevation={2} sx={{ p: 4, borderRadius: 3 }}>
+        <Tabs value={mode} onChange={(_, v) => setMode(v)} variant="fullWidth" sx={{ mb: 3 }}>
           <Tab value="login" label="Login" onClick={() => setMode('login')} />
           <Tab value="register" label="Register" onClick={() => setMode('register')} />
           <Tab value="invite" label="Invited" onClick={() => setMode('invite')} />
@@ -201,11 +230,14 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
             <Button variant="outlined" disabled={busy || ssoChecking} onClick={() => startSsoLogin()}>
               {ssoChecking ? 'Checking single sign-on…' : 'Login with Keycloak (SSO)'}
             </Button>
-            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>— or local account —</Typography>
+            <Divider sx={{ '&::before, &::after': { borderColor: 'divider' } }}>
+              <Typography variant="caption" color="text.secondary">OR LOCAL ACCOUNT</Typography>
+            </Divider>
             <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
             <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
             <Button variant="contained" disabled={busy} onClick={() => submitLogin(email, password)}>Login</Button>
-            <Typography variant="body2" color="text.secondary">Demo accounts (password `{DEMO_PASSWORD}`):</Typography>
+            <Divider />
+            <Typography variant="caption" color="text.secondary">DEMO ACCOUNTS (password: {DEMO_PASSWORD})</Typography>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               {DEMO_ACCOUNTS.map((a) => (
                 <Button key={a.email} variant="outlined" size="small" disabled={busy} onClick={() => submitLogin(a.email, DEMO_PASSWORD)}>
@@ -281,6 +313,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
           </Box>
         )}
       </Paper>
-    </Container>
+      </Container>
+    </Box>
   );
 }

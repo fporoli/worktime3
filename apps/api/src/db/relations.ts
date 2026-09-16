@@ -28,7 +28,6 @@ export const usersRelations = relations(users, ({many}) => ({
 	expense_reports_reviewed_by_user_id: many(expense_reports, {
 		relationName: "expense_reports_reviewed_by_user_id_users_id"
 	}),
-	expenses: many(expenses),
 	organization_memberships_user_id: many(organization_memberships, {
 		relationName: "organization_memberships_user_id_users_id"
 	}),
@@ -37,6 +36,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	}),
 	organizations: many(organizations),
 	notifications: many(notifications),
+	expenses: many(expenses),
 	versions_created_by_user_id: many(versions, {
 		relationName: "versions_created_by_user_id_users_id"
 	}),
@@ -66,7 +66,6 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 	teams: many(teams),
 	expense_reports: many(expense_reports),
 	expense_report_items: many(expense_report_items),
-	expenses: many(expenses),
 	organization_memberships: many(organization_memberships),
 	organization: one(organizations, {
 		fields: [organizations.parent_organization_id],
@@ -81,6 +80,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 		references: [users.id]
 	}),
 	notifications: many(notifications),
+	expenses: many(expenses),
 	workflow_definitions: many(workflow_definitions),
 }));
 

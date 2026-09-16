@@ -592,16 +592,15 @@ export default function App() {
               <ListSubheader
                 disableSticky
                 sx={{
-                  bgcolor: 'action.hover',
+                  bgcolor: 'transparent',
                   color: 'text.secondary',
                   fontSize: '0.7rem',
                   fontWeight: 700,
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
                   lineHeight: '28px',
-                  borderRadius: 1,
-                  mx: 1,
-                  mt: 1,
+                  mx: 1.5,
+                  mt: 2,
                   mb: 0.5,
                 }}
               >
@@ -649,7 +648,24 @@ export default function App() {
               ☰
             </IconButton>
           )}
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>{t('appbar.title')}</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1 }}>
+            <Box
+              sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '8px',
+                display: { xs: 'none', sm: 'flex' },
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: 'rgba(255,255,255,0.18)',
+                fontWeight: 700,
+                fontSize: '0.9rem',
+              }}
+            >
+              W
+            </Box>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('appbar.title')}</Typography>
+          </Box>
 
           {session.memberships.length > 1 ? (
             <FormControl size="small" sx={{ minWidth: 160 }}>
@@ -973,7 +989,7 @@ export default function App() {
             overflow: 'hidden',
             transition: 'height 0.2s ease',
             zIndex: (t) => t.zIndex.drawer + 2,
-            boxShadow: 3,
+            boxShadow: '0 -1px 3px rgba(16,24,40,0.08), 0 -4px 12px rgba(16,24,40,0.10)',
           }}
         >
           <Box
@@ -984,14 +1000,16 @@ export default function App() {
             sx={{
               height: ASSISTANT_TAB_HEIGHT,
               flexShrink: 0,
-              bgcolor: assistantPinned ? 'primary.dark' : 'primary.main',
+              backgroundImage: (t) =>
+                `linear-gradient(135deg, ${t.palette.primary.main} 0%, ${t.palette.primary.dark} 100%)`,
+              filter: assistantPinned ? 'brightness(0.85)' : 'none',
               color: 'primary.contrastText',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 1,
               cursor: 'pointer',
-              '&:hover': { bgcolor: 'primary.dark' },
+              '&:hover': { filter: 'brightness(0.85)' },
             }}
           >
             <Typography
@@ -1028,7 +1046,7 @@ export default function App() {
             overflow: 'hidden',
             transition: 'width 0.2s ease',
             zIndex: (t) => t.zIndex.drawer + 2,
-            boxShadow: 3,
+            boxShadow: '0 1px 3px rgba(16,24,40,0.08), 0 4px 12px rgba(16,24,40,0.10)',
           }}
         >
           <Box
@@ -1039,7 +1057,9 @@ export default function App() {
             sx={{
               width: ASSISTANT_TAB_WIDTH,
               flexShrink: 0,
-              bgcolor: assistantPinned ? 'primary.dark' : 'primary.main',
+              backgroundImage: (t) =>
+                `linear-gradient(135deg, ${t.palette.primary.main} 0%, ${t.palette.primary.dark} 100%)`,
+              filter: assistantPinned ? 'brightness(0.85)' : 'none',
               color: 'primary.contrastText',
               display: 'flex',
               flexDirection: 'column',
@@ -1047,7 +1067,7 @@ export default function App() {
               justifyContent: 'center',
               gap: 0.75,
               cursor: 'pointer',
-              '&:hover': { bgcolor: 'primary.dark' },
+              '&:hover': { filter: 'brightness(0.85)' },
             }}
           >
             <Typography

@@ -223,7 +223,7 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
               <TableRow>
                 <TableCell>{t('time.date')}</TableCell>
                 <TableCell>{t('expenses.category')}</TableCell>
-                <TableCell align="right">{t('expenses.originalValue')}</TableCell>
+                <TableCell align="right">{t('expenses.value')}</TableCell>
                 <TableCell align="right" />
               </TableRow>
             </TableHead>
@@ -232,7 +232,7 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
                 <TableRow key={e.id}>
                   <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
                   <TableCell>{categoryLabel(e)}</TableCell>
-                  <TableCell align="right">{e.original_value} {e.original_currency}</TableCell>
+                  <TableCell align="right">{e.value} {e.currency}</TableCell>
                   <TableCell align="right">
                     <Button size="small" onClick={() => detach(e.id)}>{t('expenseReports.remove')}</Button>
                   </TableCell>
@@ -251,7 +251,7 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
                 <TableRow key={e.id}>
                   <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
                   <TableCell>{categoryLabel(e)}</TableCell>
-                  <TableCell align="right">{e.original_value} {e.original_currency}</TableCell>
+                  <TableCell align="right">{e.value} {e.currency}</TableCell>
                   <TableCell align="right">
                     <Button size="small" onClick={() => attach(e.id)}>{t('expenseReports.add')}</Button>
                   </TableCell>
