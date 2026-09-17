@@ -2,7 +2,7 @@
 
 Postgres · Liquibase · Drizzle ORM
 
-18 tables across seven subsystems, all scoped to a tenant through `organization_id` —
+25 tables across ten subsystems, all scoped to a tenant through `organization_id` —
 which is `NOT NULL` on `work_times`, since every entry belongs to an organization
 whether or not it's tagged to a project. Each section below is a self-contained
 entity-relationship diagram for one subsystem; tables that also appear elsewhere
@@ -240,6 +240,170 @@ erDiagram
 > `uq_timesheet_period`. Work-time writes are rejected once the covering
 > period is `submitted` or `approved`.
 
+## Expenses (3 tables)
+
+Employees log ad hoc expense line items and bundle a self-chosen subset into
+an expense report for approval — unlike `timesheet_periods` (an implicit
+date-range envelope), a report here is explicit, so `expense_report_items`
+links specific expenses to specific reports.
+
+```mermaid
+erDiagram
+    ORGANIZATIONS ||--o{ EXPENSES : "scopes"
+    USERS ||--o{ EXPENSES : "logs"
+    PROJECTS ||--o{ EXPENSES : "tags"
+    SUBPROJECTS ||--o{ EXPENSES : "tags"
+    ORGANIZATIONS ||--o{ EXPENSE_REPORTS : "scopes"
+    USERS ||--o{ EXPENSE_REPORTS : "owns"
+    USERS ||--o{ EXPENSE_REPORTS : "reviewed_by_user_id"
+    EXPENSE_REPORTS ||--o{ EXPENSE_REPORT_ITEMS : "bundles"
+    EXPENSES ||--o| EXPENSE_REPORT_ITEMS : "included as"
+    ORGANIZATIONS ||--o{ EXPENSE_REPORT_ITEMS : "scopes"
+
+    EXPENSES {
+        uuid id PK
+        uuid user_id FK
+        uuid organization_id FK
+        uuid project_id FK "nullable"
+        uuid subproject_id FK "nullable"
+        date expense_date
+        varchar category "static_data-backed picklist"
+        varchar sub_category "nullable, static_data-backed picklist"
+        varchar billing_type "nullable, static_data-backed picklist"
+        numeric original_value "nullable, must be > 0"
+        char original_currency "nullable, ISO 4217"
+        char currency "ISO 4217"
+        numeric quantity "nullable, must be >= 0"
+        text comment "nullable"
+        numeric value "default 0 — org-currency amount, hand-entered"
+    }
+    EXPENSE_REPORTS {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        text status "in_preparation / submitted / approved / rejected / submitted_processing / processing_finished / request_payment / finished — CHECK constraint, not a DB enum"
+        timestamptz date_submitted "nullable"
+        uuid reviewed_by_user_id FK "nullable"
+        text review_note "nullable"
+        jsonb data
+    }
+    EXPENSE_REPORT_ITEMS {
+        uuid id PK
+        uuid expense_report_id FK
+        uuid expense_id FK UK "one report per expense"
+        uuid organization_id FK
+    }
+    ORGANIZATIONS { uuid id PK }
+    USERS { uuid id PK }
+    PROJECTS { uuid id PK }
+    SUBPROJECTS { uuid id PK }
+```
+
+> `original_value`/`original_currency` capture exactly what the receipt says
+> and are both optional; `value` is the hand-entered amount in the org's
+> reporting currency (`currency`), defaulting to 0 until filled in.
+> `category`/`sub_category`/`billing_type` are free-text picklists backed by
+> `static_data`, not DB enums or FKs — same pattern as `work_times`.
+
+## Workflows & Notifications (3 tables)
+
+Generic, definition-driven approval/request workflows (e.g. "reopen my
+approved month") that can be assigned to one or more users or to a whole
+team, plus the per-recipient notification rows they — and other events —
+generate.
+
+```mermaid
+erDiagram
+    ORGANIZATIONS ||--o{ WORKFLOW_DEFINITIONS : "defines"
+    WORKFLOW_DEFINITIONS ||--o{ WORKFLOWS : "instantiates"
+    TEAMS ||--o{ WORKFLOWS : "assigned_to_team_id"
+    ORGANIZATIONS ||--o{ NOTIFICATIONS : "scopes"
+    USERS ||--o{ NOTIFICATIONS : "recipient_user_id"
+    WORKFLOWS ||--o{ NOTIFICATIONS : "raised by"
+
+    WORKFLOW_DEFINITIONS {
+        uuid workflow_def_id PK
+        uuid organization_id FK
+        text name
+        text description "nullable"
+        jsonb steps "ordered step definitions — shape owned by the app, not enforced here"
+    }
+    WORKFLOWS {
+        uuid workflow_id PK
+        uuid workflow_def_id FK
+        text source_table "polymorphic — no FK, like versions.source_table"
+        uuid source_table_uuid "polymorphic — no FK"
+        jsonb workflow_data
+        timestamptz workflow_started "nullable"
+        timestamptz workflow_finished "nullable"
+        timestamptz workflow_to_be_finished_until "nullable"
+        text step "nullable — current step name"
+        text step_status "nullable — free text, no CHECK"
+        timestamptz workflow_step_started "nullable"
+        timestamptz workflow_step_finished "nullable"
+        timestamptz workflow_step_to_be_finished_until "nullable"
+        uuid_array assigned_to_user_id "nullable, no FK (array)"
+        uuid assigned_to_team_id FK "nullable"
+        jsonb notification
+    }
+    NOTIFICATIONS {
+        uuid id PK
+        uuid organization_id FK
+        uuid recipient_user_id FK
+        text type
+        text title
+        text body "nullable"
+        text source_table "polymorphic — no FK"
+        uuid source_table_uuid "polymorphic — no FK"
+        uuid workflow_id FK "nullable"
+        jsonb data
+        timestamptz read_at "nullable"
+    }
+    ORGANIZATIONS { uuid id PK }
+    USERS { uuid id PK }
+    TEAMS { uuid id PK }
+```
+
+> `chk_workflows_assignee_required`: a workflow must have `assigned_to_user_id`
+> and/or `assigned_to_team_id` set. Notifications get one row per
+> `(recipient, event)` rather than a single JSON blob on `workflows` — a
+> team-assigned step must notify every member independently, each with their
+> own read state. `NotificationsGateway` (WebSocket) only pushes a live copy
+> of a row that already exists here, so a missed push is never a lost
+> notification, only a delayed one.
+
+## Versioning (1 table)
+
+Generic per-record version history: one row per tracked
+`(source_table, source_table_uuid)` entity, holding the current version
+number plus a full history of past actions.
+
+```mermaid
+erDiagram
+    USERS ||--o{ VERSIONS : "created_by_user_id"
+    USERS ||--o{ VERSIONS : "lastmodified_by_user_id"
+
+    VERSIONS {
+        uuid version_id PK
+        text source_table "polymorphic — no FK"
+        uuid source_table_uuid "polymorphic — no FK"
+        integer version_nr "default 1, check: >= 1"
+        timestamptz created
+        uuid created_by_user_id FK "nullable"
+        timestamptz lastmodified
+        uuid lastmodified_by_user_id FK "nullable"
+        uuid lastmodified_by_workflow_id "polymorphic — no FK"
+        jsonb history "past actions: insert / update / update_delta / delete"
+    }
+    USERS { uuid id PK }
+```
+
+> `uq_versions_source_table_record`: one row per `(source_table,
+> source_table_uuid)`. `source_table_uuid` and `lastmodified_by_workflow_id`
+> are deliberately plain UUID columns with no FK — this table is polymorphic
+> across every other table in the schema, so referential integrity for
+> "which record" can't be enforced at the DB level here.
+
 ## Audit (1 table + 1 view)
 
 Every administrative action (invites, timesheet review, SSO/domain config,
@@ -305,6 +469,10 @@ erDiagram
 | `subproject_type` | `phase`, `work_package`, `task` |
 | `timesheet_status` | `open`, `submitted`, `approved`, `rejected` |
 
+`expense_reports.status` and `workflows.step`/`step_status` are plain `text`
+columns, not DB enums — the former is CHECK-constrained (see Expenses above),
+the latter is free-form.
+
 ## Not diagrammed
 
 - Liquibase's own bookkeeping tables `databasechangelog` /
@@ -313,5 +481,5 @@ erDiagram
 ---
 
 Generated from `apps/api/src/db/schema.ts` (Drizzle ORM, introspected from the
-Liquibase-managed schema) on 2026-09-13. A styled, interactive version of this
+Liquibase-managed schema) on 2026-09-17. A styled, interactive version of this
 reference is also published as a Claude artifact.

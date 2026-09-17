@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "api: build",
+      "type": "shell",
+      "command": "npm run build --workspace=@worktime3/api",
+      "problemMatcher": ["$tsc"],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "web: dev server",
+      "type": "shell",
+      "command": "npm run dev --workspace=@worktime3/web",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE",
+          "endsPattern": "ready in"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "dev" }
+    }
+  ]
+}

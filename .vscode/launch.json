@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "API: Debug",
+      "cwd": "${workspaceFolder}/apps/api",
+      "program": "${workspaceFolder}/apps/api/dist/main.js",
+      "envFile": "${workspaceFolder}/.env",
+      "preLaunchTask": "api: build",
+      "outFiles": ["${workspaceFolder}/apps/api/dist/**/*.js"],
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Web: Launch Chrome",
+      "url": "http://localhost:3001",
+      "webRoot": "${workspaceFolder}/apps/web",
+      "preLaunchTask": "web: dev server",
+      "sourceMaps": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack: API + Web",
+      "configurations": ["API: Debug", "Web: Launch Chrome"],
+      "stopAll": true
+    }
+  ]
+}
