@@ -140,7 +140,7 @@ export async function canManageTeamMembers(db: Executor, organizationId: string,
 
 /**
  * True when `dateOrTimestamp` falls inside a submitted/approved timesheet
- * period for this user — the single gate the work-time create/update/delete
+ * period for this user — the single gate the project-time create/update/delete
  * handlers call before touching an entry. `rejected`/`open` periods are NOT
  * locked (an employee fixing a rejected month must be able to edit again).
  */

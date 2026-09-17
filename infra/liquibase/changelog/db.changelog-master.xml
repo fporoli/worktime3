@@ -39,6 +39,7 @@
     <include file="021-expenses-value.sql" relativeToChangelogFile="true"/>
     <include file="022-notifications.sql" relativeToChangelogFile="true"/>
     <include file="023-expenses-original-nullable.sql" relativeToChangelogFile="true"/>
+    <include file="024-rename-work-times-to-project-times.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

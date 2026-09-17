@@ -32,7 +32,7 @@ interface UserMenuProps {
   onLogout: () => void;
   /** Called once the language change is saved, so the caller can update the session. */
   onLocaleChange: (locale: Locale) => void;
-  /** Called once other settings (e.g. worktime ranges) are saved, so the caller can update the session. */
+  /** Called once other settings (e.g. project time ranges) are saved, so the caller can update the session. */
   onSettingsChange: (settings: NonNullable<Session['settings']>) => void;
 }
 
@@ -48,7 +48,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedLocale, setSelectedLocale] = useState<Locale>((session.locale as Locale) ?? 'en');
-  const [useWorktimeRanges, setUseWorktimeRanges] = useState(session.settings?.useWorktimeMinutesRanges === true);
+  const [useProjectTimeRanges, setUseProjectTimeRanges] = useState(session.settings?.useProjectTimeMinutesRanges === true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [switchOpen, setSwitchOpen] = useState(false);
@@ -79,7 +79,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
 
   function openSettings() {
     setSelectedLocale((session.locale as Locale) ?? 'en');
-    setUseWorktimeRanges(session.settings?.useWorktimeMinutesRanges === true);
+    setUseProjectTimeRanges(session.settings?.useProjectTimeMinutesRanges === true);
     setError(null);
     setSettingsOpen(true);
     setAnchorEl(null);
@@ -120,7 +120,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
   async function saveSettings() {
     setSaving(true);
     setError(null);
-    const settings = { ...session.settings, useWorktimeMinutesRanges: useWorktimeRanges };
+    const settings = { ...session.settings, useProjectTimeMinutesRanges: useProjectTimeRanges };
     try {
       const res = await fetch(`${API}/users/${session.userId}`, {
         method: 'PATCH',
@@ -188,11 +188,11 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
             {LOCALES.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
           </TextField>
           <FormControlLabel
-            control={<Checkbox checked={useWorktimeRanges} onChange={(e) => setUseWorktimeRanges(e.target.checked)} />}
-            label={t('usermenu.useWorktimeRanges')}
+            control={<Checkbox checked={useProjectTimeRanges} onChange={(e) => setUseProjectTimeRanges(e.target.checked)} />}
+            label={t('usermenu.useProjectTimeRanges')}
           />
           <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
-            {t('usermenu.useWorktimeRangesHint')}
+            {t('usermenu.useProjectTimeRangesHint')}
           </Typography>
         </DialogContent>
         <DialogActions>

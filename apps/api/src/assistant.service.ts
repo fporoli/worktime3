@@ -5,7 +5,7 @@ import { and, asc, eq, ilike, inArray } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { VersionsService } from './versions.service';
 import { isOrgMember, isOrgManagerOrAdmin, isPeriodLocked } from './access';
-import { work_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
+import { project_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
 
 export interface AssistantMessage {
   role: 'user' | 'assistant';
@@ -23,7 +23,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_my_time_entries',
-      description: "List the caller's own booked work-time entries in a date range.",
+      description: "List the caller's own booked project-time entries in a date range.",
       parameters: {
         type: 'object',
         properties: {
@@ -38,7 +38,7 @@ const TOOLS: ChatCompletionTool[] = [
     function: {
       name: 'create_time_entries',
       description:
-        'Batch-create work-time entries for the caller. Each entry needs a date, start and end time (HH:MM, 24h), and optionally a project name and comment. Returns per-entry success/failure — a locked (submitted/approved) month will fail for that entry.',
+        'Batch-create project-time entries for the caller. Each entry needs a date, start and end time (HH:MM, 24h), and optionally a project name and comment. Returns per-entry success/failure — a locked (submitted/approved) month will fail for that entry.',
       parameters: {
         type: 'object',
         properties: {
@@ -187,19 +187,19 @@ export class AssistantService {
   }
 
   private async getMyTimeEntries(ctx: ToolContext, args: Record<string, unknown>) {
-    const conditions = [eq(work_times.organization_id, ctx.orgId), eq(work_times.user_id, ctx.callerId)];
+    const conditions = [eq(project_times.organization_id, ctx.orgId), eq(project_times.user_id, ctx.callerId)];
     const rows = await ctx.db
       .select({
-        id: work_times.id,
-        start_time: work_times.start_time,
-        end_time: work_times.end_time,
-        comment: work_times.comment,
+        id: project_times.id,
+        start_time: project_times.start_time,
+        end_time: project_times.end_time,
+        comment: project_times.comment,
         project_name: projects.name,
       })
-      .from(work_times)
-      .leftJoin(projects, eq(projects.id, work_times.project_id))
+      .from(project_times)
+      .leftJoin(projects, eq(projects.id, project_times.project_id))
       .where(and(...conditions))
-      .orderBy(asc(work_times.start_time));
+      .orderBy(asc(project_times.start_time));
     const from = typeof args.from === 'string' ? args.from : undefined;
     const to = typeof args.to === 'string' ? args.to : undefined;
     return rows.filter((r) => (!from || r.start_time >= from) && (!to || r.start_time < to));
@@ -253,8 +253,8 @@ export class AssistantService {
         end_time: end,
         comment: typeof e.comment === 'string' ? e.comment : null,
       };
-      const [row] = await ctx.db.insert(work_times).values(values).returning({ id: work_times.id });
-      void this.versions.record('work_times', row.id, 'insert', ctx.callerId, { id: row.id, ...values }).catch(() => {});
+      const [row] = await ctx.db.insert(project_times).values(values).returning({ id: project_times.id });
+      void this.versions.record('project_times', row.id, 'insert', ctx.callerId, { id: row.id, ...values }).catch(() => {});
       created += 1;
       results.push({ date, ok: true });
     }
@@ -286,10 +286,10 @@ export class AssistantService {
     const memberIds = members.map((m) => m.user_id);
     const from = typeof args.from === 'string' ? args.from : undefined;
     const to = typeof args.to === 'string' ? args.to : undefined;
-    const conditions = [inArray(work_times.user_id, memberIds), eq(work_times.organization_id, ctx.orgId)];
+    const conditions = [inArray(project_times.user_id, memberIds), eq(project_times.organization_id, ctx.orgId)];
     const entries = await ctx.db
-      .select({ user_id: work_times.user_id, start_time: work_times.start_time, end_time: work_times.end_time })
-      .from(work_times)
+      .select({ user_id: project_times.user_id, start_time: project_times.start_time, end_time: project_times.end_time })
+      .from(project_times)
       .where(and(...conditions));
     const filtered = entries.filter((e) => (!from || e.start_time >= from) && (!to || e.start_time < to));
 

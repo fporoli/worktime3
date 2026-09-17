@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt.guard';
 import { HealthController } from './health.controller';
-import { WorktimeService } from './worktime.service';
+import { ProjectTimeService } from './project-time.service';
 import { RbacService } from './rbac.service';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
@@ -13,7 +13,7 @@ import { OrgsController } from './orgs.controller';
 import { RolesController } from './roles.controller';
 import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
-import { WorktimeController } from './worktime.controller';
+import { ProjectTimeController } from './project-time.controller';
 import { TimesheetsController } from './timesheets.controller';
 import { ExpensesController } from './expenses.controller';
 import { ExpenseReportsController } from './expense-reports.controller';
@@ -36,7 +36,7 @@ import { DbService } from './db.service';
     RolesController,
     TeamsController,
     ProjectsController,
-    WorktimeController,
+    ProjectTimeController,
     TimesheetsController,
     ExpensesController,
     ExpenseReportsController,
@@ -48,7 +48,7 @@ import { DbService } from './db.service';
   ],
   providers: [
     DbService,
-    WorktimeService,
+    ProjectTimeService,
     RbacService,
     AuditService,
     VersionsService,

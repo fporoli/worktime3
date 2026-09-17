@@ -1,21 +1,21 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { and, asc, eq, getTableColumns, gt, gte, lt, ne, type SQL } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
-import { WorktimeService } from './worktime.service';
+import { ProjectTimeService } from './project-time.service';
 import { VersionsService } from './versions.service';
 import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isPeriodLocked } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { work_times, projects, subprojects, users } from './db/schema';
+import { project_times, projects, subprojects, users } from './db/schema';
 
 @Controller()
-export class WorktimeController {
+export class ProjectTimeController {
   constructor(
     private readonly db: DbService,
-    private readonly wt: WorktimeService,
+    private readonly wt: ProjectTimeService,
     private readonly versions: VersionsService,
   ) {}
 
-  @Post('organizations/:orgId/work-time')
+  @Post('organizations/:orgId/project-time')
   async create(
     @Param('orgId') orgId: string,
     @Body()
@@ -39,7 +39,7 @@ export class WorktimeController {
     if (await isPeriodLocked(db, orgId, userId, body.startTime)) return { ok: false, error: 'period-locked' };
     // Only "ranges" users care about overlap at all — everyone else logs duration-only entries that
     // are expected to share the same 08:00 start, so there's nothing to warn about.
-    if (await this.usesWorktimeRanges(db, userId)) {
+    if (await this.usesProjectTimeRanges(db, userId)) {
       const overlaps = await this.findOverlaps(db, userId, orgId, body.startTime, body.endTime);
       if (overlaps.length > 0 && !body.acknowledgeOverlap) {
         return { ok: false, error: 'overlapping-entry-confirm', overlaps };
@@ -54,12 +54,12 @@ export class WorktimeController {
       end_time: body.endTime,
       comment: body.comment ?? null,
     };
-    const [row] = await db.insert(work_times).values(values).returning({ id: work_times.id });
-    void this.versions.record('work_times', row.id, 'insert', userId, { id: row.id, ...values }).catch(() => {});
+    const [row] = await db.insert(project_times).values(values).returning({ id: project_times.id });
+    void this.versions.record('project_times', row.id, 'insert', userId, { id: row.id, ...values }).catch(() => {});
     return { ok: true, id: row.id };
   }
 
-  @Get('organizations/:orgId/work-time')
+  @Get('organizations/:orgId/project-time')
   async list(
     @Param('orgId') orgId: string,
     @Req() req: AuthenticatedRequest,
@@ -83,24 +83,24 @@ export class WorktimeController {
       targetUserId = callerId;
     }
 
-    const conditions: SQL[] = [eq(work_times.organization_id, orgId)];
-    if (targetUserId) conditions.push(eq(work_times.user_id, targetUserId));
-    if (from) conditions.push(gte(work_times.start_time, from));
-    if (to) conditions.push(lt(work_times.start_time, to));
+    const conditions: SQL[] = [eq(project_times.organization_id, orgId)];
+    if (targetUserId) conditions.push(eq(project_times.user_id, targetUserId));
+    if (from) conditions.push(gte(project_times.start_time, from));
+    if (to) conditions.push(lt(project_times.start_time, to));
 
 
     // Names come along so the UI can list entries without a lookup per row.
     const rows = await db
       .select({
-        ...getTableColumns(work_times),
+        ...getTableColumns(project_times),
         project_name: projects.name,
         subproject_name: subprojects.name,
       })
-      .from(work_times)
-      .leftJoin(projects, eq(projects.id, work_times.project_id))
-      .leftJoin(subprojects, eq(subprojects.id, work_times.subproject_id))
+      .from(project_times)
+      .leftJoin(projects, eq(projects.id, project_times.project_id))
+      .leftJoin(subprojects, eq(subprojects.id, project_times.subproject_id))
       .where(and(...conditions))
-      .orderBy(asc(work_times.start_time));
+      .orderBy(asc(project_times.start_time));
 
     const summary = this.wt.bucket(
       rows.map((r) => ({ startTime: r.start_time, endTime: r.end_time })),
@@ -109,7 +109,7 @@ export class WorktimeController {
     return { entries: rows, summary };
   }
 
-  @Patch('work-time/:id')
+  @Patch('project-time/:id')
   async update(
     @Param('id') id: string,
     @Body()
@@ -136,7 +136,7 @@ export class WorktimeController {
       }
     }
 
-    if ((body.startTime !== undefined || body.endTime !== undefined) && owned.entry.organization_id && (await this.usesWorktimeRanges(db, owned.userId))) {
+    if ((body.startTime !== undefined || body.endTime !== undefined) && owned.entry.organization_id && (await this.usesProjectTimeRanges(db, owned.userId))) {
       const effectiveStart = body.startTime ?? owned.entry.start_time;
       const effectiveEnd = body.endTime ?? owned.entry.end_time;
       const overlaps = await this.findOverlaps(db, owned.userId, owned.entry.organization_id, effectiveStart, effectiveEnd, id);
@@ -145,27 +145,27 @@ export class WorktimeController {
       }
     }
 
-    const patch: Partial<typeof work_times.$inferInsert> = {};
+    const patch: Partial<typeof project_times.$inferInsert> = {};
     if (body.projectId !== undefined) patch.project_id = body.projectId || null;
     if (body.subprojectId !== undefined) patch.subproject_id = body.subprojectId || null;
     if (body.startTime !== undefined) patch.start_time = body.startTime;
     if (body.endTime !== undefined) patch.end_time = body.endTime;
     if (body.comment !== undefined) patch.comment = body.comment;
     if (Object.keys(patch).length === 0) return { ok: true };
-    // One statement: start/end move together, so chk_worktime_order never sees a half-applied edit.
-    await db.update(work_times).set(patch).where(eq(work_times.id, id));
-    void this.versions.record('work_times', id, 'update_delta', owned.userId, patch).catch(() => {});
+    // One statement: start/end move together, so chk_project_time_order never sees a half-applied edit.
+    await db.update(project_times).set(patch).where(eq(project_times.id, id));
+    void this.versions.record('project_times', id, 'update_delta', owned.userId, patch).catch(() => {});
     return { ok: true };
   }
 
-  @Delete('work-time/:id')
+  @Delete('project-time/:id')
   async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const owned = await this.assertEditableEntry(db, id, req);
     if ('error' in owned) return owned;
-    await db.delete(work_times).where(eq(work_times.id, id));
-    void this.versions.record('work_times', id, 'delete', owned.userId, owned.entry).catch(() => {});
+    await db.delete(project_times).where(eq(project_times.id, id));
+    void this.versions.record('project_times', id, 'delete', owned.userId, owned.entry).catch(() => {});
     return { ok: true };
   }
 
@@ -186,13 +186,13 @@ export class WorktimeController {
     if (!userId) return { ok: false, error: 'unknown-user' };
     const [row] = await db
       .select({
-        user_id: work_times.user_id,
-        organization_id: work_times.organization_id,
-        start_time: work_times.start_time,
-        end_time: work_times.end_time,
+        user_id: project_times.user_id,
+        organization_id: project_times.organization_id,
+        start_time: project_times.start_time,
+        end_time: project_times.end_time,
       })
-      .from(work_times)
-      .where(eq(work_times.id, id));
+      .from(project_times)
+      .where(eq(project_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
     if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
     if (row.organization_id && (await isPeriodLocked(db, row.organization_id, userId, row.start_time))) {
@@ -202,23 +202,23 @@ export class WorktimeController {
   }
 
   /** Whether this user wants strict, non-overlapping start/end ranges (a per-user preference). */
-  private async usesWorktimeRanges(db: Db, userId: string): Promise<boolean> {
+  private async usesProjectTimeRanges(db: Db, userId: string): Promise<boolean> {
     const [row] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
-    return (row?.settings as { useWorktimeMinutesRanges?: boolean } | null)?.useWorktimeMinutesRanges === true;
+    return (row?.settings as { useProjectTimeMinutesRanges?: boolean } | null)?.useProjectTimeMinutesRanges === true;
   }
 
   /** This user's other entries in the same organization overlapping [startTime, endTime), if any. */
   private async findOverlaps(db: Db, userId: string, orgId: string, startTime: string, endTime: string, excludeId?: string) {
     const conditions = [
-      eq(work_times.user_id, userId),
-      eq(work_times.organization_id, orgId),
-      lt(work_times.start_time, endTime),
-      gt(work_times.end_time, startTime),
+      eq(project_times.user_id, userId),
+      eq(project_times.organization_id, orgId),
+      lt(project_times.start_time, endTime),
+      gt(project_times.end_time, startTime),
     ];
-    if (excludeId) conditions.push(ne(work_times.id, excludeId));
+    if (excludeId) conditions.push(ne(project_times.id, excludeId));
     return db
-      .select({ id: work_times.id, start_time: work_times.start_time, end_time: work_times.end_time, comment: work_times.comment })
-      .from(work_times)
+      .select({ id: project_times.id, start_time: project_times.start_time, end_time: project_times.end_time, comment: project_times.comment })
+      .from(project_times)
       .where(and(...conditions))
       .limit(5);
   }

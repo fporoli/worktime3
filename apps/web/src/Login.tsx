@@ -28,11 +28,11 @@ export interface Session {
   /** Free-form per-user preferences; fetched from the API after login. */
   settings?: {
     /**
-     * When true, worktime entries are strict start/end ranges that may not overlap.
+     * When true, project time entries are strict start/end ranges that may not overlap.
      * When false/unset, only the daily duration matters and every entry is recorded
      * starting at 08:00, so overlap doesn't apply.
      */
-    useWorktimeMinutesRanges?: boolean;
+    useProjectTimeMinutesRanges?: boolean;
   };
 }
 

@@ -33,7 +33,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'appbar.title': 'Worktime',
 
     'nav.myWork': 'My Work',
-    'nav.timeTracking': 'Time Tracking',
+    'nav.timeTracking': 'Project Tracking',
     'nav.monthlyTimesheet': 'Monthly Timesheet',
     'nav.organization': 'Organization',
     'nav.management': 'Management',
@@ -54,8 +54,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.settings': 'Settings',
     'usermenu.logout': 'Logout',
     'usermenu.language': 'Language',
-    'usermenu.useWorktimeRanges': 'Use worktime minutes ranges',
-    'usermenu.useWorktimeRangesHint': 'Track exact start/end times that may not overlap. When off, only the total duration per entry matters and every entry starts at 08:00.',
+    'usermenu.useProjectTimeRanges': 'Use project time minutes ranges',
+    'usermenu.useProjectTimeRangesHint': 'Track exact start/end times that may not overlap. When off, only the total duration per entry matters and every entry starts at 08:00.',
     'usermenu.save': 'Save',
     'usermenu.cancel': 'Cancel',
 
@@ -65,7 +65,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'notifications.markAllRead': 'Mark all as read',
     'notifications.viewAction': 'View',
 
-    'time.logWorkTime': 'Log work time (all roles)',
+    'time.logProjectTime': 'Log project time (all roles)',
     'time.start': 'Start',
     'time.end': 'End',
     'time.durationMinutes': 'Duration (minutes)',
@@ -209,7 +209,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'appbar.title': 'Worktime',
 
     'nav.myWork': 'Meine Arbeit',
-    'nav.timeTracking': 'Zeiterfassung',
+    'nav.timeTracking': 'Projekterfassung',
     'nav.monthlyTimesheet': 'Monatlicher Stundenzettel',
     'nav.organization': 'Organisation',
     'nav.management': 'Verwaltung',
@@ -230,8 +230,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.settings': 'Einstellungen',
     'usermenu.logout': 'Abmelden',
     'usermenu.language': 'Sprache',
-    'usermenu.useWorktimeRanges': 'Zeiterfassung mit Von-bis-Zeiten',
-    'usermenu.useWorktimeRangesHint': 'Erfasst genaue Start-/Endzeiten, die sich nicht überschneiden dürfen. Ist dies deaktiviert, zählt nur die Gesamtdauer je Eintrag, und jeder Eintrag beginnt um 08:00 Uhr.',
+    'usermenu.useProjectTimeRanges': 'Projektzeiterfassung mit Von-bis-Zeiten',
+    'usermenu.useProjectTimeRangesHint': 'Erfasst genaue Start-/Endzeiten, die sich nicht überschneiden dürfen. Ist dies deaktiviert, zählt nur die Gesamtdauer je Eintrag, und jeder Eintrag beginnt um 08:00 Uhr.',
     'usermenu.save': 'Speichern',
     'usermenu.cancel': 'Abbrechen',
 
@@ -241,7 +241,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'notifications.markAllRead': 'Alle als gelesen markieren',
     'notifications.viewAction': 'Anzeigen',
 
-    'time.logWorkTime': 'Arbeitszeit erfassen (alle Rollen)',
+    'time.logProjectTime': 'Projektzeit erfassen (alle Rollen)',
     'time.start': 'Beginn',
     'time.end': 'Ende',
     'time.durationMinutes': 'Dauer (Minuten)',
@@ -385,7 +385,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'appbar.title': 'Worktime',
 
     'nav.myWork': 'Mon travail',
-    'nav.timeTracking': 'Suivi du temps',
+    'nav.timeTracking': 'Suivi de projet',
     'nav.monthlyTimesheet': 'Feuille de temps mensuelle',
     'nav.organization': 'Organisation',
     'nav.management': 'Gestion',
@@ -406,8 +406,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.settings': 'Paramètres',
     'usermenu.logout': 'Déconnexion',
     'usermenu.language': 'Langue',
-    'usermenu.useWorktimeRanges': 'Utiliser des plages horaires de travail',
-    'usermenu.useWorktimeRangesHint': "Enregistre des heures de début/fin précises qui ne doivent pas se chevaucher. Si désactivé, seule la durée totale de chaque saisie compte et chaque saisie commence à 08:00.",
+    'usermenu.useProjectTimeRanges': 'Utiliser des plages horaires de temps projet',
+    'usermenu.useProjectTimeRangesHint': "Enregistre des heures de début/fin précises qui ne doivent pas se chevaucher. Si désactivé, seule la durée totale de chaque saisie compte et chaque saisie commence à 08:00.",
     'usermenu.save': 'Enregistrer',
     'usermenu.cancel': 'Annuler',
 
@@ -417,7 +417,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'notifications.markAllRead': 'Tout marquer comme lu',
     'notifications.viewAction': 'Voir',
 
-    'time.logWorkTime': 'Saisir le temps de travail (tous rôles)',
+    'time.logProjectTime': 'Saisir le temps projet (tous rôles)',
     'time.start': 'Début',
     'time.end': 'Fin',
     'time.durationMinutes': 'Durée (minutes)',
@@ -561,7 +561,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'appbar.title': 'Worktime',
 
     'nav.myWork': 'Il mio lavoro',
-    'nav.timeTracking': 'Rilevazione orari',
+    'nav.timeTracking': 'Tracciamento progetti',
     'nav.monthlyTimesheet': 'Foglio ore mensile',
     'nav.organization': 'Organizzazione',
     'nav.management': 'Gestione',
@@ -582,8 +582,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'usermenu.settings': 'Impostazioni',
     'usermenu.logout': 'Esci',
     'usermenu.language': 'Lingua',
-    'usermenu.useWorktimeRanges': "Usa fasce orarie per le ore lavorate",
-    'usermenu.useWorktimeRangesHint': "Registra orari di inizio/fine precisi che non possono sovrapporsi. Se disattivato, conta solo la durata totale di ogni voce e ogni voce inizia alle 08:00.",
+    'usermenu.useProjectTimeRanges': "Usa fasce orarie per il tempo progetto",
+    'usermenu.useProjectTimeRangesHint': "Registra orari di inizio/fine precisi che non possono sovrapporsi. Se disattivato, conta solo la durata totale di ogni voce e ogni voce inizia alle 08:00.",
     'usermenu.save': 'Salva',
     'usermenu.cancel': 'Annulla',
 
@@ -593,7 +593,7 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'notifications.markAllRead': 'Segna tutte come lette',
     'notifications.viewAction': 'Visualizza',
 
-    'time.logWorkTime': 'Registra orario di lavoro (tutti i ruoli)',
+    'time.logProjectTime': 'Registra tempo progetto (tutti i ruoli)',
     'time.start': 'Inizio',
     'time.end': 'Fine',
     'time.durationMinutes': 'Durata (minuti)',

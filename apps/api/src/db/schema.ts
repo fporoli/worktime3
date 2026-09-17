@@ -203,7 +203,7 @@ export const subprojects = pgTable("subprojects", {
 		}).onDelete("set null"),
 ]);
 
-export const work_times = pgTable("work_times", {
+export const project_times = pgTable("project_times", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	user_id: uuid().notNull(),
 	organization_id: uuid().notNull(),
@@ -213,30 +213,30 @@ export const work_times = pgTable("work_times", {
 	end_time: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
 	comment: text(),
 }, (table) => [
-	index("idx_worktimes_org_start").using("btree", table.organization_id.asc().nullsLast().op("timestamptz_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
-	index("idx_worktimes_project").using("btree", table.project_id.asc().nullsLast().op("uuid_ops")),
-	index("idx_worktimes_user_start").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
+	index("idx_project_times_org_start").using("btree", table.organization_id.asc().nullsLast().op("timestamptz_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
+	index("idx_project_times_project").using("btree", table.project_id.asc().nullsLast().op("uuid_ops")),
+	index("idx_project_times_user_start").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.start_time.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.user_id],
 			foreignColumns: [users.id],
-			name: "work_times_user_id_fkey"
+			name: "project_times_user_id_fkey"
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.organization_id],
 			foreignColumns: [organizations.id],
-			name: "work_times_organization_id_fkey"
+			name: "project_times_organization_id_fkey"
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.project_id],
 			foreignColumns: [projects.id],
-			name: "work_times_project_id_fkey"
+			name: "project_times_project_id_fkey"
 		}).onDelete("set null"),
 	foreignKey({
 			columns: [table.subproject_id],
 			foreignColumns: [subprojects.id],
-			name: "work_times_subproject_id_fkey"
+			name: "project_times_subproject_id_fkey"
 		}).onDelete("set null"),
-	check("chk_worktime_order", sql`end_time > start_time`),
+	check("chk_project_time_order", sql`end_time > start_time`),
 ]);
 
 export const static_data = pgTable("static_data", {

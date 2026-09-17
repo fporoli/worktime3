@@ -3,7 +3,7 @@
 Postgres · Liquibase · Drizzle ORM
 
 25 tables across ten subsystems, all scoped to a tenant through `organization_id` —
-which is `NOT NULL` on `work_times`, since every entry belongs to an organization
+which is `NOT NULL` on `project_times`, since every entry belongs to an organization
 whether or not it's tagged to a project. Each section below is a self-contained
 entity-relationship diagram for one subsystem; tables that also appear elsewhere
 (mainly `organizations` and `users`) are shown with just their primary key for
@@ -180,10 +180,10 @@ erDiagram
     PROJECTS ||--o{ SUBPROJECTS : "breaks into"
     USERS ||--o{ PROJECTS : "owner_user_id"
     USERS ||--o{ SUBPROJECTS : "owner_user_id"
-    USERS ||--o{ WORK_TIMES : "logs"
-    ORGANIZATIONS ||--o{ WORK_TIMES : "scopes"
-    PROJECTS ||--o{ WORK_TIMES : "tags"
-    SUBPROJECTS ||--o{ WORK_TIMES : "tags"
+    USERS ||--o{ PROJECT_TIMES : "logs"
+    ORGANIZATIONS ||--o{ PROJECT_TIMES : "scopes"
+    PROJECTS ||--o{ PROJECT_TIMES : "tags"
+    SUBPROJECTS ||--o{ PROJECT_TIMES : "tags"
 
     PROJECTS {
         uuid id PK
@@ -199,7 +199,7 @@ erDiagram
         varchar name
         enum type "phase / work_package / task"
     }
-    WORK_TIMES {
+    PROJECT_TIMES {
         uuid id PK
         uuid user_id FK
         uuid organization_id FK "required — every entry is org-scoped"
@@ -303,7 +303,7 @@ erDiagram
 > and are both optional; `value` is the hand-entered amount in the org's
 > reporting currency (`currency`), defaulting to 0 until filled in.
 > `category`/`sub_category`/`billing_type` are free-text picklists backed by
-> `static_data`, not DB enums or FKs — same pattern as `work_times`.
+> `static_data`, not DB enums or FKs — same pattern as `project_times`.
 
 ## Workflows & Notifications (3 tables)
 

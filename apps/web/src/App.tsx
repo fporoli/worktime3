@@ -67,7 +67,7 @@ const ASSISTANT_PANEL_WIDTH = 380;
 const ASSISTANT_TAB_HEIGHT = 40;
 const ASSISTANT_PANEL_HEIGHT_MOBILE = '50vh';
 
-const WORK_TIME_ERROR_MESSAGES: Record<string, string> = {
+const PROJECT_TIME_ERROR_MESSAGES: Record<string, string> = {
   'period-locked': 'This month has already been submitted or approved and is locked. Ask your manager to reopen it, or use a different month.',
   'forbidden': 'You do not have permission to do that.',
   'not-found': 'That entry no longer exists.',
@@ -91,8 +91,8 @@ interface Draft {
   comment: string;
 }
 
-/** When "use worktime minutes ranges" is off, every entry is recorded as starting at this local time. */
-const DEFAULT_WORKTIME_START = '08:00';
+/** When "use project time minutes ranges" is off, every entry is recorded as starting at this local time. */
+const DEFAULT_PROJECT_TIME_START = '08:00';
 
 /** An existing entry that overlaps one the user is about to save. */
 interface OverlapEntry {
@@ -179,7 +179,7 @@ export default function App() {
     { id: '2', start_time: '2026-09-06T08:00:00Z', end_time: '2026-09-06T09:00:00Z', comment: 'Bugfix' },
   ]);
   const [entryDate, setEntryDate] = useState(() => todayDate());
-  const [entryStartTime, setEntryStartTime] = useState(DEFAULT_WORKTIME_START);
+  const [entryStartTime, setEntryStartTime] = useState(DEFAULT_PROJECT_TIME_START);
   const [entryDurationMinutes, setEntryDurationMinutes] = useState(60);
   const [comment, setComment] = useState('');
   const [projects, setProjects] = useState<Option[]>([]);
@@ -187,7 +187,7 @@ export default function App() {
   const [projectId, setProjectId] = useState('');
   const [subprojectId, setSubprojectId] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [workTimeError, setWorkTimeError] = useState<string | null>(null);
+  const [projectTimeError, setProjectTimeError] = useState<string | null>(null);
   const [overlapConfirm, setOverlapConfirm] = useState<OverlapConfirm | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void> } | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -203,7 +203,7 @@ export default function App() {
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
-  const useWorktimeRanges = session?.settings?.useWorktimeMinutesRanges === true;
+  const useProjectTimeRanges = session?.settings?.useProjectTimeMinutesRanges === true;
   // `role` collapses a membership to a single display role, which hides a billing_admin-only
   // membership — check the full roles list directly for the finance-processing nav entry.
   const isBillingAdmin = session?.memberships.find((m) => m.organizationId === orgId)?.roles.includes('billing_admin') ?? false;
@@ -357,7 +357,7 @@ export default function App() {
     const { from, to } = periodRange(periodType, periodAnchor);
     try {
       const res = await fetch(
-        `${API}/organizations/${orgId}/work-time?userId=${session.userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        `${API}/organizations/${orgId}/project-time?userId=${session.userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
         { headers: await authHeaders() },
       );
       const data = await res.json();
@@ -442,8 +442,8 @@ export default function App() {
   }
 
   async function addEntry(acknowledgeOverlap = false) {
-    setWorkTimeError(null);
-    const startTime = toIso(entryDate, useWorktimeRanges ? entryStartTime : DEFAULT_WORKTIME_START);
+    setProjectTimeError(null);
+    const startTime = toIso(entryDate, useProjectTimeRanges ? entryStartTime : DEFAULT_PROJECT_TIME_START);
     const endTime = addMinutesIso(startTime, entryDurationMinutes);
     const e: Entry = {
       id: String(Date.now()),
@@ -460,7 +460,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/work-time`, {
+      const res = await fetch(`${API}/organizations/${orgId}/project-time`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
@@ -478,7 +478,7 @@ export default function App() {
           setOverlapConfirm({ kind: 'add', overlaps: data.overlaps ?? [] });
           return;
         }
-        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not add the entry (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not add the entry (${data.error ?? 'unknown error'}).`);
         return;
       }
       setOverlapConfirm(null);
@@ -491,8 +491,8 @@ export default function App() {
 
   async function saveDraft(acknowledgeOverlap = false) {
     if (!draft) return;
-    setWorkTimeError(null);
-    const draftStartTime = toIso(draft.date, useWorktimeRanges ? draft.startTime : DEFAULT_WORKTIME_START);
+    setProjectTimeError(null);
+    const draftStartTime = toIso(draft.date, useProjectTimeRanges ? draft.startTime : DEFAULT_PROJECT_TIME_START);
     const patch = {
       startTime: draftStartTime,
       endTime: addMinutesIso(draftStartTime, draft.durationMinutes),
@@ -519,7 +519,7 @@ export default function App() {
       );
     }
     try {
-      const res = await fetch(`${API}/work-time/${draft.id}`, {
+      const res = await fetch(`${API}/project-time/${draft.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ ...patch, acknowledgeOverlap: acknowledgeOverlap || undefined }),
@@ -530,7 +530,7 @@ export default function App() {
           setOverlapConfirm({ kind: 'draft', overlaps: data.overlaps ?? [] });
           return;
         }
-        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not save the change (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not save the change (${data.error ?? 'unknown error'}).`);
         return;
       }
       setOverlapConfirm(null);
@@ -550,15 +550,15 @@ export default function App() {
   }
 
   async function removeEntry(id: string) {
-    setWorkTimeError(null);
+    setProjectTimeError(null);
     try {
-      const res = await fetch(`${API}/work-time/${id}`, {
+      const res = await fetch(`${API}/project-time/${id}`, {
         method: 'DELETE',
         headers: await authHeaders(),
       });
       const data = await res.json();
       if (data.ok === false) {
-        setWorkTimeError(WORK_TIME_ERROR_MESSAGES[data.error] ?? `Could not remove the entry (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not remove the entry (${data.error ?? 'unknown error'}).`);
         return;
       }
       setEntries((prev) => prev.filter((e) => e.id !== id));
@@ -752,12 +752,12 @@ export default function App() {
         >
           {section === 'time' && (
             <>
-              {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
+              {projectTimeError && <Alert severity="error" onClose={() => setProjectTimeError(null)}>{projectTimeError}</Alert>}
               <Paper sx={{ p: 2 }}>
-                <Typography variant="h6">{t('time.logWorkTime')}</Typography>
+                <Typography variant="h6">{t('time.logProjectTime')}</Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
                   <TextField label={t('time.date')} type="date" value={entryDate} onChange={(e) => e.target.value && setEntryDate(e.target.value)} size="small" />
-                  {useWorktimeRanges && (
+                  {useProjectTimeRanges && (
                     <TextField
                       label={t('time.start')}
                       type="time"
@@ -1100,9 +1100,9 @@ export default function App() {
         <DialogTitle>Edit entry</DialogTitle>
         {draft && (
           <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-            {workTimeError && <Alert severity="error" onClose={() => setWorkTimeError(null)}>{workTimeError}</Alert>}
+            {projectTimeError && <Alert severity="error" onClose={() => setProjectTimeError(null)}>{projectTimeError}</Alert>}
             <TextField label="Date" type="date" value={draft.date} onChange={(e) => e.target.value && setDraft({ ...draft, date: e.target.value })} size="small" sx={{ mt: 1 }} />
-            {useWorktimeRanges && (
+            {useProjectTimeRanges && (
               <TextField
                 label="Start time"
                 type="time"

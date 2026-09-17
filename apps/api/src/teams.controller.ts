@@ -5,7 +5,7 @@ import { DbService } from './db.service';
 import { VersionsService } from './versions.service';
 import { callerUserId, canManageTeamMembers, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { teams, team_members, organization_memberships, users, roles, work_times, projects, subprojects } from './db/schema';
+import { teams, team_members, organization_memberships, users, roles, project_times, projects, subprojects } from './db/schema';
 
 const leadUsers = alias(users, 'lead_users');
 
@@ -170,13 +170,13 @@ export class TeamsController {
   }
 
   /**
-   * Booked work time for every member of a team, so a manager can see hours
-   * per person without opening each member's own log. Members with zero
-   * entries in range still appear (with an empty entries list) so nobody
-   * silently drops off the report.
+   * Booked project time for every member of a team, so a manager can see
+   * hours per person without opening each member's own log. Members with
+   * zero entries in range still appear (with an empty entries list) so
+   * nobody silently drops off the report.
    */
-  @Get('teams/:id/work-time')
-  async workTime(
+  @Get('teams/:id/project-time')
+  async projectTime(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
     @Query('from') from?: string,
@@ -203,23 +203,23 @@ export class TeamsController {
 
     const memberIds = members.map((m) => m.user_id);
     const conditions: SQL[] = [
-      inArray(work_times.user_id, memberIds),
-      eq(work_times.organization_id, team.organization_id),
+      inArray(project_times.user_id, memberIds),
+      eq(project_times.organization_id, team.organization_id),
     ];
-    if (from) conditions.push(gte(work_times.start_time, from));
-    if (to) conditions.push(lt(work_times.start_time, to));
+    if (from) conditions.push(gte(project_times.start_time, from));
+    if (to) conditions.push(lt(project_times.start_time, to));
 
     const entries = await db
       .select({
-        ...getTableColumns(work_times),
+        ...getTableColumns(project_times),
         project_name: projects.name,
         subproject_name: subprojects.name,
       })
-      .from(work_times)
-      .leftJoin(projects, eq(projects.id, work_times.project_id))
-      .leftJoin(subprojects, eq(subprojects.id, work_times.subproject_id))
+      .from(project_times)
+      .leftJoin(projects, eq(projects.id, project_times.project_id))
+      .leftJoin(subprojects, eq(subprojects.id, project_times.subproject_id))
       .where(and(...conditions))
-      .orderBy(asc(work_times.start_time));
+      .orderBy(asc(project_times.start_time));
 
     return { members, entries };
   }

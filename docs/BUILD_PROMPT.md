@@ -50,14 +50,14 @@ several organizations and switch between them.
   managers broadly or *this member's specific* manager; don't leave the
   field unused-but-present, that's a trap for later)
 - `projects`, `subprojects` (owner, type, a free-text cost-center code)
-- `work_times` (user, org, project/subproject, start/end, comment)
+- `project_times` (user, org, project/subproject, start/end, comment)
 - `static_data`: a generic `(entity, enum_name) → {key: label}` table so
   admins can edit dropdown vocabularies without a deploy. Give it a real
   unique constraint on `(entity, enum_name)` from day one — a seed script
   re-run against a table that lacks one will silently duplicate rows forever.
 - `timesheet_periods`: one row per (org, user, calendar month), status
   `open → submitted → approved|rejected`. Keep this as its own table —
-  never mutate or flag `work_times` rows directly. "Locked" is purely a
+  never mutate or flag `project_times` rows directly. "Locked" is purely a
   lookup: does a submitted/approved period cover this entry's date?
 - `member_rates`: effective-dated hourly rate per person
   (`effective_from`/`effective_to`, nullable-open-ended), for cost

@@ -1,4 +1,4 @@
--- seed.dev.sql — demo users, org, roles, project + work times + static data.
+-- seed.dev.sql — demo users, org, roles, project + project times + static data.
 -- Depends on schema.sql + 002-worktime-extensions.sql.
 
 INSERT INTO users (id, email, display_name, first_name, last_name, locale, timezone, status)
@@ -53,7 +53,7 @@ INSERT INTO subprojects (id, project_id, organization_id, name, owner_user_id, c
 VALUES ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Design phase', '22222222-2222-2222-2222-222222222222', 'COST-101', 'phase')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO work_times (user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)
+INSERT INTO project_times (user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)
 VALUES
   ('33333333-3333-3333-3333-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'dddddddd-dddd-dddd-dddd-dddddddddddd', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours', 'Homepage hero'),
   ('33333333-3333-3333-3333-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day' + INTERVAL '90 minutes', 'Bugfix')
@@ -63,7 +63,7 @@ INSERT INTO static_data (organization_id, entity, enum_name, "values", translati
 VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'projects', 'project_type', '{"internal":"Internal","customer":"Customer","research":"Research"}', '{"de":{"internal":"Intern"}}'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'organization_memberships', 'membership_status', '{"active":"Active","invited":"Invited","suspended":"Suspended"}', '{}'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'work_times', 'billability', '{"billable":"Billable","non_billable":"Non billable"}', '{}'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'project_times', 'billability', '{"billable":"Billable","non_billable":"Non billable"}', '{}'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'expenses', 'expense_category', '{"travel":"Travel","meals":"Meals & Entertainment","supplies":"Office Supplies","software":"Software & Subscriptions","other":"Other"}', '{}'),
   -- Sub-category keys are prefixed "<parent category key>$<sub-category key>" so the UI can filter
   -- this one enum down to just the options under whichever category is currently selected, without

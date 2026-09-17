@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 // RBAC matrix mirrored from apps/api/src/rbac.service.ts (pure check, no Nest boot).
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  admin: ['org:admin', 'members:manage', 'teams:manage', 'sso:configure', 'audit:read', 'data:read', 'data:write', 'projects:manage', 'worktime:approve'],
+  admin: ['org:admin', 'members:manage', 'teams:manage', 'sso:configure', 'audit:read', 'data:read', 'data:write', 'projects:manage', 'project-time:approve'],
   manager: ['members:manage', 'teams:manage', 'data:read', 'data:write', 'projects:manage'],
   user: ['data:read', 'data:write'],
 };

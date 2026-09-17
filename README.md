@@ -26,7 +26,7 @@ Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
   + organization profile/domains/SSO, admin-only), `auth.ts` (Keycloak client
   + token refresh), `aggregate.ts` (daily/weekly/monthly bucketing).
 - **apps/api** — NestJS. One controller per resource
-  (`orgs`, `teams`, `projects` [+ subprojects], `worktime`, `users`,
+  (`orgs`, `teams`, `projects` [+ subprojects], `project-time`, `users`,
   `static-data`, `roles`, `audit`, `auth`). `access.ts` holds the
   authorization helpers every controller calls (`isOrgAdmin`,
   `isOrgManagerOrAdmin`, `callerUserId`, …) — resolved from the caller's

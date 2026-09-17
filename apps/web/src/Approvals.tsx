@@ -124,7 +124,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     setInspectingError(null);
     try {
       const { from, to } = periodRange('month', period.period_start.slice(0, 10));
-      const url = new URL(`${API}/organizations/${orgId}/work-time`);
+      const url = new URL(`${API}/organizations/${orgId}/project-time`);
       url.searchParams.set('userId', period.user_id);
       url.searchParams.set('from', from);
       url.searchParams.set('to', to);

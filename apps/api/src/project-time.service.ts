@@ -1,21 +1,21 @@
 import { Injectable } from '@nestjs/common';
 
-export interface WorkTimeInput {
+export interface ProjectTimeInput {
   startTime: string;
   endTime: string;
 }
 
 /** Pure aggregation helpers: daily / weekly / monthly buckets for the UI. */
 @Injectable()
-export class WorktimeService {
-  minutesOf(entries: WorkTimeInput[]): number {
+export class ProjectTimeService {
+  minutesOf(entries: ProjectTimeInput[]): number {
     return entries.reduce(
       (sum, e) => sum + (new Date(e.endTime).getTime() - new Date(e.startTime).getTime()) / 60000,
       0,
     );
   }
 
-  bucket(entries: Array<WorkTimeInput & { startTime: string }>, mode: 'daily' | 'weekly' | 'monthly'): Record<string, number> {
+  bucket(entries: Array<ProjectTimeInput & { startTime: string }>, mode: 'daily' | 'weekly' | 'monthly'): Record<string, number> {
     const out: Record<string, number> = {};
     for (const e of entries) {
       const d = new Date(e.startTime);

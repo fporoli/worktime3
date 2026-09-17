@@ -33,7 +33,7 @@ export function bucket(entries: Entry[], view: View): { label: string; minutes: 
   return [...map.entries()].map(([label, mins]) => ({ label, minutes: mins })).sort((a, b) => (a.label < b.label ? -1 : 1));
 }
 
-/** A single day, a Mon-Sun week, or a calendar month — the granularity of the worktime period selector. */
+/** A single day, a Mon-Sun week, or a calendar month — the granularity of the project time period selector. */
 export type PeriodType = 'day' | 'week' | 'month';
 
 const pad = (n: number) => String(n).padStart(2, '0');

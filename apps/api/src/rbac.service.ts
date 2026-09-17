@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 // Mirrors packages/shared ROLE_PERMISSIONS so the API enforces the same matrix.
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  admin: ['org:admin', 'members:manage', 'teams:manage', 'sso:configure', 'audit:read', 'data:read', 'data:write', 'projects:manage', 'worktime:approve'],
+  admin: ['org:admin', 'members:manage', 'teams:manage', 'sso:configure', 'audit:read', 'data:read', 'data:write', 'projects:manage', 'project-time:approve'],
   manager: ['members:manage', 'teams:manage', 'data:read', 'data:write', 'projects:manage'],
   user: ['data:read', 'data:write'],
 };

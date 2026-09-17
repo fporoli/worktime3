@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, work_times, static_data, timesheet_periods, teams, expense_reports, expense_report_items, expenses, organization_memberships, notifications, workflows, versions, workflow_definitions, role_permissions, permissions, team_members, membership_roles } from "./schema";
+import { users, user_identities, organizations, organization_domains, organization_invitations, roles, audit_logs, projects, subprojects, project_times, static_data, timesheet_periods, teams, expense_reports, expense_report_items, expenses, organization_memberships, notifications, workflows, versions, workflow_definitions, role_permissions, permissions, team_members, membership_roles } from "./schema";
 
 export const user_identitiesRelations = relations(user_identities, ({one}) => ({
 	user: one(users, {
@@ -14,7 +14,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	audit_logs: many(audit_logs),
 	projects: many(projects),
 	subprojects: many(subprojects),
-	work_times: many(work_times),
+	project_times: many(project_times),
 	timesheet_periods_user_id: many(timesheet_periods, {
 		relationName: "timesheet_periods_user_id_users_id"
 	}),
@@ -60,7 +60,7 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 	roles: many(roles),
 	projects: many(projects),
 	subprojects: many(subprojects),
-	work_times: many(work_times),
+	project_times: many(project_times),
 	static_data: many(static_data),
 	timesheet_periods: many(timesheet_periods),
 	teams: many(teams),
@@ -131,7 +131,7 @@ export const projectsRelations = relations(projects, ({one, many}) => ({
 		references: [users.id]
 	}),
 	subprojects: many(subprojects),
-	work_times: many(work_times),
+	project_times: many(project_times),
 	expenses: many(expenses),
 }));
 
@@ -148,25 +148,25 @@ export const subprojectsRelations = relations(subprojects, ({one, many}) => ({
 		fields: [subprojects.owner_user_id],
 		references: [users.id]
 	}),
-	work_times: many(work_times),
+	project_times: many(project_times),
 	expenses: many(expenses),
 }));
 
-export const work_timesRelations = relations(work_times, ({one}) => ({
+export const project_timesRelations = relations(project_times, ({one}) => ({
 	user: one(users, {
-		fields: [work_times.user_id],
+		fields: [project_times.user_id],
 		references: [users.id]
 	}),
 	organization: one(organizations, {
-		fields: [work_times.organization_id],
+		fields: [project_times.organization_id],
 		references: [organizations.id]
 	}),
 	project: one(projects, {
-		fields: [work_times.project_id],
+		fields: [project_times.project_id],
 		references: [projects.id]
 	}),
 	subproject: one(subprojects, {
-		fields: [work_times.subproject_id],
+		fields: [project_times.subproject_id],
 		references: [subprojects.id]
 	}),
 }));

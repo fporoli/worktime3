@@ -161,7 +161,7 @@ export interface Subproject {
   type: SubprojectType;
 }
 
-export interface WorkTime {
+export interface ProjectTime {
   id: UUID;
   userId: UUID;
   projectId?: UUID | null;
@@ -197,7 +197,7 @@ export type Permission =
   | 'data:read'
   | 'data:write'
   | 'projects:manage'
-  | 'worktime:approve';
+  | 'project-time:approve';
 
 export type AppRole = 'admin' | 'manager' | 'user';
 
@@ -212,7 +212,7 @@ export const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
     'data:read',
     'data:write',
     'projects:manage',
-    'worktime:approve',
+    'project-time:approve',
   ],
   manager: ['members:manage', 'teams:manage', 'data:read', 'data:write', 'projects:manage'],
   user: ['data:read', 'data:write'],

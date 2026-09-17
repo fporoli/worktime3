@@ -72,12 +72,12 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
     } catch { /* offline fallback */ }
   }
 
-  async function reloadWorkTime(id: string, fromIso: string, toIso: string) {
+  async function reloadProjectTime(id: string, fromIso: string, toIso: string) {
     if (!id) return;
     setError(null);
     setLoading(true);
     try {
-      const url = new URL(`${API}/teams/${id}/work-time`);
+      const url = new URL(`${API}/teams/${id}/project-time`);
       url.searchParams.set('from', fromIso);
       url.searchParams.set('to', toIso);
       const res = await fetch(url.toString(), { headers: await authHeaders() });
@@ -98,7 +98,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
 
   useEffect(() => {
     setExpandedUserId(null);
-    reloadWorkTime(teamId, from, to);
+    reloadProjectTime(teamId, from, to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, from, to]);
 
