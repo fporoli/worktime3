@@ -116,6 +116,17 @@ export async function isManagerOf(db: Executor, organizationId: string, managerI
   return (await membershipManagerId(db, organizationId, targetUserId)) === managerId;
 }
 
+/**
+ * True when `callerId` may view a record `targetUserId` owns: they're the same person, an org
+ * admin, or `targetUserId`'s designated manager. Used to gate read access to evidence documents
+ * (an absence's doctor's note, an expense's pay slip) attached to someone else's record.
+ */
+export async function isOwnerAdminOrManagerOf(db: Executor, organizationId: string, callerId: string, targetUserId: string): Promise<boolean> {
+  if (callerId === targetUserId) return true;
+  if (await isOrgAdmin(db, organizationId, callerId)) return true;
+  return isManagerOf(db, organizationId, callerId, targetUserId);
+}
+
 /** user_ids whose membership in this org names `managerId` as their manager — i.e. `managerId`'s direct reports. */
 export async function directReportUserIds(db: Executor, organizationId: string, managerId: string): Promise<string[]> {
   const rows = await db.execute(

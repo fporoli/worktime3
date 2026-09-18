@@ -48,6 +48,8 @@ const Invitations = lazy(() => import('./Invitations'));
 const AdminSettings = lazy(() => import('./AdminSettings'));
 const OrganizationSettings = lazy(() => import('./OrganizationSettings'));
 const Timesheet = lazy(() => import('./Timesheet'));
+const WorkTime = lazy(() => import('./WorkTime'));
+const Absences = lazy(() => import('./Absences'));
 const Approvals = lazy(() => import('./Approvals'));
 const Expenses = lazy(() => import('./Expenses'));
 const ExpenseReports = lazy(() => import('./ExpenseReports'));
@@ -60,7 +62,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'timesheet' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
+type Section = 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -214,6 +216,8 @@ export default function App() {
       items: [
         { id: 'time', section: 'time', label: t('nav.timeTracking'), visible: true },
         { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
+        { id: 'workTime', section: 'workTime', label: t('nav.workTime'), visible: true },
+        { id: 'absences', section: 'absences', label: t('nav.absences'), visible: true },
         { id: 'expenses', section: 'expenses', label: t('nav.expenses'), visible: true, dividerBefore: true },
         { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), visible: true },
       ],
@@ -278,7 +282,7 @@ export default function App() {
       const nextCanManage = nextRole === 'manager' || nextRole === 'admin';
       const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles.includes('billing_admin') ?? false;
       const stillVisible =
-        section === 'time' || section === 'timesheet' || section === 'expenses' || section === 'expenseReports'
+        section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports'
           ? true
           : section === 'expenseProcessing'
             ? nextRole === 'admin' || nextIsBillingAdmin
@@ -915,6 +919,12 @@ export default function App() {
           <Suspense fallback={<LinearProgress sx={{ my: 2 }} />}>
             {section === 'timesheet' && orgId && (
               <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
+            {section === 'workTime' && orgId && (
+              <WorkTime orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
+            {section === 'absences' && orgId && (
+              <Absences orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
             )}
             {section === 'expenses' && orgId && (
               <Expenses orgId={orgId} userId={session.userId} authHeaders={authHeaders} />

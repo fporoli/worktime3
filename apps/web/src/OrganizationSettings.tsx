@@ -27,6 +27,7 @@ interface OrgDetails {
   type: string;
   avatar_url: string | null;
   default_currency: string;
+  max_hours_per_day: number;
 }
 
 interface DomainItem {
@@ -57,6 +58,7 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
   const [orgName, setOrgName] = useState('');
   const [orgLogoUrl, setOrgLogoUrl] = useState('');
   const [defaultCurrency, setDefaultCurrency] = useState('');
+  const [maxHoursPerDay, setMaxHoursPerDay] = useState('');
   const [domains, setDomains] = useState<DomainItem[]>([]);
   const [newDomain, setNewDomain] = useState('');
   const [newDomainAutoJoin, setNewDomainAutoJoin] = useState(false);
@@ -74,6 +76,7 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
         setOrgName(data.name ?? '');
         setOrgLogoUrl(data.avatar_url ?? '');
         setDefaultCurrency(data.default_currency ?? '');
+        setMaxHoursPerDay(data.max_hours_per_day != null ? String(data.max_hours_per_day) : '');
       }
     } catch { /* offline fallback */ }
   }
@@ -105,14 +108,17 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
+  const maxHoursPerDayValue = Number(maxHoursPerDay);
+  const isMaxHoursPerDayValid = maxHoursPerDay.trim() !== '' && Number.isFinite(maxHoursPerDayValue) && maxHoursPerDayValue > 0 && maxHoursPerDayValue <= 24;
+
   async function handleSaveOrg() {
-    if (!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)) return;
+    if (!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid) return;
     setError(null);
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ name: orgName.trim(), avatarUrl: orgLogoUrl.trim() || null, defaultCurrency: defaultCurrency.toUpperCase() }),
+        body: JSON.stringify({ name: orgName.trim(), avatarUrl: orgLogoUrl.trim() || null, defaultCurrency: defaultCurrency.toUpperCase(), maxHoursPerDay: maxHoursPerDayValue }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -200,7 +206,17 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
               sx={{ maxWidth: 130 }}
               helperText="Pre-fills new expenses' reporting currency"
             />
-            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)}>Save</Button>
+            <TextField
+              label="Max hours per day"
+              type="number"
+              value={maxHoursPerDay}
+              onChange={(e) => setMaxHoursPerDay(e.target.value)}
+              size="small"
+              slotProps={{ htmlInput: { min: 0, max: 24, step: 0.5 } }}
+              sx={{ maxWidth: 160 }}
+              helperText="Vacation hours booked for a full day off (half for a half day)"
+            />
+            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid}>Save</Button>
             {org && <Chip label={`slug: ${org.slug}`} size="small" variant="outlined" />}
           </Box>
         </Box>

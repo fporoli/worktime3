@@ -14,6 +14,12 @@ import { RolesController } from './roles.controller';
 import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { ProjectTimeController } from './project-time.controller';
+import { WorkTimeController } from './work-time.controller';
+import { WorkTimeService } from './work-time.service';
+import { DocumentsService } from './documents.service';
+import { AbsencesController } from './absences.controller';
+import { BalancesController } from './balances.controller';
+import { BalancesService } from './balances.service';
 import { TimesheetsController } from './timesheets.controller';
 import { ExpensesController } from './expenses.controller';
 import { ExpenseReportsController } from './expense-reports.controller';
@@ -37,6 +43,9 @@ import { DbService } from './db.service';
     TeamsController,
     ProjectsController,
     ProjectTimeController,
+    WorkTimeController,
+    AbsencesController,
+    BalancesController,
     TimesheetsController,
     ExpensesController,
     ExpenseReportsController,
@@ -49,6 +58,9 @@ import { DbService } from './db.service';
   providers: [
     DbService,
     ProjectTimeService,
+    WorkTimeService,
+    BalancesService,
+    DocumentsService,
     RbacService,
     AuditService,
     VersionsService,

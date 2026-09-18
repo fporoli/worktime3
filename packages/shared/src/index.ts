@@ -171,6 +171,38 @@ export interface ProjectTime {
   comment?: string;
 }
 
+export interface WorkTimeEntry {
+  id: UUID;
+  userId: UUID;
+  checkIn: string;
+  checkOut?: string | null;
+  comment?: string;
+}
+
+export type AbsenceStatus = 'pending' | 'approved' | 'rejected';
+
+export type AbsenceType = 'vacation' | 'military_service' | 'accident' | 'compensation' | 'school' | 'sickness' | 'other';
+
+/** Default absence_type options — used to seed each org's static_data (entity="absences",
+ * enum_name="absence_type") and as the API's fallback if that row is ever missing. */
+export const DEFAULT_ABSENCE_TYPES: AbsenceType[] = ['vacation', 'military_service', 'accident', 'compensation', 'school', 'sickness', 'other'];
+
+export interface Absence {
+  id: UUID;
+  userId: UUID;
+  dateStart: string;
+  dateEnd: string;
+  status: AbsenceStatus;
+  absenceType: AbsenceType;
+  halfDay: boolean;
+  note?: string;
+}
+
+export interface WorkTimeBalance {
+  overtimeMinutes: number;
+  vacationMinutes: number;
+}
+
 export interface StaticData {
   id: UUID;
   entity: string;

@@ -21,6 +21,7 @@ import {
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 import { getSourceTitle } from './Timesheet';
 import { getExpenseReportTitle } from './ExpenseReports';
+import { getAbsenceTitle } from './Absences';
 import type { ExpenseRow } from './Expenses';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -42,6 +43,32 @@ interface ExpenseReportRow {
   date_submitted: string | null;
 }
 
+interface AbsenceRow {
+  id: string;
+  user_id: string;
+  user_display_name: string;
+  user_email: string;
+  date_start: string;
+  date_end: string;
+  absence_type: string;
+  half_day: boolean;
+  document_id: string | null;
+}
+
+interface AbsenceDocumentRow {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+/** "military_service" -> "Military service" — this screen isn't localized (unlike Absences.tsx), so a plain humanized fallback is enough. */
+function formatAbsenceType(type: string): string {
+  const spaced = type.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /** A workflow row assigned to the caller — generic across every workflow_definitions type. */
 interface ActionItem {
   id: string;
@@ -56,6 +83,7 @@ interface ActionItem {
   source_name: string | null;
   timesheet_period: PeriodRow | null;
   expense_report: ExpenseReportRow | null;
+  absence: AbsenceRow | null;
 }
 
 /** Friendly label for a workflow_definitions name — unrecognized ones just show as-is, so new workflow types need no frontend change to appear. */
@@ -63,6 +91,7 @@ function actionItemLabel(definitionName: string): string {
   if (definitionName === 'approve timesheet') return 'Timesheet approval';
   if (definitionName === 'reopen approved timesheet') return 'Reopen request';
   if (definitionName === 'approve expense report') return 'Expense report approval';
+  if (definitionName === 'approve absence') return 'Vacation request approval';
   return definitionName;
 }
 
@@ -78,6 +107,7 @@ function actionItemDetail(item: ActionItem): string {
 const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
   getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
   getExpenseReportTitle: (item) => (item.expense_report ? getExpenseReportTitle(item.expense_report) : null),
+  getAbsenceTitle: (item) => (item.absence ? getAbsenceTitle(item.absence) : null),
 };
 
 /** "<source> <formatted title>", e.g. "Timesheet Period 01.09.2026-01.10.2026" — or just the source, or '—' if neither is configured. */
@@ -115,6 +145,47 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [inspectingExpenses, setInspectingExpenses] = useState<ExpenseRow[]>([]);
   const [inspectingReportLoading, setInspectingReportLoading] = useState(false);
   const [inspectingReportError, setInspectingReportError] = useState<string | null>(null);
+
+  const [inspectingAbsence, setInspectingAbsence] = useState<AbsenceRow | null>(null);
+  const [absenceDocument, setAbsenceDocument] = useState<AbsenceDocumentRow | null>(null);
+
+  async function viewAbsenceDocument(absence: AbsenceRow) {
+    setInspectingAbsence(absence);
+    setAbsenceDocument(null);
+    try {
+      const res = await fetch(`${API}/organizations/${orgId}/absences/${absence.id}/document`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (data) setAbsenceDocument(data);
+    } catch { /* offline fallback */ }
+  }
+
+  async function downloadExpenseDocument(expenseId: string) {
+    try {
+      const res = await fetch(`${API}/expenses/${expenseId}/document`, { headers: await authHeaders() });
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'payslip';
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* offline fallback */ }
+  }
+
+  async function downloadAbsenceDocument(absenceId: string, doc: AbsenceDocumentRow) {
+    try {
+      const res = await fetch(`${API}/absences/${absenceId}/document`, { headers: await authHeaders() });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.file_name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* offline fallback */ }
+  }
 
   async function inspect(period: PeriodRow, actionItemId: string | null) {
     setInspectingPeriod(period);
@@ -235,6 +306,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       item.timesheet_period?.user_email,
       item.expense_report?.user_display_name,
       item.expense_report?.user_email,
+      item.absence?.user_display_name,
+      item.absence?.user_email,
       actionItemLabel(item.definition_name),
       correspondingObject(item),
       actionItemDetail(item),
@@ -282,11 +355,19 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
             <Fragment key={item.id}>
               <TableRow hover>
                 <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? '—'}</Typography>
-                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? ''}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
+                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
                 </TableCell>
                 <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
-                <TableCell>{correspondingObject(item)}</TableCell>
+                <TableCell>
+                  {correspondingObject(item)}
+                  {item.absence && (
+                    <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+                      <Chip label={formatAbsenceType(item.absence.absence_type)} size="small" variant="outlined" />
+                      {item.absence.half_day && <Chip label="Half day" size="small" />}
+                    </Box>
+                  )}
+                </TableCell>
                 <TableCell>{actionItemDetail(item)}</TableCell>
                 <TableCell align="right">
                   {item.timesheet_period && (
@@ -294,6 +375,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   )}
                   {item.expense_report && (
                     <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>Inspect</Button>
+                  )}
+                  {item.absence?.document_id && (
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => viewAbsenceDocument(item.absence!)}>Documents</Button>
                   )}
                   <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>Approve</Button>
                   <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>Reject</Button>
@@ -449,6 +533,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <TableCell>Project</TableCell>
                   <TableCell>Subproject</TableCell>
                   <TableCell>Comment</TableCell>
+                  <TableCell />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -460,6 +545,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                     <TableCell>{e.project_name ?? '—'}</TableCell>
                     <TableCell>{e.subproject_name ?? '—'}</TableCell>
                     <TableCell>{e.comment ?? '—'}</TableCell>
+                    <TableCell align="right">
+                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>Payslip</Button>}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -492,6 +580,25 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
               </Button>
             </>
           )}
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!inspectingAbsence} onClose={() => setInspectingAbsence(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {inspectingAbsence ? `Evidence: ${inspectingAbsence.user_display_name}` : 'Evidence'}
+        </DialogTitle>
+        <DialogContent dividers>
+          {absenceDocument ? (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+              <Typography variant="body2">{absenceDocument.file_name}</Typography>
+              <Button size="small" onClick={() => downloadAbsenceDocument(inspectingAbsence!.id, absenceDocument)}>Download</Button>
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No document attached.</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInspectingAbsence(null)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Paper>

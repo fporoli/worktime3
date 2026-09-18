@@ -13,6 +13,8 @@ export const REOPEN_TIMESHEET_WORKFLOW_NAME = 'reopen approved timesheet';
 export const APPROVE_TIMESHEET_WORKFLOW_NAME = 'approve timesheet';
 /** A submitted expense report awaiting its owner's manager to approve or reject it. */
 export const APPROVE_EXPENSE_REPORT_WORKFLOW_NAME = 'approve expense report';
+/** A vacation request awaiting its owner's manager to approve or reject it. */
+export const APPROVE_ABSENCE_WORKFLOW_NAME = 'approve absence';
 
 interface WorkflowStepDefinition {
   key: string;

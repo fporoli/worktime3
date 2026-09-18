@@ -67,6 +67,7 @@ export interface ExpenseRow {
   subproject_name: string | null;
   expense_report_id: string | null;
   expense_report_status: string | null;
+  document_id: string | null;
 }
 
 /** The form fields shared by "add new" and "edit existing" — kept as strings, matching what the TextFields hold. */
@@ -319,6 +320,39 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     }
   }
 
+  async function uploadPayslip(id: string, file: File) {
+    setError(null);
+    setSuccess(null);
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`${API}/expenses/${id}/document`, { method: 'POST', headers: await authHeaders(), body: form });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(t('expenses.uploadFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
+      await reload();
+    } catch {
+      setError(t('expenses.uploadFailed', { error: 'offline' }));
+    }
+  }
+
+  async function downloadPayslip(id: string) {
+    try {
+      const res = await fetch(`${API}/expenses/${id}/document`, { headers: await authHeaders() });
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'payslip';
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* offline fallback */ }
+  }
+
   function startEdit(row: ExpenseRow) {
     setEditingId(row.id);
     setForm(formFromRow(row));
@@ -480,6 +514,14 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
                 )}
               </TableCell>
               <TableCell align="right">
+                {row.document_id ? (
+                  <Button size="small" onClick={() => downloadPayslip(row.id)}>{t('expenses.payslip')}</Button>
+                ) : (
+                  <Button size="small" component="label">
+                    {t('expenses.attachPayslip')}
+                    <input type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPayslip(row.id, f); }} />
+                  </Button>
+                )}
                 <Button size="small" onClick={() => startEdit(row)}>{t('time.edit')}</Button>
                 <Button size="small" color="error" onClick={() => remove(row.id)}>{t('time.remove')}</Button>
               </TableCell>

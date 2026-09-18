@@ -1,16 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { bucket, minutesOf, type TimeRange } from './time-bucket.util';
 
-export type ProjectTimeInput = TimeRange;
+export type WorkTimeInput = TimeRange;
 
 /** Pure aggregation helpers: daily / weekly / monthly buckets for the UI. */
 @Injectable()
-export class ProjectTimeService {
-  minutesOf(entries: ProjectTimeInput[]): number {
+export class WorkTimeService {
+  minutesOf(entries: WorkTimeInput[]): number {
     return minutesOf(entries);
   }
 
-  bucket(entries: ProjectTimeInput[], mode: 'daily' | 'weekly' | 'monthly'): Record<string, number> {
+  bucket(entries: WorkTimeInput[], mode: 'daily' | 'weekly' | 'monthly'): Record<string, number> {
     return bucket(entries, mode);
   }
 }

@@ -2,7 +2,7 @@
 
 Postgres · Liquibase · Drizzle ORM
 
-25 tables across ten subsystems, all scoped to a tenant through `organization_id` —
+30 tables across twelve subsystems, all scoped to a tenant through `organization_id` —
 which is `NOT NULL` on `project_times`, since every entry belongs to an organization
 whether or not it's tagged to a project. Each section below is a self-contained
 entity-relationship diagram for one subsystem; tables that also appear elsewhere
@@ -240,6 +240,135 @@ erDiagram
 > `uq_timesheet_period`. Work-time writes are rejected once the covering
 > period is `submitted` or `approved`.
 
+## Attendance & Balances (4 tables)
+
+`work_times` is the attendance clock (check-in/check-out stamps) — distinct
+from `project_times`, which tags hours against a project/activity rather
+than recording whether someone was at work at all. Approving a timesheet
+period compares `work_times` sessions in that period against the person's
+contracted hours and posts one row to `work_time_balance_entries`, an
+append-only ledger; `work_time_balances` is the fast-read running total
+maintained alongside it. `absences` (vacation requests, but also sickness,
+military service, etc. — see `absence_type`) feed the same ledger, but only
+when `absence_type = 'vacation'`: the debit is `workingDays × dayHours`
+(halved when `half_day`), where `dayHours` is the org's
+`settings.maxHoursPerDay` (`organizations.settings`, see Identity &
+Organizations above) — a flat org-wide figure, not the requester's own
+contracted hours.
+Other absence types are tracked (and optionally evidenced — see the
+Documents section) but don't move the balance.
+
+```mermaid
+erDiagram
+    ORGANIZATIONS ||--o{ WORK_TIMES : "scopes"
+    USERS ||--o{ WORK_TIMES : "logs"
+    ORGANIZATIONS ||--o{ ABSENCES : "scopes"
+    USERS ||--o{ ABSENCES : "requests"
+    USERS ||--o{ ABSENCES : "reviewed_by_user_id"
+    ORGANIZATIONS ||--o{ WORK_TIME_BALANCES : "scopes"
+    USERS ||--o| WORK_TIME_BALANCES : "has"
+    ORGANIZATIONS ||--o{ WORK_TIME_BALANCE_ENTRIES : "scopes"
+    USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "affects"
+    USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "created_by_user_id"
+
+    WORK_TIMES {
+        uuid id PK
+        uuid user_id FK
+        uuid organization_id FK
+        timestamptz check_in
+        timestamptz check_out "nullable — null means still checked in"
+        text comment "nullable"
+    }
+    ABSENCES {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        date date_start
+        date date_end "check: date_end >= date_start"
+        varchar absence_type "default 'vacation' — static_data-backed (entity=absences, enum_name=absence_type)"
+        boolean half_day "default false — check: only true when date_start = date_end"
+        uuid document_id FK "nullable -> documents; evidence for this request"
+        enum status "pending / approved / rejected"
+        uuid reviewed_by_user_id FK "nullable"
+        text review_note "nullable"
+        text note "nullable — requester's own note"
+    }
+    WORK_TIME_BALANCES {
+        uuid organization_id PK "FK -> organizations"
+        uuid user_id PK "FK -> users"
+        numeric overtime_minutes "signed running total"
+        numeric vacation_minutes "signed running total"
+    }
+    WORK_TIME_BALANCE_ENTRIES {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        enum balance_type "overtime / vacation"
+        text source_table "polymorphic — no FK, like versions.source_table; null = manual adjustment"
+        uuid source_table_uuid "polymorphic — no FK"
+        numeric target_minutes "nullable — only meaningful for overtime entries"
+        numeric actual_minutes "nullable — only meaningful for overtime entries"
+        numeric delta_minutes "signed change this entry applies"
+        text note "nullable"
+        uuid created_by_user_id FK "nullable"
+    }
+    ORGANIZATIONS { uuid id PK }
+    USERS { uuid id PK }
+```
+
+> One open session per person at a time, globally — enforced by
+> `uq_work_times_one_open_session`, a unique index on `user_id` where
+> `check_out IS NULL`. `work_time_balances` is a cache: every write to it
+> happens transactionally alongside the ledger row in
+> `work_time_balance_entries` that justifies it (a timesheet approval, an
+> approved vacation, or an admin's manual adjustment) — reopening an
+> approved timesheet period posts an offsetting entry rather than mutating
+> history. Contracted hours (`weeklyTargetMinutes`, defaulting to a 40h
+> week) live in `organization_memberships.settings`, the same free-form
+> bucket documented in Access Control / RBAC above.
+
+## Documents (1 table)
+
+Generic uploaded-file metadata (a doctor's note for an absence, a pay slip
+for an expense) — one table reused by any record that needs at most one
+evidence attachment, rather than a bespoke table per attachment kind. The
+owning record (`absences`, `expenses`) holds the relationship, via its own
+nullable `document_id` FK into this table; access control is always
+checked through that owning row (its own owner/manager/admin rules), never
+through `documents` directly. The file itself lives on local disk under
+the API server (path controlled by `DOCUMENTS_DIR`), keyed by
+`storage_path`.
+
+```mermaid
+erDiagram
+    ORGANIZATIONS ||--o{ DOCUMENTS : "scopes"
+    USERS ||--o{ DOCUMENTS : "uploaded_by_user_id"
+
+    DOCUMENTS {
+        uuid id PK
+        uuid organization_id FK
+        text file_name
+        text mime_type
+        integer size_bytes
+        text storage_path "relative path under DOCUMENTS_DIR"
+        text source_table "polymorphic — no FK, like versions.source_table; diagnostics/cleanup only"
+        uuid source_table_id "polymorphic — no FK; diagnostics/cleanup only"
+        uuid uploaded_by_user_id FK "nullable"
+        timestamptz created_at
+    }
+    ORGANIZATIONS { uuid id PK }
+    USERS { uuid id PK }
+```
+
+> `source_table`/`source_table_id` are a reverse pointer to whatever row
+> this was uploaded for (e.g. `('absences', <absence id>)`) — useful for
+> "every document ever attached to record X" queries, but not what access
+> control or the UI's "does this record have a document" check goes
+> through; that's always the owning row's own `document_id` FK (a record
+> can only ever have the *one* document that FK currently points to).
+> Uploading a replacement deletes the previous `documents` row and file
+> rather than keeping history.
+
 ## Expenses (3 tables)
 
 Employees log ad hoc expense line items and bundle a self-chosen subset into
@@ -276,6 +405,7 @@ erDiagram
         numeric quantity "nullable, must be >= 0"
         text comment "nullable"
         numeric value "default 0 — org-currency amount, hand-entered"
+        uuid document_id FK "nullable -> documents; e.g. a pay slip"
     }
     EXPENSE_REPORTS {
         uuid id PK
@@ -454,9 +584,11 @@ erDiagram
 > One row per `(organization_id, entity, enum_name)` — `uq_static_data_org_entity_enum`.
 > Managing it (create/edit/delete) requires being that organization's admin;
 > any member can read it. Nothing references `static_data.id` by foreign key —
-> it's a pure lookup table, not yet wired into any dropdown elsewhere in the app.
+> consumers (e.g. `absences.absence_type`, entity `"absences"`/enum_name
+> `"absence_type"`) match against its `values` keys at the application layer
+> instead, falling back to a built-in default set if an org has no override row.
 
-## Enumerated Types (8 enums)
+## Enumerated Types (10 enums)
 
 | Enum | Values |
 |---|---|
@@ -468,6 +600,8 @@ erDiagram
 | `project_type` | `internal`, `customer`, `research` |
 | `subproject_type` | `phase`, `work_package`, `task` |
 | `timesheet_status` | `open`, `submitted`, `approved`, `rejected` |
+| `absence_status` | `pending`, `approved`, `rejected` |
+| `balance_entry_type` | `overtime`, `vacation` |
 
 `expense_reports.status` and `workflows.step`/`step_status` are plain `text`
 columns, not DB enums — the former is CHECK-constrained (see Expenses above),
@@ -481,5 +615,5 @@ the latter is free-form.
 ---
 
 Generated from `apps/api/src/db/schema.ts` (Drizzle ORM, introspected from the
-Liquibase-managed schema) on 2026-09-17. A styled, interactive version of this
+Liquibase-managed schema) on 2026-09-18. A styled, interactive version of this
 reference is also published as a Claude artifact.

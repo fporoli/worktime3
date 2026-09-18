@@ -1,16 +1,22 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
+import { createReadStream } from 'node:fs';
+import { join } from 'node:path';
+import type { Response } from 'express';
 import { DbService, type Db } from './db.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember } from './access';
+import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isOwnerAdminOrManagerOf } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { expenses, expense_report_items, expense_reports, projects, subprojects } from './db/schema';
+import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
 
 @Controller()
 export class ExpensesController {
   constructor(
     private readonly db: DbService,
     private readonly versions: VersionsService,
+    private readonly documents: DocumentsService,
   ) {}
 
   @Post('organizations/:orgId/expenses')
@@ -168,6 +174,81 @@ export class ExpensesController {
     if (mapped) return { ok: false, error: 'expense-mapped' };
     await db.delete(expenses).where(eq(expenses.id, id));
     void this.versions.record('expenses', id, 'delete', owned.userId, owned.entry).catch(() => {});
+    return { ok: true };
+  }
+
+  /** Evidence upload for an expense (e.g. a pay slip) — the expense's own owner. Replaces any existing one. */
+  @Post('expenses/:id/document')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_BYTES } }))
+  async uploadDocument(@Param('id') id: string, @UploadedFile() file: Express.Multer.File, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const owned = await this.assertEditableExpense(db, id, req);
+    if ('error' in owned) return owned;
+    if (!file) return { ok: false, error: 'file-required' };
+
+    const organizationId = owned.entry.organization_id as string;
+    const previousDocId = owned.entry.document_id as string | null;
+    const newDocId = await this.documents.upload(db, organizationId, owned.userId, file, { table: 'expenses', id });
+    await db.update(expenses).set({ document_id: newDocId }).where(eq(expenses.id, id));
+    if (previousDocId) await this.documents.remove(db, previousDocId);
+    void this.versions.record('expenses', id, 'update_delta', owned.userId, { document_id: newDocId }).catch(() => {});
+    return { ok: true, id: newDocId };
+  }
+
+  @Get('expenses/:id/document/meta')
+  async getDocumentMeta(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return null;
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return null;
+    const [row] = await db.select({ user_id: expenses.user_id, organization_id: expenses.organization_id, document_id: expenses.document_id }).from(expenses).where(eq(expenses.id, id));
+    if (!row?.document_id) return null;
+    if (!(await isOwnerAdminOrManagerOf(db, row.organization_id, callerId, row.user_id))) return null;
+
+    const doc = await this.documents.get(db, row.document_id);
+    if (!doc) return null;
+    return { id: doc.id, file_name: doc.file_name, mime_type: doc.mime_type, size_bytes: doc.size_bytes, created_at: doc.created_at };
+  }
+
+  @Get('expenses/:id/document')
+  async downloadDocument(@Param('id') id: string, @Req() req: AuthenticatedRequest, @Res() res: Response): Promise<void> {
+    const db = this.db.getDb();
+    const callerId = db && req.user ? await callerUserId(db, req.user) : null;
+    if (!db || !callerId) {
+      res.status(401).json({ ok: false, error: 'unauthenticated' });
+      return;
+    }
+    const [row] = await db.select({ user_id: expenses.user_id, organization_id: expenses.organization_id, document_id: expenses.document_id }).from(expenses).where(eq(expenses.id, id));
+    if (!row?.document_id) {
+      res.status(404).json({ ok: false, error: 'not-found' });
+      return;
+    }
+    if (!(await isOwnerAdminOrManagerOf(db, row.organization_id, callerId, row.user_id))) {
+      res.status(403).json({ ok: false, error: 'forbidden' });
+      return;
+    }
+    const doc = await this.documents.get(db, row.document_id);
+    if (!doc) {
+      res.status(404).json({ ok: false, error: 'not-found' });
+      return;
+    }
+    res.set({ 'Content-Type': doc.mime_type, 'Content-Disposition': `attachment; filename="${doc.file_name.replace(/"/g, '')}"` });
+    createReadStream(join(DOCUMENTS_ROOT, doc.storage_path)).pipe(res);
+  }
+
+  @Delete('expenses/:id/document')
+  async deleteDocument(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const owned = await this.assertEditableExpense(db, id, req);
+    if ('error' in owned) return owned;
+    const documentId = owned.entry.document_id as string | null;
+    if (!documentId) return { ok: false, error: 'not-found' };
+
+    await db.update(expenses).set({ document_id: null }).where(eq(expenses.id, id));
+    await this.documents.remove(db, documentId);
+    void this.versions.record('expenses', id, 'update_delta', owned.userId, { document_id: null }).catch(() => {});
     return { ok: true };
   }
 

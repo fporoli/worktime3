@@ -45,6 +45,9 @@ const ORG_COLUMNS = {
 /** Default reporting currency when an org hasn't set one in `settings.defaultCurrency` yet. */
 const FALLBACK_DEFAULT_CURRENCY = 'CHF';
 
+/** Default full-day vacation hours when an org hasn't set `settings.maxHoursPerDay` yet. */
+const DEFAULT_MAX_HOURS_PER_DAY = 8;
+
 @Controller('organizations')
 export class OrgsController {
   constructor(
@@ -62,14 +65,20 @@ export class OrgsController {
     const [org] = await db.select(ORG_COLUMNS).from(organizations).where(eq(organizations.id, id));
     if (!org) return null;
     const { settings, ...rest } = org;
-    const defaultCurrency = (settings as Record<string, unknown> | null)?.defaultCurrency;
-    return { ...rest, default_currency: typeof defaultCurrency === 'string' ? defaultCurrency : FALLBACK_DEFAULT_CURRENCY };
+    const settingsObj = settings as Record<string, unknown> | null;
+    const defaultCurrency = settingsObj?.defaultCurrency;
+    const maxHoursPerDay = settingsObj?.maxHoursPerDay;
+    return {
+      ...rest,
+      default_currency: typeof defaultCurrency === 'string' ? defaultCurrency : FALLBACK_DEFAULT_CURRENCY,
+      max_hours_per_day: typeof maxHoursPerDay === 'number' ? maxHoursPerDay : DEFAULT_MAX_HOURS_PER_DAY,
+    };
   }
 
   @Patch(':id')
   async update(
     @Param('id') id: string,
-    @Body() body: { name?: string; avatarUrl?: string | null; defaultCurrency?: string },
+    @Body() body: { name?: string; avatarUrl?: string | null; defaultCurrency?: string; maxHoursPerDay?: number },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -81,19 +90,25 @@ export class OrgsController {
     if (body.defaultCurrency !== undefined && !/^[A-Za-z]{3}$/.test(body.defaultCurrency)) {
       return { ok: false, error: 'invalid-default-currency' };
     }
+    if (body.maxHoursPerDay !== undefined && !(typeof body.maxHoursPerDay === 'number' && body.maxHoursPerDay > 0 && body.maxHoursPerDay <= 24)) {
+      return { ok: false, error: 'invalid-max-hours-per-day' };
+    }
 
     const patch: Partial<typeof organizations.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
     if (body.avatarUrl !== undefined) patch.avatar_url = body.avatarUrl;
     // Merged into the existing settings JSON rather than a dedicated column — same bucket
     // every other org-level, rarely-queried setting already lives in (see 006-fold-org-settings-and-sso.sql).
-    if (body.defaultCurrency !== undefined) {
-      patch.settings = sql`${organizations.settings} || jsonb_build_object('defaultCurrency', ${body.defaultCurrency.toUpperCase()}::text)`;
+    const settingsPatch: Record<string, unknown> = {};
+    if (body.defaultCurrency !== undefined) settingsPatch.defaultCurrency = body.defaultCurrency.toUpperCase();
+    if (body.maxHoursPerDay !== undefined) settingsPatch.maxHoursPerDay = body.maxHoursPerDay;
+    if (Object.keys(settingsPatch).length > 0) {
+      patch.settings = sql`${organizations.settings} || ${JSON.stringify(settingsPatch)}::jsonb`;
     }
     if (Object.keys(patch).length > 0) {
       await db.update(organizations).set(patch).where(eq(organizations.id, id));
-      void this.audit.record(id, callerId, 'organization.update', 'organization', id, { ...patch, settings: body.defaultCurrency }).catch(() => {});
-      void this.versions.record('organizations', id, 'update_delta', callerId, { ...patch, settings: body.defaultCurrency }).catch(() => {});
+      void this.audit.record(id, callerId, 'organization.update', 'organization', id, { ...patch, settings: settingsPatch }).catch(() => {});
+      void this.versions.record('organizations', id, 'update_delta', callerId, { ...patch, settings: settingsPatch }).catch(() => {});
     }
     return { ok: true };
   }

@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { workflows, workflow_definitions, timesheet_periods, expense_reports, users } from './db/schema';
+import { workflows, workflow_definitions, timesheet_periods, expense_reports, absences, users } from './db/schema';
 import { WorkflowsService } from './workflows.service';
 
 /**
@@ -63,6 +63,7 @@ export class WorkflowsController {
     // record is — generic-shaped rows otherwise, but this covers every workflow type today.
     const periodIds = rows.filter((r) => r.source_table === 'timesheet_periods').map((r) => r.source_table_uuid);
     const reportIds = rows.filter((r) => r.source_table === 'expense_reports').map((r) => r.source_table_uuid);
+    const absenceIds = rows.filter((r) => r.source_table === 'absences').map((r) => r.source_table_uuid);
 
     const periodRows = periodIds.length
       ? await db
@@ -91,12 +92,31 @@ export class WorkflowsController {
           .innerJoin(users, eq(users.id, expense_reports.user_id))
           .where(inArray(expense_reports.id, reportIds))
       : [];
+    const absenceRows = absenceIds.length
+      ? await db
+          .select({
+            id: absences.id,
+            date_start: absences.date_start,
+            date_end: absences.date_end,
+            absence_type: absences.absence_type,
+            half_day: absences.half_day,
+            document_id: absences.document_id,
+            user_id: absences.user_id,
+            user_display_name: users.display_name,
+            user_email: users.email,
+          })
+          .from(absences)
+          .innerJoin(users, eq(users.id, absences.user_id))
+          .where(inArray(absences.id, absenceIds))
+      : [];
     const periodById = new Map(periodRows.map((p) => [p.id, p]));
     const reportById = new Map(reportRows.map((r) => [r.id, r]));
+    const absenceById = new Map(absenceRows.map((a) => [a.id, a]));
     return rows.map((r) => ({
       ...r,
       timesheet_period: r.source_table === 'timesheet_periods' ? (periodById.get(r.source_table_uuid) ?? null) : null,
       expense_report: r.source_table === 'expense_reports' ? (reportById.get(r.source_table_uuid) ?? null) : null,
+      absence: r.source_table === 'absences' ? (absenceById.get(r.source_table_uuid) ?? null) : null,
     }));
   }
 

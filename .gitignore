@@ -146,5 +146,8 @@ vite.config.ts.timestamp-*
 # Local Postgres database files
 data-local/
 data-dev/
+
+# Locally-stored absence evidence documents (see apps/api/src/absences.controller.ts)
+apps/api/data/
 .DS_Store
 .vscode/settings.json
