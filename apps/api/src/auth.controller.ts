@@ -9,6 +9,7 @@ import { users, user_identities, organizations, organization_memberships, organi
 import { pickPrimaryRole } from './access';
 import { VersionsService } from './versions.service';
 import { ABSENCE_TYPE_STATIC_DATA } from './absence-types';
+import { LOCALE_STATIC_DATA, NATION_STATIC_DATA, COUNTRY_STATIC_DATA } from './basicdata-static-data';
 
 /**
  * Auth: Keycloak is the IdP (same Postgres DB, `auth` schema).
@@ -161,6 +162,12 @@ export class AuthController {
       await tx.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
       // Seed the absence-type static data so the Vacation screen has options right away.
       await tx.insert(static_data).values({ organization_id: org.id, ...ABSENCE_TYPE_STATIC_DATA });
+      // Seed the Home/"Meine Daten" dropdown options (language, nationality, address country).
+      await tx.insert(static_data).values([
+        { organization_id: org.id, ...LOCALE_STATIC_DATA },
+        { organization_id: org.id, ...NATION_STATIC_DATA },
+        { organization_id: org.id, ...COUNTRY_STATIC_DATA },
+      ]);
       return { u, orgId: org.id, membershipId: membership.id, slug: workspaceSlug };
     });
 

@@ -1,0 +1,35 @@
+set ENV_NUMBER=1
+set POSTGRES_DB=worktime
+set POSTGRES_USER=worktime
+set POSTGRES_PASSWORD=worktime_dev_only
+set DATABASE_URL=postgresql://worktime:worktime_dev_only@localhost:5431/worktime
+set KC_DB_SCHEMA=auth
+set KEYCLOAK_ADMIN=admin
+set KEYCLOAK_ADMIN_PASSWORD=admin_dev_only
+set KEYCLOAK_REALM=worktime
+set AZURE_TENANT_ID=
+set AZURE_CLIENT_ID=
+set AZURE_CLIENT_SECRET=
+set API_PORT=8001
+set WEB_PORT=3001
+set KC_PORT=8091
+set PG_PORT=5431
+rem psql itself only reads the PG* names below (not PG_PORT/POSTGRES_*), so
+rem set them too or a bare `psql` falls back to localhost:5432.
+set PGHOST=localhost
+set PGPORT=%PG_PORT%
+set PGUSER=%POSTGRES_USER%
+set PGPASSWORD=%POSTGRES_PASSWORD%
+set PGDATABASE=%POSTGRES_DB%
+set JWT_ISSUER=http://localhost:8091/realms/worktime
+set JWT_AUDIENCE=worktime-web
+set API_JWT_SECRET=dev-only-secret-change-me
+set SMTP_HOST=localhost
+set SMTP_PORT=1025
+set SMTP_FROM=worktime@localhost
+set SMTP_USER=
+set SMTP_PASSWORD=
+set SMTP_SECURE=false
+set APP_BASE_URL=http://localhost:3001
+set GEMINI_API_KEY=
+set GEMINI_MODEL=gemini-3.6-flash

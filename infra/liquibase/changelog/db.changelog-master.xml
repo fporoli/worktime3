@@ -42,6 +42,8 @@
     <include file="024-rename-work-times-to-project-times.sql" relativeToChangelogFile="true"/>
     <include file="025-work-time-balances-absences.sql" relativeToChangelogFile="true"/>
     <include file="026-absence-type-half-day-documents.sql" relativeToChangelogFile="true"/>
+    <include file="027-basicdata.sql" relativeToChangelogFile="true"/>
+    <include file="028-basicdata-static-data.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

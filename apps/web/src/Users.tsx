@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Chip, LinearProgress, MenuItem, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, LinearProgress, MenuItem, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { BasicDataPanel } from './Home';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -41,6 +42,7 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
   const [addRoleFor, setAddRoleFor] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [basicDataFor, setBasicDataFor] = useState<Member | null>(null);
 
   async function reloadMembers() {
     setLoading(true);
@@ -151,6 +153,7 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
             <TableCell>Manager</TableCell>
             <TableCell>Roles</TableCell>
             <TableCell>Add role</TableCell>
+            <TableCell />
           </TableRow>
         </TableHead>
         <TableBody>
@@ -209,14 +212,29 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
                     <Button size="small" onClick={() => grantRole(m.id)} disabled={!addRoleFor[m.id]}>Add</Button>
                   </Box>
                 </TableCell>
+                <TableCell align="right">
+                  <Button size="small" onClick={() => setBasicDataFor(m)}>Basic data</Button>
+                </TableCell>
               </TableRow>
             );
           })}
           {members.length === 0 && !loading && (
-            <TableRow><TableCell colSpan={6}>No members yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={7}>No members yet.</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
+
+      <Dialog open={!!basicDataFor} onClose={() => setBasicDataFor(null)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {basicDataFor?.display_name}
+          <IconButton size="small" aria-label="Close" onClick={() => setBasicDataFor(null)}>✕</IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ pb: 3 }}>
+          {basicDataFor && (
+            <BasicDataPanel orgId={orgId} userId={basicDataFor.user_id} isSelf={false} authHeaders={authHeaders} />
+          )}
+        </DialogContent>
+      </Dialog>
     </Paper>
   );
 }

@@ -73,6 +73,12 @@ export async function isOrgBillingAdmin(db: Executor, organizationId: string, us
   return names.includes('owner') || names.includes('admin') || names.includes('billing_admin');
 }
 
+/** True when the user is an active owner, admin, or hr of the organization — the roles allowed to correct someone's basic/personal data. */
+export async function isOrgHrOrAdmin(db: Executor, organizationId: string, userId: string): Promise<boolean> {
+  const names = await activeRoleNames(db, organizationId, userId);
+  return names.includes('owner') || names.includes('admin') || names.includes('hr');
+}
+
 /**
  * The caller's single highest-privilege role name in the organization — a
  * membership can hold several roles at once, so this collapses them to the

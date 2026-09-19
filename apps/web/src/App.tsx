@@ -43,6 +43,7 @@ import UserMenu from './UserMenu';
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 
+const Home = lazy(() => import('./Home'));
 const Management = lazy(() => import('./Management'));
 const Invitations = lazy(() => import('./Invitations'));
 const AdminSettings = lazy(() => import('./AdminSettings'));
@@ -62,7 +63,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
+type Section = 'home' | 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -173,7 +174,7 @@ export default function App() {
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(
     () => session?.memberships[0]?.organizationId ?? null,
   );
-  const [section, setSection] = useState<Section>('time');
+  const [section, setSection] = useState<Section>('home');
   const [periodType, setPeriodType] = useState<PeriodType>('week');
   const [periodAnchor, setPeriodAnchor] = useState(() => todayDate());
   const [entries, setEntries] = useState<Entry[]>([
@@ -214,6 +215,7 @@ export default function App() {
     {
       header: t('nav.myWork'),
       items: [
+        { id: 'home', section: 'home', label: t('nav.home'), visible: true },
         { id: 'time', section: 'time', label: t('nav.timeTracking'), visible: true },
         { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), visible: true },
         { id: 'workTime', section: 'workTime', label: t('nav.workTime'), visible: true },
@@ -282,14 +284,14 @@ export default function App() {
       const nextCanManage = nextRole === 'manager' || nextRole === 'admin';
       const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles.includes('billing_admin') ?? false;
       const stillVisible =
-        section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports'
+        section === 'home' || section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports'
           ? true
           : section === 'expenseProcessing'
             ? nextRole === 'admin' || nextIsBillingAdmin
             : section === 'admin' || section === 'audit' || section === 'orgSettings'
               ? nextRole === 'admin'
               : nextCanManage; // covers management, managementProjects, hours, invitations, approvals, users
-      if (!stillVisible) setSection('time');
+      if (!stillVisible) setSection('home');
     }
     if (isMobile) setMobileNavOpen(false);
   }
@@ -299,7 +301,7 @@ export default function App() {
     setSession(nextSession);
     saveSession(nextSession);
     setCurrentOrgId(organizationId);
-    setSection('time');
+    setSection('home');
   }
 
   function returnToAdmin() {
@@ -308,7 +310,7 @@ export default function App() {
     saveSession(adminSession);
     setCurrentOrgId(adminSession.memberships[0]?.organizationId ?? null);
     setAdminSession(null);
-    setSection('time');
+    setSection('home');
   }
 
   /** Reveal the assistant flyout; cancels any pending auto-close from a previous hover-out. */
@@ -439,7 +441,7 @@ export default function App() {
           saveSession(s);
           const firstOrg = s.memberships[0]?.organizationId ?? null;
           setCurrentOrgId(firstOrg);
-          setSection('time');
+          setSection('home');
         }}
       />
     );
@@ -917,6 +919,9 @@ export default function App() {
           )}
 
           <Suspense fallback={<LinearProgress sx={{ my: 2 }} />}>
+            {section === 'home' && orgId && (
+              <Home orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
             {section === 'timesheet' && orgId && (
               <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
             )}
