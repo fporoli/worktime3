@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { organizations, users, user_identities, basicdata_versions, organization_domains, roles, organization_memberships, teams, organization_invitations, audit_logs, projects, subprojects, timesheet_periods, project_times, static_data, versions, workflow_definitions, expense_reports, expense_report_items, expenses, work_times, workflows, notifications, documents, work_time_balance_entries, absences, role_permissions, permissions, team_members, membership_roles, work_time_balances } from "./schema";
+import { organizations, users, user_identities, basicdata_versions, organization_domains, organization_memberships, roles, teams, organization_invitations, audit_logs, projects, subprojects, timesheet_periods, project_times, static_data, versions, workflow_definitions, expense_reports, expense_report_items, expenses, work_times, workflows, notifications, documents, work_time_balance_entries, absences, role_permissions, permissions, team_members, membership_roles, work_time_balances } from "./schema";
 
 export const organizationsRelations = relations(organizations, ({one, many}) => ({
 	organization: one(organizations, {
@@ -15,8 +15,8 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 		references: [users.id]
 	}),
 	organization_domains: many(organization_domains),
-	roles: many(roles),
 	organization_memberships: many(organization_memberships),
+	roles: many(roles),
 	teams: many(teams),
 	organization_invitations: many(organization_invitations),
 	audit_logs: many(audit_logs),
@@ -123,17 +123,6 @@ export const organization_domainsRelations = relations(organization_domains, ({o
 	}),
 }));
 
-export const rolesRelations = relations(roles, ({one, many}) => ({
-	organization: one(organizations, {
-		fields: [roles.organization_id],
-		references: [organizations.id]
-	}),
-	organization_invitations: many(organization_invitations),
-	role_permissions: many(role_permissions),
-	team_members: many(team_members),
-	membership_roles: many(membership_roles),
-}));
-
 export const organization_membershipsRelations = relations(organization_memberships, ({one, many}) => ({
 	organization: one(organizations, {
 		fields: [organization_memberships.organization_id],
@@ -149,6 +138,17 @@ export const organization_membershipsRelations = relations(organization_membersh
 		references: [users.id],
 		relationName: "organization_memberships_manager_user_id_users_id"
 	}),
+	team_members: many(team_members),
+	membership_roles: many(membership_roles),
+}));
+
+export const rolesRelations = relations(roles, ({one, many}) => ({
+	organization: one(organizations, {
+		fields: [roles.organization_id],
+		references: [organizations.id]
+	}),
+	organization_invitations: many(organization_invitations),
+	role_permissions: many(role_permissions),
 	team_members: many(team_members),
 	membership_roles: many(membership_roles),
 }));

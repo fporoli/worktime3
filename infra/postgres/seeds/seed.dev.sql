@@ -4,26 +4,37 @@
 INSERT INTO users (id, email, display_name, first_name, last_name, locale, timezone, status)
 VALUES
   ('11111111-1111-1111-1111-111111111111', 'admin@acme.example', 'Acme Admin', 'Ada', 'Admin', 'en', 'Europe/Zurich', 'active'),
-  ('22222222-2222-2222-2222-222222222222', 'manager@acme.example', 'Marta Manager', 'Marta', 'Manager', 'en', 'Europe/Zurich', 'active'),
-  ('33333333-3333-3333-3333-333333333333', 'user@acme.example', 'Uli User', 'Uli', 'User', 'en', 'Europe/Zurich', 'active')
+  ('22222222-2222-2222-2222-222222222222', 'marta@acme.example', 'Marta Manager', 'Marta', 'Man', 'en', 'Europe/Zurich', 'active'),
+  ('22222222-2222-2222-2222-222222222223', 'marco@acme.example', 'Marco Man', 'Marco', 'Man', 'de', 'Europe/Zurich', 'active'),  
+  ('33333333-3333-3333-3333-333333333333', 'ulla@acme.example', 'Ulla User', 'Ulla', 'User', 'en', 'Europe/Zurich', 'active'),
+  ('33333333-3333-3333-3333-333333333334', 'urs@acme.example', 'Urs User', 'Uli', 'User', 'en', 'Europe/Zurich', 'active'),
+  ('33333333-3333-3333-3333-333333333335', 'ueli@acme.example', 'Ueli User', 'Ueli', 'User', 'de', 'Europe/Zurich', 'active'),
+  ('33333333-3333-3333-3333-333333333336', 'ueli2@acme.example', 'Ueli2 User', 'Ueli2', 'User', 'de', 'Europe/Zurich', 'inactive'),
+  ('44444444-4444-4444-4444-444444444444', 'hans@acme.example', 'Hans Hansi', 'Hans', 'Hansi', 'de', 'Europe/Zurich', 'active')
 ON CONFLICT (email) DO NOTHING;
 
 INSERT INTO organizations (id, slug, name, type, country, created_by_user_id, is_active)
 VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'acme', 'Acme Corp', 'enterprise', 'CH', '11111111-1111-1111-1111-111111111111', TRUE),
   -- Second org so the web app's organization switcher has something to switch between in the demo.
-  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'globex', 'Globex Inc', 'team', 'US', '11111111-1111-1111-1111-111111111111', TRUE)
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'globx', 'Globx Inc', 'team', 'US', '11111111-1111-1111-1111-111111111111', TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Memberships: admin->admin role, manager->manager role, user->member role
-INSERT INTO organization_memberships (id, organization_id, user_id, status)
+INSERT INTO organization_memberships (id, organization_id, user_id, status, joined_at)
 VALUES
-  ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'active'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'active'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'active'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'active', to_date('2023-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-02-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222223', 'active', to_date('2021-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'active', to_date('2020-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333334', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333334', 'active', to_date('2022-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333335', 'active', to_date('2023-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333336', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333336', 'active', to_date('2024-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 'active', to_date('2025-01-01', 'YYYY-MM-DD')),
+
   -- admin is also admin of Globex; manager is only a plain member there — same person, different role per org.
-  ('eeeeeeee-eeee-eeee-eeee-111111111111', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '11111111-1111-1111-1111-111111111111', 'active'),
-  ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', 'active')
+  ('eeeeeeee-eeee-eeee-eeee-111111111111', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '11111111-1111-1111-1111-111111111111', 'active', to_date('2023-01-01', 'YYYY-MM-DD')),
+  ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-01-01', 'YYYY-MM-DD'))
 ON CONFLICT (organization_id, user_id) DO UPDATE SET status = EXCLUDED.status;
 
 -- Roles per membership (a membership can hold more than one; each of these holds exactly one for now).
