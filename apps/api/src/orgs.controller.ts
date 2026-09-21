@@ -16,7 +16,6 @@ import {
   organization_domains,
   users,
   roles,
-  membership_roles,
 } from './db/schema';
 
 export function appBaseUrl(): string {
@@ -135,8 +134,7 @@ export class OrgsController {
       .from(organization_memberships)
       .innerJoin(users, eq(users.id, organization_memberships.user_id))
       .leftJoin(managerUsers, eq(managerUsers.id, organization_memberships.manager_user_id))
-      .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
-      .leftJoin(roles, eq(roles.id, membership_roles.role_id))
+      .leftJoin(roles, sql`${roles.id} = ANY(${organization_memberships.role_ids})`)
       .where(eq(organization_memberships.organization_id, id));
 
     // A membership can hold several roles now — fold the joined rows back into one entry per member.
@@ -241,9 +239,11 @@ export class OrgsController {
     // Only an org admin, or one of this specific role's designated admins, may hand this role out.
     if (!(await canManageRole(db, id, callerId, body.roleId))) return { ok: false, error: 'forbidden' };
     await db
-      .insert(membership_roles)
-      .values({ membership_id: membershipId, role_id: body.roleId, granted_by_user_id: callerId })
-      .onConflictDoNothing();
+      .update(organization_memberships)
+      .set({
+        role_ids: sql`CASE WHEN ${body.roleId}::uuid = ANY(${organization_memberships.role_ids}) THEN ${organization_memberships.role_ids} ELSE array_append(${organization_memberships.role_ids}, ${body.roleId}::uuid) END`,
+      })
+      .where(eq(organization_memberships.id, membershipId));
     void this.audit.record(id, callerId, 'role.grant', 'membership', membershipId, { roleId: body.roleId }).catch(() => {});
     return { ok: true };
   }
@@ -265,15 +265,13 @@ export class OrgsController {
       .where(and(eq(organization_memberships.id, membershipId), eq(organization_memberships.organization_id, id)));
     if (!membership) return { ok: false, error: 'membership-not-found' };
     if (!(await canManageRole(db, id, callerId, roleId))) return { ok: false, error: 'forbidden' };
-    const existingRoles = await db
-      .select({ role_id: membership_roles.role_id })
-      .from(membership_roles)
-      .where(eq(membership_roles.membership_id, membershipId));
     // A membership must always keep at least one role — revoke by removing the whole membership instead.
-    if (existingRoles.length <= 1) return { ok: false, error: 'last-role' };
-    await db
-      .delete(membership_roles)
-      .where(and(eq(membership_roles.membership_id, membershipId), eq(membership_roles.role_id, roleId)));
+    const updated = await db
+      .update(organization_memberships)
+      .set({ role_ids: sql`array_remove(${organization_memberships.role_ids}, ${roleId}::uuid)` })
+      .where(and(eq(organization_memberships.id, membershipId), sql`cardinality(${organization_memberships.role_ids}) > 1`))
+      .returning({ id: organization_memberships.id });
+    if (updated.length === 0) return { ok: false, error: 'last-role' };
     void this.audit.record(id, callerId, 'role.revoke', 'membership', membershipId, { roleId }).catch(() => {});
     return { ok: true };
   }

@@ -21,7 +21,6 @@ tables.
 ```mermaid
 erDiagram
     USERS ||--o{ USER_IDENTITIES : "authenticates via"
-    USERS ||--o{ ORGANIZATIONS : "created_by_user_id"
     ORGANIZATIONS ||--o{ ORGANIZATION_DOMAINS : "claims"
     ORGANIZATIONS ||--o{ ORGANIZATIONS : "parent_organization_id"
 
@@ -45,7 +44,6 @@ erDiagram
         citext slug UK
         varchar name
         enum type "personal / team / enterprise"
-        uuid created_by_user_id FK
         boolean enforce_sso
         boolean enforce_mfa
         text_array allowed_email_domains
@@ -66,11 +64,11 @@ erDiagram
 > `organization_settings` (flattened into real columns) and
 > `sso_configurations` (kept as the `sso_config` JSON blob, same field names).
 
-## Access Control / RBAC (6 tables)
+## Access Control / RBAC (5 tables)
 
 Roles can be system-wide (`organization_id` null) or scoped to one org. A
-membership now holds **any number** of roles at once, through
-`membership_roles` — permissions are additive across them.
+membership holds **any number** of roles at once, as a `role_ids` uuid
+array on `organization_memberships` — permissions are additive across them.
 
 ```mermaid
 erDiagram
@@ -80,9 +78,6 @@ erDiagram
     ORGANIZATIONS ||--o{ ORGANIZATION_MEMBERSHIPS : "admits"
     USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "joins"
     USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "manager_user_id"
-    ORGANIZATION_MEMBERSHIPS ||--o{ MEMBERSHIP_ROLES : "holds"
-    ROLES ||--o{ MEMBERSHIP_ROLES : "granted as"
-    USERS ||--o{ MEMBERSHIP_ROLES : "granted_by_user_id"
     ORGANIZATIONS ||--o{ ORGANIZATION_INVITATIONS : "sends"
     ROLES ||--o{ ORGANIZATION_INVITATIONS : "pre-assigns"
     USERS ||--o{ ORGANIZATION_INVITATIONS : "invited_by_user_id"
@@ -110,12 +105,7 @@ erDiagram
         enum status "active / invited / suspended"
         uuid manager_user_id FK "nullable — who timesheet approvals route to; null = top of chain"
         jsonb settings "free-form per-membership bucket: validity dates, planned holidays, etc."
-    }
-    MEMBERSHIP_ROLES {
-        uuid membership_id PK "FK -> organization_memberships"
-        uuid role_id PK "FK -> roles"
-        timestamptz granted_at
-        uuid granted_by_user_id FK "nullable"
+        uuid_array role_ids "roles.id values held by this membership — not FK-enforced, GIN-indexed"
     }
     ORGANIZATION_INVITATIONS {
         uuid id PK
@@ -130,8 +120,8 @@ erDiagram
 ```
 
 > One membership row per `(organization_id, user_id)` — `uq_org_user_membership`
-> — but any number of rows in `membership_roles` for it. Granting or revoking a
-> role requires being an org owner/admin, or being listed in that role's own
+> — but any number of entries in its `role_ids` array. A membership must always
+> keep at least one. Granting or revoking a role requires being an org owner/admin, or being listed in that role's own
 > `admin_user_ids`. A member's `manager_user_id` is who their timesheet
 > submissions route to for approval (see Timesheets below) — an org admin can
 > always review/approve regardless of this chain.
@@ -188,7 +178,7 @@ erDiagram
     PROJECTS {
         uuid id PK
         uuid organization_id FK
-        varchar name
+        varchar name "unique per organization"
         uuid owner_user_id FK "nullable"
         enum type "internal / customer / research"
     }
@@ -196,7 +186,7 @@ erDiagram
         uuid id PK
         uuid project_id FK
         uuid organization_id FK
-        varchar name
+        varchar name "unique per project"
         enum type "phase / work_package / task"
     }
     PROJECT_TIMES {
@@ -269,7 +259,6 @@ erDiagram
     USERS ||--o| WORK_TIME_BALANCES : "has"
     ORGANIZATIONS ||--o{ WORK_TIME_BALANCE_ENTRIES : "scopes"
     USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "affects"
-    USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "created_by_user_id"
 
     WORK_TIMES {
         uuid id PK
@@ -310,7 +299,6 @@ erDiagram
         numeric actual_minutes "nullable — only meaningful for overtime entries"
         numeric delta_minutes "signed change this entry applies"
         text note "nullable"
-        uuid created_by_user_id FK "nullable"
     }
     ORGANIZATIONS { uuid id PK }
     USERS { uuid id PK }
@@ -574,7 +562,7 @@ erDiagram
         uuid id PK
         uuid organization_id FK
         varchar entity "the table/resource this enum belongs to, e.g. 'projects'"
-        varchar enum_name "e.g. 'project_type'"
+        varchar enum_name "e.g. 'project_type'; (organization_id, entity, enum_name) is unique"
         jsonb values "key -> default label"
         jsonb translation "locale -> (key -> translated label), optional overrides"
     }

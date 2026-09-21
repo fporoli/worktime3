@@ -44,6 +44,9 @@
     <include file="026-absence-type-half-day-documents.sql" relativeToChangelogFile="true"/>
     <include file="027-basicdata.sql" relativeToChangelogFile="true"/>
     <include file="028-basicdata-static-data.sql" relativeToChangelogFile="true"/>
+    <include file="029-membership-role-ids.sql" relativeToChangelogFile="true"/>
+    <include file="030-drop-organizations-created-by.sql" relativeToChangelogFile="true"/>
+    <include file="031-projects-unique-name.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

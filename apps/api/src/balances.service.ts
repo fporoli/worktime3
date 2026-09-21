@@ -93,7 +93,6 @@ export class BalancesService {
       actualMinutes?: number | null;
       deltaMinutes: number;
       note?: string | null;
-      createdByUserId: string | null;
     },
   ): Promise<void> {
     await db.transaction(async (tx) => {
@@ -107,7 +106,6 @@ export class BalancesService {
         actual_minutes: params.actualMinutes != null ? String(params.actualMinutes) : null,
         delta_minutes: String(params.deltaMinutes),
         note: params.note ?? null,
-        created_by_user_id: params.createdByUserId,
       });
 
       // ON CONFLICT ... DO UPDATE only touches the columns named in `set` — the other balance
@@ -132,7 +130,7 @@ export class BalancesService {
   }
 
   /** Called once a timesheet period is approved: credits/debits the overtime balance by actual-vs-target worked minutes. */
-  async applyTimesheetApproval(db: Db, periodId: string, actorUserId: string): Promise<void> {
+  async applyTimesheetApproval(db: Db, periodId: string): Promise<void> {
     const [period] = await db
       .select({
         organization_id: timesheet_periods.organization_id,
@@ -187,12 +185,11 @@ export class BalancesService {
       targetMinutes,
       actualMinutes,
       deltaMinutes,
-      createdByUserId: actorUserId,
     });
   }
 
   /** Called when an approved period is reopened: posts an offsetting entry rather than mutating history. */
-  async reverseTimesheetApproval(db: Db, periodId: string, actorUserId: string): Promise<void> {
+  async reverseTimesheetApproval(db: Db, periodId: string): Promise<void> {
     const [entry] = await db
       .select({
         organization_id: work_time_balance_entries.organization_id,
@@ -219,7 +216,6 @@ export class BalancesService {
       sourceTableUuid: periodId,
       deltaMinutes: -Number(entry.delta_minutes),
       note: 'reversed: period reopened',
-      createdByUserId: actorUserId,
     });
   }
 
@@ -228,7 +224,7 @@ export class BalancesService {
    * it covers, at the org's full-day hours (halved for a half-day request). Only `vacation`-type
    * absences touch this balance — sickness/accident/etc. are tracked but don't debit it.
    */
-  async applyAbsenceApproval(db: Db, absenceId: string, actorUserId: string): Promise<void> {
+  async applyAbsenceApproval(db: Db, absenceId: string): Promise<void> {
     const [absence] = await db
       .select({
         organization_id: absences.organization_id,
@@ -252,7 +248,6 @@ export class BalancesService {
       sourceTable: 'absences',
       sourceTableUuid: absenceId,
       deltaMinutes: -minutes,
-      createdByUserId: actorUserId,
     });
   }
 
@@ -264,7 +259,6 @@ export class BalancesService {
     balanceType: BalanceType,
     deltaMinutes: number,
     note: string | null,
-    actorUserId: string,
   ): Promise<void> {
     await this.applyEntry(db, {
       organizationId,
@@ -274,7 +268,6 @@ export class BalancesService {
       sourceTableUuid: null,
       deltaMinutes,
       note,
-      createdByUserId: actorUserId,
     });
   }
 

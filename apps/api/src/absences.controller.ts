@@ -50,7 +50,7 @@ export class AbsencesController implements OnModuleInit {
       const patch = { status: 'approved' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: null };
       await db.update(absences).set(patch).where(eq(absences.id, ctx.sourceTableUuid));
       void this.versions.record('absences', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
-      await this.balances.applyAbsenceApproval(db, ctx.sourceTableUuid, ctx.actorUserId);
+      await this.balances.applyAbsenceApproval(db, ctx.sourceTableUuid);
     });
 
     this.workflowsSvc.registerAction('absence.reject', async (db, ctx) => {
@@ -114,7 +114,7 @@ export class AbsencesController implements OnModuleInit {
       .catch(() => {});
 
     if (autoApproved) {
-      await this.balances.applyAbsenceApproval(db, created.id, callerId);
+      await this.balances.applyAbsenceApproval(db, created.id);
     } else if (managerUserId) {
       const definition = await this.workflowsSvc.ensureDefinition(db, orgId, APPROVE_ABSENCE_WORKFLOW_NAME, "A vacation request awaiting the employee's manager to approve or reject it.", [
         {

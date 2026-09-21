@@ -62,11 +62,11 @@ export function clearSession() {
 }
 
 const DEMO_ACCOUNTS = [
-  { email: 'admin@acme.example', label: 'Admin (Acme)' },
-  { email: 'manager@acme.example', label: 'Manager (Acme)' },
-  { email: 'user@acme.example', label: 'User (Acme)' },
+  { email: 'admin@acme.com', label: 'Admin (Acme)' },
+  { email: 'marta@acme.com', label: 'Manager (Acme)' },
+  { email: 'ulla@acme.com', label: 'User (Acme)' },
 ];
-const DEMO_PASSWORD = 'dev1234';
+const DEMO_PASSWORD = 'change-me';
 const DEMO_INVITE_TOKEN = 'dev-invite-0001';
 
 const ERROR_TEXT: Record<string, string> = {

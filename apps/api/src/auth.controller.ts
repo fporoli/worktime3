@@ -1,11 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { Public, type AuthenticatedRequest } from './jwt.guard';
 import { mintLocalToken } from './jwt';
 import { sendMail } from './mailer';
 import * as bcrypt from 'bcryptjs';
-import { users, user_identities, organizations, organization_memberships, organization_invitations, roles, membership_roles, static_data } from './db/schema';
+import { users, user_identities, organizations, organization_memberships, organization_invitations, roles, static_data } from './db/schema';
 import { pickPrimaryRole } from './access';
 import { VersionsService } from './versions.service';
 import { ABSENCE_TYPE_STATIC_DATA } from './absence-types';
@@ -72,8 +72,7 @@ export async function membershipsOf(db: Db, userId: string): Promise<SessionMemb
     })
     .from(organization_memberships)
     .innerJoin(organizations, eq(organizations.id, organization_memberships.organization_id))
-    .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
-    .leftJoin(roles, eq(roles.id, membership_roles.role_id))
+    .leftJoin(roles, sql`${roles.id} = ANY(${organization_memberships.role_ids})`)
     .where(eq(organization_memberships.user_id, userId))
     .orderBy(asc(organizations.slug));
 
@@ -153,13 +152,12 @@ export class AuthController {
       }
       const [org] = await tx
         .insert(organizations)
-        .values({ slug: workspaceSlug, name: `${body.displayName.trim()}'s workspace`, type: 'personal', created_by_user_id: uid })
+        .values({ slug: workspaceSlug, name: `${body.displayName.trim()}'s workspace`, type: 'personal' })
         .returning({ id: organizations.id });
       const [membership] = await tx
         .insert(organization_memberships)
-        .values({ organization_id: org.id, user_id: uid, status: 'active' })
+        .values({ organization_id: org.id, user_id: uid, status: 'active', role_ids: [OWNER_ROLE_ID] })
         .returning({ id: organization_memberships.id });
-      await tx.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
       // Seed the absence-type static data so the Vacation screen has options right away.
       await tx.insert(static_data).values({ organization_id: org.id, ...ABSENCE_TYPE_STATIC_DATA });
       // Seed the Home/"Meine Daten" dropdown options (language, nationality, address country).
@@ -301,16 +299,16 @@ export class AuthController {
         });
       const [membership] = await tx
         .insert(organization_memberships)
-        .values({ organization_id: invitation.organization_id, user_id: uid, status: 'active' })
+        .values({ organization_id: invitation.organization_id, user_id: uid, status: 'active', role_ids: [invitation.role_id] })
         .onConflictDoUpdate({
           target: [organization_memberships.organization_id, organization_memberships.user_id],
-          set: { status: 'active' },
+          // An existing member keeps the roles they already hold; the invited role is added only if missing.
+          set: {
+            status: 'active',
+            role_ids: sql`CASE WHEN ${invitation.role_id}::uuid = ANY(${organization_memberships.role_ids}) THEN ${organization_memberships.role_ids} ELSE array_append(${organization_memberships.role_ids}, ${invitation.role_id}::uuid) END`,
+          },
         })
         .returning({ id: organization_memberships.id });
-      await tx
-        .insert(membership_roles)
-        .values({ membership_id: membership.id, role_id: invitation.role_id })
-        .onConflictDoNothing();
       await tx.update(organization_invitations).set({ status: 'accepted' }).where(eq(organization_invitations.token, token));
       return { userId: uid, membershipId: membership.id, wasNewUser: !existingUser };
     });

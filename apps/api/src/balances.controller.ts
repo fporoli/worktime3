@@ -55,7 +55,7 @@ export class BalancesController {
     if (!body.userId || !BALANCE_TYPES.includes(body.balanceType)) return { ok: false, error: 'invalid-request' };
     if (typeof body.deltaMinutes !== 'number' || !Number.isFinite(body.deltaMinutes)) return { ok: false, error: 'invalid-delta' };
 
-    await this.balances.adjust(db, orgId, body.userId, body.balanceType, body.deltaMinutes, body.note?.trim() || null, callerId);
+    await this.balances.adjust(db, orgId, body.userId, body.balanceType, body.deltaMinutes, body.note?.trim() || null);
     return { ok: true };
   }
 

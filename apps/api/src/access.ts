@@ -31,8 +31,7 @@ export function pickPrimaryRole(names: string[]): string | null {
 async function activeRoleNames(db: Executor, organizationId: string, userId: string): Promise<string[]> {
   const rows = await db.execute(
     sql`SELECT r.name FROM organization_memberships m
-        JOIN membership_roles mr ON mr.membership_id = m.id
-        JOIN roles r ON r.id = mr.role_id
+        JOIN roles r ON r.id = ANY(m.role_ids)
         WHERE m.organization_id = ${organizationId} AND m.user_id = ${userId} AND m.status = 'active'`,
   );
   return rows.rows.map((r: Record<string, unknown>) => r.name as string);
@@ -54,8 +53,7 @@ export async function isOrgAdmin(db: Executor, organizationId: string, userId: s
 export async function isAnyOrgAdmin(db: Executor, userId: string): Promise<boolean> {
   const rows = await db.execute(
     sql`SELECT r.name FROM organization_memberships m
-        JOIN membership_roles mr ON mr.membership_id = m.id
-        JOIN roles r ON r.id = mr.role_id
+        JOIN roles r ON r.id = ANY(m.role_ids)
         WHERE m.user_id = ${userId} AND m.status = 'active'`,
   );
   return rows.rows.some((r: Record<string, unknown>) => r.name === 'owner' || r.name === 'admin');
