@@ -55,6 +55,7 @@ const Absences = lazy(() => import('./Absences'));
 const Approvals = lazy(() => import('./Approvals'));
 const Expenses = lazy(() => import('./Expenses'));
 const ExpenseReports = lazy(() => import('./ExpenseReports'));
+const Documents = lazy(() => import('./Documents'));
 const ExpenseProcessing = lazy(() => import('./ExpenseProcessing'));
 const Assistant = lazy(() => import('./Assistant'));
 const TeamHours = lazy(() => import('./TeamHours'));
@@ -64,7 +65,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'home' | 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'systemAdmin' | 'orgSettings' | 'expenseProcessing';
+type Section = 'home' | 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'documents' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'systemAdmin' | 'orgSettings' | 'expenseProcessing';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -223,6 +224,7 @@ export default function App() {
         { id: 'absences', section: 'absences', label: t('nav.absences'), visible: true },
         { id: 'expenses', section: 'expenses', label: t('nav.expenses'), visible: true, dividerBefore: true },
         { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), visible: true },
+        { id: 'documents', section: 'documents', label: 'Documents', visible: true },
       ],
     },
     {
@@ -286,7 +288,7 @@ export default function App() {
       const nextCanManage = nextRole === 'manager' || nextRole === 'admin';
       const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles.includes('billing_admin') ?? false;
       const stillVisible =
-        section === 'home' || section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports'
+        section === 'home' || section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports' || section === 'documents'
           ? true
           : section === 'expenseProcessing'
             ? nextRole === 'admin' || nextIsBillingAdmin
@@ -938,6 +940,9 @@ export default function App() {
             )}
             {section === 'expenseReports' && orgId && (
               <ExpenseReports orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+            )}
+            {section === 'documents' && orgId && (
+              <Documents orgId={orgId} authHeaders={authHeaders} />
             )}
 
             {(section === 'management' || section === 'managementProjects') && canManage && orgId && (

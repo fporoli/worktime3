@@ -20,6 +20,22 @@ export interface Notification {
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 
+function notificationKey(notification: Notification): string {
+  return notification.workflow_id
+    ? `${notification.workflow_id}:${notification.type}`
+    : `${notification.type}:${notification.source_table}:${notification.source_table_uuid}`;
+}
+
+function uniqueNotifications(rows: Notification[]): Notification[] {
+  const seen = new Set<string>();
+  return rows.filter((notification) => {
+    const key = notificationKey(notification);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
  * Persisted notification feed + live push. The REST fetch on mount/reconnect is the source
  * of truth for `unreadCount` (so a missed WebSocket push while the tab was closed never
@@ -34,14 +50,19 @@ export function useNotifications(session: Session | null, authHeaders: () => Pro
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUs = useRef(false);
 
+  useEffect(() => {
+    setUnreadCount(items.filter((notification) => !notification.read_at).length);
+  }, [items]);
+
   async function refresh() {
     if (!session) return;
     const headers = await authHeaders();
     const res = await fetch(`${API}/notifications`, { headers });
     if (!res.ok) return;
     const rows: Notification[] = await res.json();
-    setItems(rows);
-    setUnreadCount(rows.filter((n) => !n.read_at).length);
+    const uniqueRows = uniqueNotifications(rows);
+    setItems(uniqueRows);
+    setUnreadCount(uniqueRows.filter((n) => !n.read_at).length);
   }
 
   async function markRead(id: string) {
@@ -103,8 +124,14 @@ export function useNotifications(session: Session | null, authHeaders: () => Pro
         const { type, notification } = msg as { type?: string; notification?: Notification };
         if (type === 'ready') reconnectAttempt.current = 0;
         if (type === 'notification' && notification) {
-          setItems((prev) => [notification, ...prev]);
-          setUnreadCount((c) => c + 1);
+          setItems((prev) => {
+            const key = notificationKey(notification);
+            const existing = prev.find((item) => notificationKey(item) === key);
+            const merged = existing?.read_at && !notification.read_at
+              ? { ...notification, read_at: existing.read_at }
+              : notification;
+            return [merged, ...prev.filter((item) => notificationKey(item) !== key)];
+          });
           setLive(notification);
         }
       };

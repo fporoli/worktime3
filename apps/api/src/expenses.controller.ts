@@ -11,6 +11,8 @@ import type { AuthenticatedRequest } from './jwt.guard';
 import { expenses, expense_report_items, expense_reports, projects, subprojects } from './db/schema';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
 
+const PAYSLIP_EDITABLE_REPORT_STATUSES = new Set(['in_preparation', 'rejected']);
+
 @Controller()
 export class ExpensesController {
   constructor(
@@ -177,7 +179,7 @@ export class ExpensesController {
     return { ok: true };
   }
 
-  /** Evidence upload for an expense (e.g. a pay slip) — the expense's own owner. Replaces any existing one. */
+  /** Receipt upload for an expense — the expense's own owner. Replaces any existing one. */
   @Post('expenses/:id/document')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_BYTES } }))
   async uploadDocument(@Param('id') id: string, @UploadedFile() file: Express.Multer.File, @Req() req: AuthenticatedRequest) {
@@ -186,6 +188,15 @@ export class ExpensesController {
     const owned = await this.assertEditableExpense(db, id, req);
     if ('error' in owned) return owned;
     if (!file) return { ok: false, error: 'file-required' };
+
+    const [report] = await db
+      .select({ status: expense_reports.status })
+      .from(expense_report_items)
+      .innerJoin(expense_reports, eq(expense_reports.id, expense_report_items.expense_report_id))
+      .where(eq(expense_report_items.expense_id, id));
+    if (report && !PAYSLIP_EDITABLE_REPORT_STATUSES.has(report.status)) {
+      return { ok: false, error: 'expense-report-locked' };
+    }
 
     const organizationId = owned.entry.organization_id as string;
     const previousDocId = owned.entry.document_id as string | null;
@@ -269,6 +280,14 @@ export class ExpensesController {
     const [row] = await db.select().from(expenses).where(eq(expenses.id, id));
     if (!row) return { ok: false, error: 'not-found' };
     if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
+    const [report] = await db
+      .select({ status: expense_reports.status })
+      .from(expense_report_items)
+      .innerJoin(expense_reports, eq(expense_reports.id, expense_report_items.expense_report_id))
+      .where(eq(expense_report_items.expense_id, id));
+    if (report && !PAYSLIP_EDITABLE_REPORT_STATUSES.has(report.status)) {
+      return { ok: false, error: 'expense-report-locked' };
+    }
     return { userId, entry: row };
   }
 }

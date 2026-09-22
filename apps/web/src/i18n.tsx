@@ -199,8 +199,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'expenses.saveFailedOffline': 'Failed to save. Is the API running?',
     'expenses.mappedCannotDelete': 'This expense is attached to a report — remove it from the report first.',
     'expenses.forbidden': 'You do not have permission to do that.',
-    'expenses.payslip': 'Payslip',
-    'expenses.attachPayslip': 'Attach payslip',
+    'expenses.receipt': 'Receipt',
+    'expenses.attachReceipt': 'Attach receipt',
     'expenses.download': 'Download',
     'expenses.uploadFailed': 'Could not attach the document ({{error}}).',
 
@@ -496,8 +496,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'expenses.saveFailedOffline': 'Speichern fehlgeschlagen. Läuft die API?',
     'expenses.mappedCannotDelete': 'Diese Spese ist einer Abrechnung zugeordnet — entfernen Sie sie zuerst aus der Abrechnung.',
     'expenses.forbidden': 'Sie haben keine Berechtigung dafür.',
-    'expenses.payslip': 'Lohnabrechnung',
-    'expenses.attachPayslip': 'Lohnabrechnung anhängen',
+    'expenses.receipt': 'Beleg',
+    'expenses.attachReceipt': 'Beleg anhängen',
     'expenses.download': 'Herunterladen',
     'expenses.uploadFailed': 'Dokument konnte nicht angehängt werden ({{error}}).',
 
@@ -792,8 +792,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'expenses.saveFailedOffline': "Échec de l'enregistrement. L'API est-elle en cours d'exécution ?",
     'expenses.mappedCannotDelete': "Cette dépense fait partie d'un rapport — retirez-la d'abord du rapport.",
     'expenses.forbidden': "Vous n'avez pas la permission de faire cela.",
-    'expenses.payslip': 'Fiche de paie',
-    'expenses.attachPayslip': 'Joindre la fiche de paie',
+    'expenses.receipt': 'Reçu',
+    'expenses.attachReceipt': 'Joindre un reçu',
     'expenses.download': 'Télécharger',
     'expenses.uploadFailed': 'Impossible de joindre le document ({{error}}).',
 
@@ -1021,8 +1021,8 @@ const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'expenses.saveFailedOffline': "Salvataggio non riuscito. L'API è in esecuzione?",
     'expenses.mappedCannotDelete': 'Questa spesa è collegata a una nota spese — rimuovila prima dalla nota spese.',
     'expenses.forbidden': 'Non hai il permesso di farlo.',
-    'expenses.payslip': 'Busta paga',
-    'expenses.attachPayslip': 'Allega busta paga',
+    'expenses.receipt': 'Ricevuta',
+    'expenses.attachReceipt': 'Allega ricevuta',
     'expenses.download': 'Scarica',
     'expenses.uploadFailed': 'Impossibile allegare il documento ({{error}}).',
 

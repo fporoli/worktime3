@@ -163,7 +163,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     try {
       const res = await fetch(`${API}/expenses/${expenseId}/document`, { headers: await authHeaders() });
       const disposition = res.headers.get('content-disposition') ?? '';
-      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'payslip';
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'receipt';
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -546,7 +546,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                     <TableCell>{e.subproject_name ?? '—'}</TableCell>
                     <TableCell>{e.comment ?? '—'}</TableCell>
                     <TableCell align="right">
-                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>Payslip</Button>}
+                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>Receipt</Button>}
                     </TableCell>
                   </TableRow>
                 ))}

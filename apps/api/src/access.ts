@@ -123,7 +123,7 @@ export async function isManagerOf(db: Executor, organizationId: string, managerI
 /**
  * True when `callerId` may view a record `targetUserId` owns: they're the same person, an org
  * admin, or `targetUserId`'s designated manager. Used to gate read access to evidence documents
- * (an absence's doctor's note, an expense's pay slip) attached to someone else's record.
+ * (an absence's doctor's note, an expense's receipt) attached to someone else's record.
  */
 export async function isOwnerAdminOrManagerOf(db: Executor, organizationId: string, callerId: string, targetUserId: string): Promise<boolean> {
   if (callerId === targetUserId) return true;

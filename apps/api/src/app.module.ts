@@ -35,6 +35,7 @@ import { BasicDataController } from './basicdata.controller';
 import { BasicDataService } from './basicdata.service';
 import { DbService } from './db.service';
 import { SystemAdminController } from './system-admin.controller';
+import { DocumentsController } from './documents.controller';
 
 @Module({
   controllers: [
@@ -59,6 +60,7 @@ import { SystemAdminController } from './system-admin.controller';
     AssistantController,
     NotificationsController,
     SystemAdminController,
+    DocumentsController,
   ],
   providers: [
     DbService,

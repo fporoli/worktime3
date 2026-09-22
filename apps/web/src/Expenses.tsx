@@ -120,7 +120,16 @@ function formFromRow(row: ExpenseRow): ExpenseForm {
 const ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
   'expense-mapped': (t) => t('expenses.mappedCannotDelete'),
   'forbidden': (t) => t('expenses.forbidden'),
+  'expense-report-locked': () => 'This expense report is pending or closed, so its expense and receipt can no longer be changed.',
 };
+
+function canEditReceipt(row: ExpenseRow): boolean {
+  return !row.expense_report_status || row.expense_report_status === 'in_preparation' || row.expense_report_status === 'rejected';
+}
+
+function canEditExpense(row: ExpenseRow): boolean {
+  return canEditReceipt(row);
+}
 
 interface ExpensesProps {
   orgId: string;
@@ -143,6 +152,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAdditional, setShowAdditional] = useState(false);
+  const [paySlipFile, setPaySlipFile] = useState<File | null>(null);
 
   async function reload() {
     setLoading(true);
@@ -272,8 +282,19 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
         return;
       }
+      if (paySlipFile) {
+        const uploadForm = new FormData();
+        uploadForm.append('file', paySlipFile);
+        const uploadRes = await fetch(`${API}/expenses/${data.id}/document`, { method: 'POST', headers: await authHeaders(), body: uploadForm });
+        const uploadData = await uploadRes.json();
+        if (!uploadData.ok) {
+          setError(ERROR_MESSAGES[uploadData.error]?.(t) ?? t('expenses.uploadFailed', { error: uploadData.error ?? 'unknown error' }));
+          return;
+        }
+      }
       setForm(emptyForm(form.currency));
       setShowAdditional(false);
+      setPaySlipFile(null);
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -298,6 +319,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       setEditingId(null);
       setForm(emptyForm(form.currency));
       setShowAdditional(false);
+      setPaySlipFile(null);
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -320,7 +342,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     }
   }
 
-  async function uploadPayslip(id: string, file: File) {
+  async function uploadReceipt(id: string, file: File) {
     setError(null);
     setSuccess(null);
     const form = new FormData();
@@ -338,11 +360,11 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     }
   }
 
-  async function downloadPayslip(id: string) {
+  async function downloadReceipt(id: string) {
     try {
       const res = await fetch(`${API}/expenses/${id}/document`, { headers: await authHeaders() });
       const disposition = res.headers.get('content-disposition') ?? '';
-      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'payslip';
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'receipt';
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -475,6 +497,12 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         </Box>
       </Collapse>
       <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
+        {!editingId && (
+          <Button size="small" component="label" variant="outlined">
+            {paySlipFile ? paySlipFile.name : 'Optional receipt'}
+            <input type="file" hidden onChange={(e) => setPaySlipFile(e.target.files?.[0] ?? null)} />
+          </Button>
+        )}
         {editingId ? (
           <>
             <Button variant="contained" onClick={saveEdit} disabled={!formValid}>{t('expenses.save')}</Button>
@@ -515,15 +543,15 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
               </TableCell>
               <TableCell align="right">
                 {row.document_id ? (
-                  <Button size="small" onClick={() => downloadPayslip(row.id)}>{t('expenses.payslip')}</Button>
-                ) : (
+                  <Button size="small" onClick={() => downloadReceipt(row.id)}>{t('expenses.receipt')}</Button>
+                ) : canEditReceipt(row) ? (
                   <Button size="small" component="label">
-                    {t('expenses.attachPayslip')}
-                    <input type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPayslip(row.id, f); }} />
+                    {t('expenses.attachReceipt')}
+                    <input type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadReceipt(row.id, f); }} />
                   </Button>
-                )}
-                <Button size="small" onClick={() => startEdit(row)}>{t('time.edit')}</Button>
-                <Button size="small" color="error" onClick={() => remove(row.id)}>{t('time.remove')}</Button>
+                ) : null}
+                {canEditExpense(row) && <Button size="small" onClick={() => startEdit(row)}>{t('time.edit')}</Button>}
+                {canEditExpense(row) && <Button size="small" color="error" onClick={() => remove(row.id)}>{t('time.remove')}</Button>}
               </TableCell>
             </TableRow>
           ))}

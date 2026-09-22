@@ -13,7 +13,7 @@ export const DOCUMENTS_ROOT = process.env.DOCUMENTS_DIR ?? join(__dirname, '..',
 
 /**
  * Generic evidence-document storage (local disk + a `documents` metadata row), reused by any
- * record that needs at most one attachment — an absence's doctor's note, an expense's pay slip.
+ * record that needs at most one attachment — an absence's doctor's note, an expense receipt.
  * The owning record (absences/expenses) holds a nullable `document_id` FK; this service doesn't
  * know or care which table that is.
  */
