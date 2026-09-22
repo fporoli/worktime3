@@ -1,9 +1,14 @@
-# worktime3
+# Worktime
 
-Enterprise + individual time tracking: NestJS API, React+MUI web, Postgres,
+More than a simple technology app to showcase different system features.
+Enterprise + individual time tracking using NestJS API, React+MUI web, Postgres,
 Keycloak (same database, `auth` schema), Caddy as the edge reverse proxy.
 Schema is versioned with Liquibase; the API talks to Postgres through
-Drizzle ORM, typed against that schema.
+Drizzle ORM, typed against that schema. 
+Auditing and versioning are supported.
+Generic workflows with notifications are showcased.
+Admin "login as" is present.
+Internationalization through custom user's locale is supported in frontend and database.
 
 ## Architecture
 
