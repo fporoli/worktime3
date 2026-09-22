@@ -27,7 +27,7 @@ erDiagram
 
     USERS {
         uuid id PK
-        citext email UK
+        text email UK
         varchar display_name
         enum status
         varchar locale
@@ -43,7 +43,7 @@ erDiagram
     ORGANIZATIONS {
         uuid id PK
         uuid parent_organization_id FK "self-referencing, nullable"
-        citext slug UK
+        text slug UK
         varchar name
         enum type "personal / team / enterprise"
         boolean enforce_sso
@@ -57,7 +57,7 @@ erDiagram
     ORGANIZATION_DOMAINS {
         uuid id PK
         uuid organization_id FK
-        citext domain UK
+        text domain UK
         boolean auto_join_enabled
     }
 ```
@@ -112,7 +112,7 @@ erDiagram
     ORGANIZATION_INVITATIONS {
         uuid id PK
         uuid organization_id FK
-        citext email
+        text email
         uuid role_id FK "single role — extra roles are granted after acceptance"
         varchar token UK
         enum status "pending / accepted / revoked / expired"
