@@ -47,6 +47,7 @@ const Home = lazy(() => import('./Home'));
 const Management = lazy(() => import('./Management'));
 const Invitations = lazy(() => import('./Invitations'));
 const AdminSettings = lazy(() => import('./AdminSettings'));
+const SystemAdmin = lazy(() => import('./SystemAdmin'));
 const OrganizationSettings = lazy(() => import('./OrganizationSettings'));
 const Timesheet = lazy(() => import('./Timesheet'));
 const WorkTime = lazy(() => import('./WorkTime'));
@@ -63,7 +64,7 @@ const Users = lazy(() => import('./Users'));
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const DRAWER_WIDTH = 220;
 
-type Section = 'home' | 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'orgSettings' | 'expenseProcessing';
+type Section = 'home' | 'time' | 'timesheet' | 'workTime' | 'absences' | 'expenses' | 'expenseReports' | 'management' | 'managementProjects' | 'hours' | 'invitations' | 'approvals' | 'users' | 'audit' | 'admin' | 'systemAdmin' | 'orgSettings' | 'expenseProcessing';
 
 const ASSISTANT_TAB_WIDTH = 40;
 const ASSISTANT_PANEL_WIDTH = 380;
@@ -243,6 +244,7 @@ export default function App() {
         { id: 'audit', section: 'audit', label: t('nav.auditLog'), visible: role === 'admin' },
         { id: 'expenseProcessing', section: 'expenseProcessing', label: t('nav.expenseProcessing'), visible: role === 'admin' || isBillingAdmin },
         { id: 'admin', section: 'admin', label: t('nav.adminSettings'), visible: role === 'admin' },
+        { id: 'systemAdmin', section: 'systemAdmin', label: 'System administration', visible: role === 'admin' },
       ],
     },
   ];
@@ -288,7 +290,7 @@ export default function App() {
           ? true
           : section === 'expenseProcessing'
             ? nextRole === 'admin' || nextIsBillingAdmin
-            : section === 'admin' || section === 'audit' || section === 'orgSettings'
+            : section === 'admin' || section === 'systemAdmin' || section === 'audit' || section === 'orgSettings'
               ? nextRole === 'admin'
               : nextCanManage; // covers management, managementProjects, hours, invitations, approvals, users
       if (!stillVisible) setSection('home');
@@ -970,6 +972,9 @@ export default function App() {
             )}
             {section === 'admin' && role === 'admin' && orgId && (
               <AdminSettings orgId={orgId} authHeaders={authHeaders} />
+            )}
+            {section === 'systemAdmin' && role === 'admin' && orgId && (
+              <SystemAdmin orgId={orgId} authHeaders={authHeaders} />
             )}
             {section === 'orgSettings' && role === 'admin' && orgId && (
               <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />

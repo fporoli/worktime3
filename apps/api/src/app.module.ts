@@ -34,6 +34,7 @@ import { NotificationsGateway } from './notifications.gateway';
 import { BasicDataController } from './basicdata.controller';
 import { BasicDataService } from './basicdata.service';
 import { DbService } from './db.service';
+import { SystemAdminController } from './system-admin.controller';
 
 @Module({
   controllers: [
@@ -57,6 +58,7 @@ import { DbService } from './db.service';
     AuditController,
     AssistantController,
     NotificationsController,
+    SystemAdminController,
   ],
   providers: [
     DbService,

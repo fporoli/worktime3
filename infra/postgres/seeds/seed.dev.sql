@@ -184,3 +184,22 @@ VALUES
   ('ffffffff-ffff-ffff-ffff-111111111111', 'eeeeeeee-eeee-eeee-eeee-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
   ('ffffffff-ffff-ffff-ffff-111111111111', 'eeeeeeee-eeee-eeee-eeee-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 ON CONFLICT (expense_id) DO NOTHING;
+
+--
+-- Data for Name: workflow_definitions; Type: TABLE DATA; Schema: public; Owner: worktime
+--
+
+INSERT INTO workflow_definitions (workflow_def_id, organization_id, name, description, steps) 
+VALUES 
+  ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'approve absence', 'A vacation request awaiting the employee''s manager to approve or reject it.', 
+  '[{"key": "manager_review", "label": "Manager review", "source": "Vacation Request", "assignTo": "manager", "onReject": {"action": "absence.reject"}, "onApprove": {"action": "absence.approve"}, "source_name": "getAbsenceTitle"}]'),
+
+  ('11111111-1111-1111-1111-111111111112', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'reopen approved timesheet', 'An employee''s request to reopen a month their manager already approved, for correction.', 
+  '[{"key": "manager_review", "label": "Manager review", "source": "Timesheet Period", "assignTo": "manager", "onReject": {"action": "none"}, "onApprove": {"action": "timesheet.reopen"}, "source_name": "getSourceTitle"}]'),
+
+  ('11111111-1111-1111-1111-111111111113', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'approve expense report', 'A submitted expense report awaiting the employee''s manager to approve or reject it.', 
+  '[{"key": "manager_review", "label": "Manager review", "source": "Expense Report", "assignTo": "manager", "onReject": {"action": "expense.reject"}, "onApprove": {"action": "expense.approve"}, "source_name": "getExpenseReportTitle"}]'),
+
+  ('11111111-1111-1111-1111-111111111114', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'approve timesheet', 'A submitted month awaiting the employee''s manager to approve or reject it.', 
+  '[{"key": "manager_review", "label": "Manager review", "source": "Timesheet Period", "assignTo": "manager", "onReject": {"action": "timesheet.reject"}, "onApprove": {"action": "timesheet.approve"}, "source_name": "getSourceTitle"}]')
+ON conflict (workflow_def_id) DO NOTHING;
