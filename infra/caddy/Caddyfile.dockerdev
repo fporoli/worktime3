@@ -1,4 +1,4 @@
-# Caddy dev/docker (ENV_NUMBER=2)
+# Caddy dockerdev (ENV_NUMBER=2)
 :3002 {
   reverse_proxy web:80
 }

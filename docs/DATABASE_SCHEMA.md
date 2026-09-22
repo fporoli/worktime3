@@ -2,9 +2,10 @@
 
 Postgres · Liquibase · Drizzle ORM
 
-30 tables across twelve subsystems, all scoped to a tenant through `organization_id` —
-which is `NOT NULL` on `project_times`, since every entry belongs to an organization
-whether or not it's tagged to a project. Each section below is a self-contained
+30 application tables across thirteen subsystems, mostly scoped to a tenant through
+`organization_id` — which is `NOT NULL` on `project_times`, since every entry belongs
+to an organization whether or not it's tagged to a project. User-owned records such
+as `basicdata_versions` are scoped through their owning user instead. Each section below is a self-contained
 entity-relationship diagram for one subsystem; tables that also appear elsewhere
 (mainly `organizations` and `users`) are shown with just their primary key for
 context — their full column list lives in the section where they're introduced.
@@ -30,6 +31,7 @@ erDiagram
         varchar display_name
         enum status
         varchar locale
+        jsonb basicdata "personal and family data"
     }
     USER_IDENTITIES {
         uuid id PK
@@ -125,6 +127,34 @@ erDiagram
 > `admin_user_ids`. A member's `manager_user_id` is who their timesheet
 > submissions route to for approval (see Timesheets below) — an org admin can
 > always review/approve regardless of this chain.
+
+## Basic Data (1 table)
+
+Personal and family data is stored as a JSON document on `users`. Its version
+history and employee-submitted change requests are kept in a one-to-one
+`basicdata_versions` row, allowing HR or an organization administrator to
+approve or reject requested changes without replacing the current user data.
+
+```mermaid
+erDiagram
+    USERS ||--o| BASICDATA_VERSIONS : "has history"
+    USERS ||--o{ BASICDATA_VERSIONS : "reviews changes"
+
+    BASICDATA_VERSIONS {
+        uuid id PK
+        uuid user_id FK, UK
+        integer version_nr "default 0, check: >= 0"
+        timestamptz created
+        timestamptz lastmodified
+        uuid lastmodified_by_user_id FK "nullable"
+        jsonb history "approved / changerequested / rejected entries"
+    }
+    USERS { uuid id PK }
+```
+
+> `users.basicdata` contains the current approved values. `history` stores
+> change-request and review metadata as an application-managed JSON array;
+> individual history entries are not separate relational rows.
 
 ## Teams (2 tables)
 
@@ -408,7 +438,7 @@ erDiagram
     EXPENSE_REPORT_ITEMS {
         uuid id PK
         uuid expense_report_id FK
-        uuid expense_id FK UK "one report per expense"
+        uuid expense_id FK, UK "one report per expense"
         uuid organization_id FK
     }
     ORGANIZATIONS { uuid id PK }
@@ -603,5 +633,5 @@ the latter is free-form.
 ---
 
 Generated from `apps/api/src/db/schema.ts` (Drizzle ORM, introspected from the
-Liquibase-managed schema) on 2026-09-18. A styled, interactive version of this
+Liquibase-managed schema) on 2026-09-22. A styled, interactive version of this
 reference is also published as a Claude artifact.

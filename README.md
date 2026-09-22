@@ -44,7 +44,7 @@ Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
 - **infra/keycloak** — realm export (`realm-worktime.json`) imported on
   Keycloak startup.
 - **infra/caddy** — one `Caddyfile.<env>` per environment.
-- **compose/docker-compose.{local,dev,vps,azure}.yml** — four environments,
+- **compose/docker-compose.{local,dockerdev,vps,azure}.yml** — four environments,
   same shape (see Ports below): `pg`, a one-shot `migrate` service, Keycloak,
   and (except `local`) `api`/`web`/`caddy` as containers too. `local` runs
   `api`/`web` on the host instead (`npm run dev` per workspace) against
@@ -94,18 +94,23 @@ applied changelog file — Liquibase checksums each changeset and will refuse
 to reapply a modified one; add a new changeset instead.
 
 Seed data (`infra/postgres/seeds/seed.dev.sql`) is separate from schema
-migrations and stays manual: `npm run db:seed`.
+migrations and stays manual: `npm run db:seed`. `npm run db:clean` drops and
+recreates the `public` schema (refuses a non-local `DATABASE_URL` unless
+passed `--force`); `npm run db:reset` chains clean + migrate + seed in one
+go. Each has a `:dockerdev` variant (`db:migrate:dockerdev`, `db:seed:dockerdev`,
+`db:clean:dockerdev`, `db:reset:dockerdev`) that targets `.env.dockerdev` — the
+`dockerdev` stack on port 5432 — instead of `.env`'s port-5431 stack.
 
 ## Ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
 | Env | N | pg | keycloak | web | api |
 |---|---|----|----------|-----|-----|
-| local dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
-| docker dev (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
+| local (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
+| dockerdev (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
 | VPS | 3 | 5433 | 8093 | 3003 | 8003 |
 | Azure | 4 | 5434 | 8094 | 3004 | 8004 |
 
-## Local dev
+## Local
 
 ```sh
 cp .env.example .env
@@ -116,12 +121,21 @@ npm run build --workspaces
 npm run test --workspaces
 ```
 
-Then run the API and web app on the host (separate terminals):
+Then run the API and web app on the host, either in separate terminals:
 
 ```sh
 npm run start --workspace=@worktime3/api   # or: node apps/api/dist/main.js
 npm run dev --workspace=@worktime3/web     # vite, http://localhost:3001
 ```
+
+or both at once, backgrounded, via `npm run dev:local` (rebuilds the API
+first, starts the docker infra above if it isn't already up, logs to
+`logs/local-{api,web}.log`, pids in `pids/local-{api,web}.pid`) and
+`npm run dev:local:stop` to stop them again (the docker infra keeps running —
+stop that separately with `docker compose -f compose/docker-compose.local.yml
+down`). For the fully dockerized `dockerdev` stack instead, `npm run
+dev:dockerdev` builds and starts everything including api/web as containers,
+and `npm run dev:dockerdev:stop` stops just the api/web containers.
 
 ## Roles
 
@@ -139,9 +153,9 @@ The API sends mail via [nodemailer](https://nodemailer.com), configured from
 `SMTP_HOST/PORT/FROM/USER/PASSWORD/SECURE` (see `.env.example`). Sends are
 best-effort — a missing/misconfigured server never fails a request.
 
-- **`local` and `dev`** (non-prod): each runs its own
+- **`local` and `dockerdev`** (non-prod): each runs its own
   [Mailpit](https://github.com/axllent/mailpit) catcher — `local` on
-  `localhost:1025` / inbox UI `:8025`, `dev` on `:1026` / `:8026` (offset so
+  `localhost:1025` / inbox UI `:8025`, `dockerdev` on `:1026` / `:8026` (offset so
   both can run at once) — and the `api` container's SMTP env vars already
   point at it. No auth, nothing real is sent.
 - **`vps`/`azure`**: `SMTP_HOST` is unset by default (mail silently no-ops
@@ -167,5 +181,5 @@ fails the build before it reaches any real environment.
 - VPS/Azure workflows are manual (`workflow_dispatch`) and need secrets:
   `VPS_HOST/VPS_USER/VPS_SSH_KEY`, `AZURE_CREDENTIALS`.
 - Both bring up their compose file's `migrate` service before `api`/Keycloak,
-  same as local/dev — no separate migration step to remember.
+  same as local/dockerdev — no separate migration step to remember.
 - GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).

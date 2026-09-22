@@ -1,10 +1,10 @@
-# Distinct project name so `docker compose -f docker-compose.dev.yml up` never collides with
+# Distinct project name so `docker compose -f docker-compose.dockerdev.yml up` never collides with
 # docker-compose.local.yml (same directory => same default project name => Compose treats
 # their same-named services, e.g. pg/keycloak/mailpit, as one and recreates them into this
 # file's config — different ports and containers instead of local.yml's own).
-# pg/Keycloak data lives on the host under ../data-dev (mirrors ../data-local for the `local`
+# pg/Keycloak data lives on the host under ../data-dockerdev (mirrors ../data-local for the `local`
 # profile) so it survives `docker compose down` and can be inspected directly.
-name: worktime-dev
+name: worktime-dockerdev
 services:
   pg:
     image: postgres:16
@@ -14,7 +14,7 @@ services:
       POSTGRES_USER: worktime
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
     volumes:
-      - ../data-dev/pg:/var/lib/postgresql/data
+      - ../data-dockerdev/pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U worktime"]
       interval: 2s
@@ -52,7 +52,7 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
     volumes:
-      - ../data-dev/kc:/opt/keycloak/data
+      - ../data-dockerdev/kc:/opt/keycloak/data
       - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start-dev", "--import-realm"]
     depends_on:
@@ -89,5 +89,5 @@ services:
     image: caddy:2
     ports: ["3002:3002", "8002:8002", "8092:8092"]
     volumes:
-      - ../infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - ../infra/caddy/Caddyfile.dockerdev:/etc/caddy/Caddyfile:ro
     depends_on: [api, web, keycloak]

@@ -11,10 +11,20 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
-    "db:migrate": "node infra/liquibase/migrate.mjs",
-    "db:seed": "node infra/postgres/run-seed.mjs infra/postgres/seeds/seed.dev.sql",
-    "db:testseed": "node infra/postgres/run-seed.mjs infra/postgres/seeds/seed.test.sql",
-    "db:introspect": "npm run db:introspect --workspace=@worktime3/api"
+    "db:migrate:local": "node --env-file=.env infra/liquibase/migrate.mjs",
+    "db:migrate:dockerdev": "node --env-file=.env.dockerdev infra/liquibase/migrate.mjs",
+    "db:seed:local": "node --env-file=.env infra/postgres/run-seed.mjs infra/postgres/seeds/seed.dev.sql",
+    "db:seed:dockerdev": "node --env-file=.env.dockerdev infra/postgres/run-seed.mjs infra/postgres/seeds/seed.dev.sql",
+    "db:clean:local": "node --env-file=.env infra/postgres/reset-db.mjs",
+    "db:clean:dockerdev": "node --env-file=.env.dockerdev infra/postgres/reset-db.mjs",
+    "db:reset:local": "npm run db:clean && npm run db:migrate && npm run db:seed",
+    "db:reset:dockerdev": "npm run db:clean:dockerdev && npm run db:migrate:dockerdev && npm run db:seed:dockerdev",
+    "db:introspect": "npm run db:introspect --workspace=@worktime3/api",
+    "predev:local": "npm run build --workspace=@worktime3/api",
+    "dev:local": "node scripts/local.mjs",
+    "dev:local:stop": "node scripts/local-stop.mjs",
+    "dev:dockerdev": "docker compose -f compose/docker-compose.dockerdev.yml up -d --build",
+    "dev:dockerdev:stop": "docker compose -f compose/docker-compose.dockerdev.yml stop api web"
   },
   "engines": {
     "node": ">=20"
