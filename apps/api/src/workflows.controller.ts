@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { workflows, workflow_definitions, timesheet_periods, expense_reports, absences, users } from './db/schema';
+import { workflows, workflow_definitions, project_timesheets, expense_reports, absences, users } from './db/schema';
 import { WorkflowsService } from './workflows.service';
 
 /**
@@ -59,24 +59,24 @@ export class WorkflowsController {
       return { ...r, source: stepDef?.source ?? null, source_name: stepDef?.source_name ?? null };
     });
 
-    // Enrich timesheet_periods-/expense_reports-sourced rows with the owner's name and what the
+    // Enrich project_timesheets-/expense_reports-sourced rows with the owner's name and what the
     // record is — generic-shaped rows otherwise, but this covers every workflow type today.
-    const periodIds = rows.filter((r) => r.source_table === 'timesheet_periods').map((r) => r.source_table_uuid);
+    const periodIds = rows.filter((r) => r.source_table === 'project_timesheets').map((r) => r.source_table_uuid);
     const reportIds = rows.filter((r) => r.source_table === 'expense_reports').map((r) => r.source_table_uuid);
     const absenceIds = rows.filter((r) => r.source_table === 'absences').map((r) => r.source_table_uuid);
 
     const periodRows = periodIds.length
       ? await db
           .select({
-            id: timesheet_periods.id,
-            period_start: timesheet_periods.period_start,
-            user_id: timesheet_periods.user_id,
+            id: project_timesheets.id,
+            period_start: project_timesheets.period_start,
+            user_id: project_timesheets.user_id,
             user_display_name: users.display_name,
             user_email: users.email,
           })
-          .from(timesheet_periods)
-          .innerJoin(users, eq(users.id, timesheet_periods.user_id))
-          .where(inArray(timesheet_periods.id, periodIds))
+          .from(project_timesheets)
+          .innerJoin(users, eq(users.id, project_timesheets.user_id))
+          .where(inArray(project_timesheets.id, periodIds))
       : [];
     const reportRows = reportIds.length
       ? await db
@@ -114,7 +114,7 @@ export class WorkflowsController {
     const absenceById = new Map(absenceRows.map((a) => [a.id, a]));
     return rows.map((r) => ({
       ...r,
-      timesheet_period: r.source_table === 'timesheet_periods' ? (periodById.get(r.source_table_uuid) ?? null) : null,
+      project_timesheet: r.source_table === 'project_timesheets' ? (periodById.get(r.source_table_uuid) ?? null) : null,
       expense_report: r.source_table === 'expense_reports' ? (reportById.get(r.source_table_uuid) ?? null) : null,
       absence: r.source_table === 'absences' ? (absenceById.get(r.source_table_uuid) ?? null) : null,
     }));

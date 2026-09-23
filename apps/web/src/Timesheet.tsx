@@ -103,7 +103,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   async function reload() {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods?userId=${userId}`, {
+      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets?userId=${userId}`, {
         headers: await authHeaders(),
       });
       const data = await res.json();
@@ -123,7 +123,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
 
   async function reloadReopenRequest(periodId: string) {
     try {
-      const res = await fetch(`${API}/timesheet-periods/${periodId}/reopen-request`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/project-timesheets/${periodId}/reopen-request`, { headers: await authHeaders() });
       const data = await res.json();
       setReopenRequest(data ?? null);
     } catch { /* offline fallback */ }
@@ -145,7 +145,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     setSuccess(null);
     setRequestingReopen(true);
     try {
-      const res = await fetch(`${API}/timesheet-periods/${current.id}/request-reopen`, {
+      const res = await fetch(`${API}/project-timesheets/${current.id}/request-reopen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ reason: reopenReason }),
@@ -168,7 +168,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods/submit`, {
+      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ periodStart: period, note: submitNote }),

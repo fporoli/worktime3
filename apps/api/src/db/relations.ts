@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { organizations, users, user_identities, absences, documents, work_times, organization_domains, roles, organization_memberships, teams, organization_invitations, audit_logs, work_time_balance_entries, projects, subprojects, timesheet_periods, project_times, static_data, versions, workflow_definitions, basicdata_versions, expenses, expense_reports, expense_report_items, workflows, notifications, role_permissions, permissions, team_members, work_time_balances } from "./schema";
+import { organizations, users, user_identities, absences, documents, work_times, organization_domains, roles, organization_memberships, teams, organization_invitations, audit_logs, work_time_balance_entries, projects, subprojects, project_times, project_timesheets, static_data, versions, workflow_definitions, basicdata_versions, expenses, expense_reports, expense_report_items, workflows, notifications, role_permissions, permissions, team_members, work_time_balances } from "./schema";
 
 export const organizationsRelations = relations(organizations, ({one, many}) => ({
 	organization: one(organizations, {
@@ -21,9 +21,9 @@ export const organizationsRelations = relations(organizations, ({one, many}) => 
 	work_time_balance_entries: many(work_time_balance_entries),
 	projects: many(projects),
 	subprojects: many(subprojects),
-	timesheet_periods: many(timesheet_periods),
 	project_times: many(project_times),
 	documents: many(documents),
+	project_timesheets: many(project_timesheets),
 	static_data: many(static_data),
 	workflow_definitions: many(workflow_definitions),
 	expenses: many(expenses),
@@ -61,14 +61,14 @@ export const usersRelations = relations(users, ({many}) => ({
 	work_time_balance_entries: many(work_time_balance_entries),
 	projects: many(projects),
 	subprojects: many(subprojects),
-	timesheet_periods_user_id: many(timesheet_periods, {
-		relationName: "timesheet_periods_user_id_users_id"
-	}),
-	timesheet_periods_reviewed_by_user_id: many(timesheet_periods, {
-		relationName: "timesheet_periods_reviewed_by_user_id_users_id"
-	}),
 	project_times: many(project_times),
 	documents: many(documents),
+	project_timesheets_user_id: many(project_timesheets, {
+		relationName: "project_timesheets_user_id_users_id"
+	}),
+	project_timesheets_reviewed_by_user_id: many(project_timesheets, {
+		relationName: "project_timesheets_reviewed_by_user_id_users_id"
+	}),
 	versions_created_by_user_id: many(versions, {
 		relationName: "versions_created_by_user_id_users_id"
 	}),
@@ -253,23 +253,6 @@ export const subprojectsRelations = relations(subprojects, ({one, many}) => ({
 	expenses: many(expenses),
 }));
 
-export const timesheet_periodsRelations = relations(timesheet_periods, ({one}) => ({
-	organization: one(organizations, {
-		fields: [timesheet_periods.organization_id],
-		references: [organizations.id]
-	}),
-	user_user_id: one(users, {
-		fields: [timesheet_periods.user_id],
-		references: [users.id],
-		relationName: "timesheet_periods_user_id_users_id"
-	}),
-	user_reviewed_by_user_id: one(users, {
-		fields: [timesheet_periods.reviewed_by_user_id],
-		references: [users.id],
-		relationName: "timesheet_periods_reviewed_by_user_id_users_id"
-	}),
-}));
-
 export const project_timesRelations = relations(project_times, ({one}) => ({
 	user: one(users, {
 		fields: [project_times.user_id],
@@ -286,6 +269,23 @@ export const project_timesRelations = relations(project_times, ({one}) => ({
 	subproject: one(subprojects, {
 		fields: [project_times.subproject_id],
 		references: [subprojects.id]
+	}),
+}));
+
+export const project_timesheetsRelations = relations(project_timesheets, ({one}) => ({
+	organization: one(organizations, {
+		fields: [project_timesheets.organization_id],
+		references: [organizations.id]
+	}),
+	user_user_id: one(users, {
+		fields: [project_timesheets.user_id],
+		references: [users.id],
+		relationName: "project_timesheets_user_id_users_id"
+	}),
+	user_reviewed_by_user_id: one(users, {
+		fields: [project_timesheets.reviewed_by_user_id],
+		references: [users.id],
+		relationName: "project_timesheets_reviewed_by_user_id_users_id"
 	}),
 }));
 

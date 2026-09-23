@@ -48,6 +48,7 @@
     <include file="030-drop-organizations-created-by.sql" relativeToChangelogFile="true"/>
     <include file="031-projects-unique-name.sql" relativeToChangelogFile="true"/>
     <include file="032-drop-citext.sql" relativeToChangelogFile="true"/>
+    <include file="033-rename-timesheet-periods-to-project-timesheets.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

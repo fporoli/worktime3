@@ -81,7 +81,7 @@ interface ActionItem {
   source: string | null;
   /** Which formatter in `SOURCE_TITLE_FNS` renders this record's title — from the step's `source_name`. */
   source_name: string | null;
-  timesheet_period: PeriodRow | null;
+  project_timesheet: PeriodRow | null;
   expense_report: ExpenseReportRow | null;
   absence: AbsenceRow | null;
 }
@@ -105,7 +105,7 @@ function actionItemDetail(item: ActionItem): string {
  * only a new entry in this map once its formatter exists.
  */
 const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
-  getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
+  getSourceTitle: (item) => (item.project_timesheet ? getSourceTitle(item.project_timesheet.period_start) : null),
   getExpenseReportTitle: (item) => (item.expense_report ? getExpenseReportTitle(item.expense_report) : null),
   getAbsenceTitle: (item) => (item.absence ? getAbsenceTitle(item.absence) : null),
 };
@@ -231,7 +231,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     try {
       const [iRes, aRes] = await Promise.all([
         fetch(`${API}/workflows/assigned-to-me`, { headers: await authHeaders() }),
-        fetch(`${API}/organizations/${orgId}/timesheet-periods?status=approved`, { headers: await authHeaders() }),
+        fetch(`${API}/organizations/${orgId}/project-timesheets?status=approved`, { headers: await authHeaders() }),
       ]);
       const i = await iRes.json();
       const a = await aRes.json();
@@ -285,7 +285,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${API}/timesheet-periods/${id}/reopen`, { method: 'POST', headers: await authHeaders() });
+      const res = await fetch(`${API}/project-timesheets/${id}/reopen`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
       if (!data.ok) {
         setError(data.error === 'forbidden' ? 'Only admins can reopen an approved period.' : `Failed to reopen (${data.error ?? 'unknown error'}).`);
@@ -302,8 +302,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     const q = search.trim().toLowerCase();
     if (!q) return true;
     const haystack = [
-      item.timesheet_period?.user_display_name,
-      item.timesheet_period?.user_email,
+      item.project_timesheet?.user_display_name,
+      item.project_timesheet?.user_email,
       item.expense_report?.user_display_name,
       item.expense_report?.user_email,
       item.absence?.user_display_name,
@@ -355,8 +355,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
             <Fragment key={item.id}>
               <TableRow hover>
                 <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
-                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.project_timesheet?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
+                  <Typography variant="caption" color="text.secondary">{item.project_timesheet?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
                 </TableCell>
                 <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
                 <TableCell>
@@ -370,8 +370,8 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 </TableCell>
                 <TableCell>{actionItemDetail(item)}</TableCell>
                 <TableCell align="right">
-                  {item.timesheet_period && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>Inspect</Button>
+                  {item.project_timesheet && (
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.project_timesheet!, item.id)}>Inspect</Button>
                   )}
                   {item.expense_report && (
                     <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>Inspect</Button>

@@ -45,7 +45,7 @@ export type SourceOrgResolver = (db: Db, sourceTableUuid: string) => Promise<str
  * whatever side effect that workflow type calls for). Used both by
  * WorkflowsController's generic `/workflows/:id/approve` endpoint and by
  * TimesheetsController's period-id-based approve/reject, which now delegate
- * here instead of mutating timesheet_periods directly.
+ * here instead of mutating project_timesheets directly.
  *
  * This service knows nothing about timesheets or any other specific source
  * table — it only dispatches by name. A step's `onApprove`/`onReject.action`
@@ -53,7 +53,7 @@ export type SourceOrgResolver = (db: Db, sourceTableUuid: string) => Promise<str
  * table's owning organization is looked up in `sourceOrgResolvers`; both are
  * registered by whichever module owns that kind of record (e.g.
  * TimesheetsController registers the "timesheet.*" actions and the
- * `timesheet_periods` org resolver in its `onModuleInit`).
+ * `project_timesheets` org resolver in its `onModuleInit`).
  */
 @Injectable()
 export class WorkflowsService {
@@ -200,7 +200,7 @@ export class WorkflowsService {
     });
   }
 
-  /** The pending workflow (if any) for a record — lets a record-specific endpoint (e.g. timesheet-periods/:id/approve) delegate to it. */
+  /** The pending workflow (if any) for a record — lets a record-specific endpoint (e.g. project-timesheets/:id/approve) delegate to it. */
   async findPending(db: Db, sourceTable: string, sourceTableUuid: string, definitionName?: string) {
     const conditions = [
       eq(workflows.source_table, sourceTable),

@@ -3,7 +3,7 @@ import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { timesheet_periods, users, workflows } from './db/schema';
+import { project_timesheets, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
 import { WorkflowsService, REOPEN_TIMESHEET_WORKFLOW_NAME, APPROVE_TIMESHEET_WORKFLOW_NAME } from './workflows.service';
@@ -32,39 +32,39 @@ export class TimesheetsController implements OnModuleInit {
 
   /**
    * Timesheets own what "timesheet.*" workflow actions actually do, and how to resolve a
-   * timesheet_periods row's organization — WorkflowsService only knows the names, not the behavior.
+   * project_timesheets row's organization — WorkflowsService only knows the names, not the behavior.
    */
   onModuleInit() {
-    this.workflowsSvc.registerSourceOrgResolver('timesheet_periods', async (db, sourceTableUuid) => {
+    this.workflowsSvc.registerSourceOrgResolver('project_timesheets', async (db, sourceTableUuid) => {
       const [period] = await db
-        .select({ organization_id: timesheet_periods.organization_id })
-        .from(timesheet_periods)
-        .where(eq(timesheet_periods.id, sourceTableUuid));
+        .select({ organization_id: project_timesheets.organization_id })
+        .from(project_timesheets)
+        .where(eq(project_timesheets.id, sourceTableUuid));
       return period?.organization_id ?? null;
     });
 
     this.workflowsSvc.registerAction('timesheet.approve', async (db, ctx) => {
       const patch = { status: 'approved' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: null };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
-      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+      await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, ctx.sourceTableUuid));
+      void this.versions.record('project_timesheets', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
       await this.balances.applyTimesheetApproval(db, ctx.sourceTableUuid);
     });
 
     this.workflowsSvc.registerAction('timesheet.reject', async (db, ctx) => {
       const patch = { status: 'rejected' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: ctx.decisionNote };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
-      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+      await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, ctx.sourceTableUuid));
+      void this.versions.record('project_timesheets', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
     });
 
     this.workflowsSvc.registerAction('timesheet.reopen', async (db, ctx) => {
       const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
-      void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
+      await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, ctx.sourceTableUuid));
+      void this.versions.record('project_timesheets', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
       await this.balances.reverseTimesheetApproval(db, ctx.sourceTableUuid);
     });
   }
 
-  @Get('organizations/:orgId/timesheet-periods')
+  @Get('organizations/:orgId/project-timesheets')
   async list(
     @Param('orgId') orgId: string,
     @Req() req: AuthenticatedRequest,
@@ -77,33 +77,33 @@ export class TimesheetsController implements OnModuleInit {
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return [];
 
     const isAdmin = await isOrgAdmin(db, orgId, callerId);
-    const conditions: SQL[] = [eq(timesheet_periods.organization_id, orgId)];
+    const conditions: SQL[] = [eq(project_timesheets.organization_id, orgId)];
     if (userId) {
       // Someone else's periods: admins can view anyone's; everyone else only that person's own manager.
       if (userId !== callerId && !isAdmin && !(await isManagerOf(db, orgId, callerId, userId))) return [];
-      conditions.push(eq(timesheet_periods.user_id, userId));
+      conditions.push(eq(project_timesheets.user_id, userId));
     } else if (!isAdmin) {
       // No target given: your own periods, plus your direct reports' (e.g. ?status=submitted for an approval queue).
       const reportIds = await directReportUserIds(db, orgId, callerId);
-      conditions.push(inArray(timesheet_periods.user_id, [callerId, ...reportIds]));
+      conditions.push(inArray(project_timesheets.user_id, [callerId, ...reportIds]));
     }
     if (status && (STATUSES as readonly string[]).includes(status)) {
-      conditions.push(eq(timesheet_periods.status, status as Status));
+      conditions.push(eq(project_timesheets.status, status as Status));
     }
 
     return db
       .select({
-        ...getTableColumns(timesheet_periods),
+        ...getTableColumns(project_timesheets),
         user_display_name: users.display_name,
         user_email: users.email,
       })
-      .from(timesheet_periods)
-      .innerJoin(users, eq(users.id, timesheet_periods.user_id))
+      .from(project_timesheets)
+      .innerJoin(users, eq(users.id, project_timesheets.user_id))
       .where(and(...conditions))
-      .orderBy(desc(timesheet_periods.period_start));
+      .orderBy(desc(project_timesheets.period_start));
   }
 
-  @Post('organizations/:orgId/timesheet-periods/submit')
+  @Post('organizations/:orgId/project-timesheets/submit')
   async submit(
     @Param('orgId') orgId: string,
     @Body() body: { periodStart: string; note?: string },
@@ -120,13 +120,13 @@ export class TimesheetsController implements OnModuleInit {
     const note = (body.note ?? '').trim();
 
     const [existing] = await db
-      .select({ id: timesheet_periods.id, status: timesheet_periods.status })
-      .from(timesheet_periods)
+      .select({ id: project_timesheets.id, status: project_timesheets.status })
+      .from(project_timesheets)
       .where(
         and(
-          eq(timesheet_periods.organization_id, orgId),
-          eq(timesheet_periods.user_id, callerId),
-          eq(timesheet_periods.period_start, periodStart),
+          eq(project_timesheets.organization_id, orgId),
+          eq(project_timesheets.user_id, callerId),
+          eq(project_timesheets.period_start, periodStart),
         ),
       );
     if (existing && (existing.status === 'submitted' || existing.status === 'approved')) {
@@ -144,8 +144,8 @@ export class TimesheetsController implements OnModuleInit {
     let periodId: string;
     if (existing) {
       const patch = { ...reviewFields, submitted_at: now, review_note: null };
-      await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, existing.id));
-      void this.versions.record('timesheet_periods', existing.id, 'update_delta', callerId, patch).catch(() => {});
+      await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, existing.id));
+      void this.versions.record('project_timesheets', existing.id, 'update_delta', callerId, patch).catch(() => {});
       periodId = existing.id;
     } else {
       const values = {
@@ -156,12 +156,12 @@ export class TimesheetsController implements OnModuleInit {
         ...reviewFields,
         submitted_at: now,
       };
-      const [created] = await db.insert(timesheet_periods).values(values).returning({ id: timesheet_periods.id });
-      void this.versions.record('timesheet_periods', created.id, 'insert', callerId, { id: created.id, ...values }).catch(() => {});
+      const [created] = await db.insert(project_timesheets).values(values).returning({ id: project_timesheets.id });
+      void this.versions.record('project_timesheets', created.id, 'insert', callerId, { id: created.id, ...values }).catch(() => {});
       periodId = created.id;
     }
     void this.audit
-      .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', periodId, { periodStart, note: note || undefined })
+      .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'project_timesheet', periodId, { periodStart, note: note || undefined })
       .catch(() => {});
 
     // Route to the owner's manager as an "approve timesheet" workflow — the manager acts on it via /workflows.
@@ -173,13 +173,13 @@ export class TimesheetsController implements OnModuleInit {
           assignTo: 'manager',
           onApprove: { action: 'timesheet.approve' },
           onReject: { action: 'timesheet.reject' },
-          source: 'Timesheet Period',
+          source: 'Project Timesheet',
           source_name: 'getSourceTitle',
         },
       ]);
       await this.workflowsSvc.createWorkflow(db, {
         workflowDefId: definition.workflow_def_id,
-        sourceTable: 'timesheet_periods',
+        sourceTable: 'project_timesheets',
         sourceTableUuid: periodId,
         step: 'manager_review',
         assignedToUserId: [managerUserId],
@@ -193,12 +193,12 @@ export class TimesheetsController implements OnModuleInit {
     return { ok: true, id: periodId, autoApproved };
   }
 
-  @Post('timesheet-periods/:id/approve')
+  @Post('project-timesheets/:id/approve')
   async approve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.reviewOrDelegate(id, req, 'approved');
   }
 
-  @Post('timesheet-periods/:id/reject')
+  @Post('project-timesheets/:id/reject')
   async reject(@Param('id') id: string, @Body() body: { note?: string }, @Req() req: AuthenticatedRequest) {
     return this.reviewOrDelegate(id, req, 'rejected', body?.note);
   }
@@ -216,7 +216,7 @@ export class TimesheetsController implements OnModuleInit {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const pending = await this.workflowsSvc.findPending(db, 'timesheet_periods', id, APPROVE_TIMESHEET_WORKFLOW_NAME);
+    const pending = await this.workflowsSvc.findPending(db, 'project_timesheets', id, APPROVE_TIMESHEET_WORKFLOW_NAME);
     if (pending) return this.workflowsSvc.resolve(db, pending.id, callerId, outcome, note);
     return this.legacyReview(db, id, callerId, outcome, note);
   }
@@ -229,9 +229,9 @@ export class TimesheetsController implements OnModuleInit {
     note?: string,
   ) {
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
-      .from(timesheet_periods)
-      .where(eq(timesheet_periods.id, id));
+      .select({ organization_id: project_timesheets.organization_id, status: project_timesheets.status, user_id: project_timesheets.user_id })
+      .from(project_timesheets)
+      .where(eq(project_timesheets.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
     // Only that person's own manager may review their period — an org admin may always override.
     const isAdmin = await isOrgAdmin(db, period.organization_id, callerId);
@@ -245,33 +245,33 @@ export class TimesheetsController implements OnModuleInit {
       reviewed_at: new Date().toISOString(),
       review_note: note?.trim() || null,
     };
-    await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
+    await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, id));
     void this.audit
-      .record(period.organization_id, callerId, `timesheet.${newStatus === 'approved' ? 'approve' : 'reject'}`, 'timesheet_period', id, note ? { note } : undefined)
+      .record(period.organization_id, callerId, `timesheet.${newStatus === 'approved' ? 'approve' : 'reject'}`, 'project_timesheet', id, note ? { note } : undefined)
       .catch(() => {});
-    void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
+    void this.versions.record('project_timesheets', id, 'update_delta', callerId, patch).catch(() => {});
     if (newStatus === 'approved') await this.balances.applyTimesheetApproval(db, id);
     return { ok: true };
   }
 
   /** Admin-only undo: an approved period can be reopened for correction. */
-  @Post('timesheet-periods/:id/reopen')
+  @Post('project-timesheets/:id/reopen')
   async reopen(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status })
-      .from(timesheet_periods)
-      .where(eq(timesheet_periods.id, id));
+      .select({ organization_id: project_timesheets.organization_id, status: project_timesheets.status })
+      .from(project_timesheets)
+      .where(eq(project_timesheets.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgAdmin(db, period.organization_id, callerId))) return { ok: false, error: 'forbidden' };
     if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
     const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
-    await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
-    void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
-    void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
+    await db.update(project_timesheets).set(patch).where(eq(project_timesheets.id, id));
+    void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'project_timesheet', id).catch(() => {});
+    void this.versions.record('project_timesheets', id, 'update_delta', callerId, patch).catch(() => {});
     await this.balances.reverseTimesheetApproval(db, id);
     return { ok: true };
   }
@@ -282,14 +282,14 @@ export class TimesheetsController implements OnModuleInit {
    * timesheet" workflow row, assigned to that person's manager — see
    * WorkflowsController for how the manager actually approves/rejects it.
    */
-  @Post('timesheet-periods/:id/request-reopen')
+  @Post('project-timesheets/:id/request-reopen')
   async requestReopen(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
-      .from(timesheet_periods)
-      .where(eq(timesheet_periods.id, id));
+      .select({ organization_id: project_timesheets.organization_id, status: project_timesheets.status, user_id: project_timesheets.user_id })
+      .from(project_timesheets)
+      .where(eq(project_timesheets.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
@@ -302,7 +302,7 @@ export class TimesheetsController implements OnModuleInit {
     const managerUserId = await membershipManagerId(db, period.organization_id, callerId);
     if (!managerUserId) return { ok: false, error: 'no-manager-to-ask' };
 
-    const existingPending = await this.workflowsSvc.findPending(db, 'timesheet_periods', id, REOPEN_TIMESHEET_WORKFLOW_NAME);
+    const existingPending = await this.workflowsSvc.findPending(db, 'project_timesheets', id, REOPEN_TIMESHEET_WORKFLOW_NAME);
     if (existingPending) return { ok: false, error: 'already-requested' };
 
     const definition = await this.workflowsSvc.ensureDefinition(
@@ -317,14 +317,14 @@ export class TimesheetsController implements OnModuleInit {
           assignTo: 'manager',
           onApprove: { action: 'timesheet.reopen' },
           onReject: { action: 'none' },
-          source: 'Timesheet Period',
+          source: 'Project Timesheet',
           source_name: 'getSourceTitle',
         },
       ],
     );
     const workflow = await this.workflowsSvc.createWorkflow(db, {
       workflowDefId: definition.workflow_def_id,
-      sourceTable: 'timesheet_periods',
+      sourceTable: 'project_timesheets',
       sourceTableUuid: id,
       step: 'manager_review',
       assignedToUserId: [managerUserId],
@@ -333,19 +333,19 @@ export class TimesheetsController implements OnModuleInit {
       actorUserId: callerId,
       notification: { title: 'Reopen request for an approved timesheet', body: reason },
     });
-    void this.audit.record(period.organization_id, callerId, 'timesheet.request-reopen', 'timesheet_period', id, { reason }).catch(() => {});
+    void this.audit.record(period.organization_id, callerId, 'timesheet.request-reopen', 'project_timesheet', id, { reason }).catch(() => {});
     return { ok: true, workflowId: workflow.id };
   }
 
   /** The most recent reopen-request workflow for this period (any status), so the owner's UI can show where it stands. */
-  @Get('timesheet-periods/:id/reopen-request')
+  @Get('project-timesheets/:id/reopen-request')
   async reopenRequest(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return null;
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, user_id: timesheet_periods.user_id })
-      .from(timesheet_periods)
-      .where(eq(timesheet_periods.id, id));
+      .select({ organization_id: project_timesheets.organization_id, user_id: project_timesheets.user_id })
+      .from(project_timesheets)
+      .where(eq(project_timesheets.id, id));
     if (!period) return null;
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return null;
@@ -360,7 +360,7 @@ export class TimesheetsController implements OnModuleInit {
         finished: workflows.workflow_step_finished,
       })
       .from(workflows)
-      .where(and(eq(workflows.source_table, 'timesheet_periods'), eq(workflows.source_table_uuid, id)))
+      .where(and(eq(workflows.source_table, 'project_timesheets'), eq(workflows.source_table_uuid, id)))
       .orderBy(desc(workflows.workflow_started))
       .limit(1);
     return row ?? null;

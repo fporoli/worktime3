@@ -390,39 +390,6 @@ export const subprojects = pgTable("subprojects", {
 	unique("uq_subprojects_project_name").on(table.project_id, table.name),
 ]);
 
-export const timesheet_periods = pgTable("timesheet_periods", {
-	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
-	organization_id: uuid().notNull(),
-	user_id: uuid().notNull(),
-	period_start: date().notNull(),
-	period_end: date().notNull(),
-	status: timesheet_status().default('open').notNull(),
-	submitted_at: timestamp({ withTimezone: true, mode: 'string' }),
-	reviewed_by_user_id: uuid(),
-	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
-	review_note: text(),
-}, (table) => [
-	index("idx_timesheet_periods_org_status").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("idx_timesheet_periods_user").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.period_start.asc().nullsLast().op("uuid_ops")),
-	foreignKey({
-			columns: [table.organization_id],
-			foreignColumns: [organizations.id],
-			name: "timesheet_periods_organization_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.user_id],
-			foreignColumns: [users.id],
-			name: "timesheet_periods_user_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.reviewed_by_user_id],
-			foreignColumns: [users.id],
-			name: "timesheet_periods_reviewed_by_user_id_fkey"
-		}).onDelete("set null"),
-	unique("uq_timesheet_period").on(table.organization_id, table.user_id, table.period_start),
-	check("chk_timesheet_period_order", sql`period_end > period_start`),
-]);
-
 export const project_times = pgTable("project_times", {
 	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
 	user_id: uuid().notNull(),
@@ -483,6 +450,39 @@ export const documents = pgTable("documents", {
 			foreignColumns: [users.id],
 			name: "documents_uploaded_by_user_id_fkey"
 		}).onDelete("set null"),
+]);
+
+export const project_timesheets = pgTable("project_timesheets", {
+	id: uuid().default(sql`uuid_generate_v4()`).primaryKey().notNull(),
+	organization_id: uuid().notNull(),
+	user_id: uuid().notNull(),
+	period_start: date().notNull(),
+	period_end: date().notNull(),
+	status: timesheet_status().default('open').notNull(),
+	submitted_at: timestamp({ withTimezone: true, mode: 'string' }),
+	reviewed_by_user_id: uuid(),
+	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	review_note: text(),
+}, (table) => [
+	index("idx_project_timesheets_org_status").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("enum_ops")),
+	index("idx_project_timesheets_user").using("btree", table.user_id.asc().nullsLast().op("uuid_ops"), table.period_start.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.organization_id],
+			foreignColumns: [organizations.id],
+			name: "project_timesheets_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "project_timesheets_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.reviewed_by_user_id],
+			foreignColumns: [users.id],
+			name: "project_timesheets_reviewed_by_user_id_fkey"
+		}).onDelete("set null"),
+	unique("uq_project_timesheet").on(table.organization_id, table.user_id, table.period_start),
+	check("chk_project_timesheet_order", sql`period_end > period_start`),
 ]);
 
 export const static_data = pgTable("static_data", {

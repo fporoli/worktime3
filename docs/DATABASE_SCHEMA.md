@@ -238,11 +238,11 @@ Month-end lock/approve state for a person's booked hours.
 
 ```mermaid
 erDiagram
-    ORGANIZATIONS ||--o{ TIMESHEET_PERIODS : "locks by month"
-    USERS ||--o{ TIMESHEET_PERIODS : "owns"
-    USERS ||--o{ TIMESHEET_PERIODS : "reviewed_by_user_id"
+    ORGANIZATIONS ||--o{ PROJECT_TIMESHEETS : "locks by month"
+    USERS ||--o{ PROJECT_TIMESHEETS : "owns"
+    USERS ||--o{ PROJECT_TIMESHEETS : "reviewed_by_user_id"
 
-    TIMESHEET_PERIODS {
+    PROJECT_TIMESHEETS {
         uuid id PK
         uuid organization_id FK
         uuid user_id FK
@@ -257,7 +257,7 @@ erDiagram
 ```
 
 > One period per `(organization_id, user_id, period_start)` —
-> `uq_timesheet_period`. Work-time writes are rejected once the covering
+> `uq_project_timesheet`. Work-time writes are rejected once the covering
 > period is `submitted` or `approved`.
 
 ## Attendance & Balances (4 tables)
@@ -390,7 +390,7 @@ erDiagram
 ## Expenses (3 tables)
 
 Employees log ad hoc expense line items and bundle a self-chosen subset into
-an expense report for approval — unlike `timesheet_periods` (an implicit
+an expense report for approval — unlike `project_timesheets` (an implicit
 date-range envelope), a report here is explicit, so `expense_report_items`
 links specific expenses to specific reports.
 

@@ -277,7 +277,7 @@ export default function App() {
       return;
     }
     if (n.source_table === 'expense_reports') setSection('expenseReports');
-    else if (n.source_table === 'timesheet_periods') setSection('timesheet');
+    else if (n.source_table === 'project_timesheets') setSection('timesheet');
   }
 
   /** Switch the active organization: role is derived automatically; back out of a section it can no longer see. */

@@ -166,7 +166,7 @@ export async function isPeriodLocked(
   dateOrTimestamp: string,
 ): Promise<boolean> {
   const rows = await db.execute(
-    sql`SELECT 1 FROM timesheet_periods
+    sql`SELECT 1 FROM project_timesheets
         WHERE organization_id = ${organizationId} AND user_id = ${userId}
           AND status IN ('submitted', 'approved')
           AND period_start <= ${dateOrTimestamp}::date AND period_end > ${dateOrTimestamp}::date

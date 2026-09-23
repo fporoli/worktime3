@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
 import type { Db } from './db.service';
 import { minutesOf } from './time-bucket.util';
-import { absences, organizations, organization_memberships, timesheet_periods, work_time_balance_entries, work_time_balances, work_times } from './db/schema';
+import { absences, organizations, organization_memberships, project_timesheets, work_time_balance_entries, work_time_balances, work_times } from './db/schema';
 
 export type BalanceType = 'overtime' | 'vacation';
 
@@ -133,13 +133,13 @@ export class BalancesService {
   async applyTimesheetApproval(db: Db, periodId: string): Promise<void> {
     const [period] = await db
       .select({
-        organization_id: timesheet_periods.organization_id,
-        user_id: timesheet_periods.user_id,
-        period_start: timesheet_periods.period_start,
-        period_end: timesheet_periods.period_end,
+        organization_id: project_timesheets.organization_id,
+        user_id: project_timesheets.user_id,
+        period_start: project_timesheets.period_start,
+        period_end: project_timesheets.period_end,
       })
-      .from(timesheet_periods)
-      .where(eq(timesheet_periods.id, periodId));
+      .from(project_timesheets)
+      .where(eq(project_timesheets.id, periodId));
     if (!period) return;
 
     const sessions = await db
@@ -180,7 +180,7 @@ export class BalancesService {
       organizationId: period.organization_id,
       userId: period.user_id,
       balanceType: 'overtime',
-      sourceTable: 'timesheet_periods',
+      sourceTable: 'project_timesheets',
       sourceTableUuid: periodId,
       targetMinutes,
       actualMinutes,
@@ -199,7 +199,7 @@ export class BalancesService {
       .from(work_time_balance_entries)
       .where(
         and(
-          eq(work_time_balance_entries.source_table, 'timesheet_periods'),
+          eq(work_time_balance_entries.source_table, 'project_timesheets'),
           eq(work_time_balance_entries.source_table_uuid, periodId),
           eq(work_time_balance_entries.balance_type, 'overtime'),
         ),
@@ -212,7 +212,7 @@ export class BalancesService {
       organizationId: entry.organization_id,
       userId: entry.user_id,
       balanceType: 'overtime',
-      sourceTable: 'timesheet_periods',
+      sourceTable: 'project_timesheets',
       sourceTableUuid: periodId,
       deltaMinutes: -Number(entry.delta_minutes),
       note: 'reversed: period reopened',
