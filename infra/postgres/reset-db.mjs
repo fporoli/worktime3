@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Drops and recreates the `public` schema on $DATABASE_URL, leaving the auth
-// schema (Keycloak) untouched and the database empty for `db:migrate` +
-// `db:seed` to rebuild. Used by `npm run db:clean` / `db:reset`.
+// schema (Keycloak) untouched and the database empty for `db:migrate:*` +
+// `db:seed:*` to rebuild. Used by `npm run db:clean:*` / `db:reset:*`.
 //
 // Refuses a non-local target unless --force is passed, so a DATABASE_URL that
 // happens to point at a shared or remote database can't be wiped by a stray
-// `npm run db:clean`.
+// `npm run db:clean:*`.
 import { execFileSync } from 'node:child_process';
 
 const databaseUrl = process.env.DATABASE_URL;

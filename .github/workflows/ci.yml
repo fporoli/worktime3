@@ -29,8 +29,8 @@ jobs:
       - run: npm run build --workspaces
       - run: npm run test --workspaces
       # Fails the build if a changelog doesn't apply cleanly to a fresh database.
-      - run: npm run db:migrate
-      - run: npm run db:seed
+      - run: node infra/liquibase/migrate.mjs
+      - run: node infra/postgres/run-seed.mjs infra/postgres/seeds/seed.dev.sql
   pages:
     runs-on: ubuntu-latest
     needs: build-test

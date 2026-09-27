@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Applies infra/liquibase/changelog to $DATABASE_URL via the dockerized
-// Liquibase image (built from ./Dockerfile). Used by `npm run db:migrate`
+// Liquibase image (built from ./Dockerfile). Used by `npm run db:migrate:*`
 // and CI; docker-compose environments run the `migrate` service directly
 // instead (see any compose/docker-compose.*.yml).
 import { execFileSync } from 'node:child_process';

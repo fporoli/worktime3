@@ -47,7 +47,7 @@ function startBackground(name, command, args, cwd) {
 
 const started = [
   startBackground('api', 'node', ['--env-file=../../.env', 'dist/main.js'], join(root, 'apps/api')),
-  startBackground('web', join(root, 'apps/web/node_modules/.bin/vite'), ['--port', '3001'], join(root, 'apps/web')),
+  startBackground('web', join(root, 'node_modules/.bin/vite'), ['--port', '3001'], join(root, 'apps/web')),
 ];
 
 // A crash-on-boot (e.g. the port already being held by something else) exits well within

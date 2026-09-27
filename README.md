@@ -73,7 +73,7 @@ ships without a driver):
 - **Compose environments**: the `migrate` service in every
   `compose/docker-compose.*.yml` runs it automatically before `api`/Keycloak
   start (`depends_on: migrate: condition: service_completed_successfully`).
-- **Outside compose** (a host-run API, or CI): `npm run db:migrate` — a thin
+- **Outside compose** (a host-run API, or CI): `npm run db:migrate:local` — a thin
   Node wrapper (`infra/liquibase/migrate.mjs`) that builds the image and
   points it at `$DATABASE_URL`.
 
@@ -84,7 +84,7 @@ introspecting the live database — never hand-edit them.
 **Making a schema change:**
 1. Add a new changelog file (e.g. `003-my-change.sql`) with its own
    `--changeset` header(s); add it to `db.changelog-master.xml`.
-2. Apply it: `npm run db:migrate` (or let the `migrate` compose service do
+2. Apply it: `npm run db:migrate:local` (or let the `migrate` compose service do
    it on next `up`).
 3. Regenerate types: `npm run db:introspect` (from `apps/api`, or
    `npm run db:introspect` at the repo root).
@@ -95,12 +95,13 @@ applied changelog file — Liquibase checksums each changeset and will refuse
 to reapply a modified one; add a new changeset instead.
 
 Seed data (`infra/postgres/seeds/seed.dev.sql`) is separate from schema
-migrations and stays manual: `npm run db:seed`. `npm run db:clean` drops and
-recreates the `public` schema (refuses a non-local `DATABASE_URL` unless
-passed `--force`); `npm run db:reset` chains clean + migrate + seed in one
-go. Each has a `:dockerdev` variant (`db:migrate:dockerdev`, `db:seed:dockerdev`,
-`db:clean:dockerdev`, `db:reset:dockerdev`) that targets `.env.dockerdev` — the
-`dockerdev` stack on port 5432 — instead of `.env`'s port-5431 stack.
+migrations and stays manual: `npm run db:seed:local`. `npm run db:clean:local`
+drops and recreates the `public` schema (refuses a non-local `DATABASE_URL`
+unless passed `--force`); `npm run db:reset:local` chains clean + migrate + seed
+in one go. These `:local` scripts read `.env` (the port-5431 stack); each has a
+`:dockerdev` variant (`db:migrate:dockerdev`, `db:seed:dockerdev`,
+`db:clean:dockerdev`, `db:reset:dockerdev`) that reads `.env.dockerdev` — the
+`dockerdev` stack on port 5432 — instead.
 
 ## Ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
@@ -117,7 +118,7 @@ go. Each has a `:dockerdev` variant (`db:migrate:dockerdev`, `db:seed:dockerdev`
 cp .env.example .env
 docker compose -f compose/docker-compose.local.yml up -d   # pg + migrate + keycloak + mailpit
 npm install
-npm run db:seed
+npm run db:seed:local
 npm run build --workspaces
 npm run test --workspaces
 ```
@@ -174,7 +175,8 @@ Azure link/unlink: `POST /api/v1/auth/azure/link`, `DELETE /api/v1/auth/azure/li
 ## CI
 
 `.github/workflows/ci.yml` builds, tests, and — against a throwaway Postgres
-service container — runs `db:migrate` then `db:seed`, so a broken changelog
+service container — runs the migrate and seed scripts directly against its
+`DATABASE_URL`, so a broken changelog
 fails the build before it reaches any real environment.
 
 ## Deploy
