@@ -1,10 +1,11 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
     {
       "type": "node",
       "request": "launch",
-      "name": "API: Debug",
+      "name": "Local API: Debug",
       "cwd": "${workspaceFolder}/apps/api",
       "program": "${workspaceFolder}/apps/api/dist/main.js",
       "envFile": "${workspaceFolder}/.env",
@@ -17,17 +18,44 @@
     {
       "type": "chrome",
       "request": "launch",
-      "name": "Web: Launch Chrome",
+      "name": "Local Web: Launch Chrome",
       "url": "http://localhost:3001",
       "webRoot": "${workspaceFolder}/apps/web",
       "preLaunchTask": "web: dev server",
       "sourceMaps": true
-    }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "LocDev API: Debug",
+      "cwd": "${workspaceFolder}/apps/api",
+      "program": "${workspaceFolder}/apps/api/dist/main.js",
+      "envFile": "${workspaceFolder}/.env.local",
+      "preLaunchTask": "api: build",
+      "outFiles": ["${workspaceFolder}/apps/api/dist/**/*.js"],
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "LocDev Web: Launch Chrome",
+      "url": "http://localhost:3002",
+      "webRoot": "${workspaceFolder}/apps/web",
+      "preLaunchTask": "web: dev server",
+      "sourceMaps": true
+    },
   ],
   "compounds": [
     {
-      "name": "Full Stack: API + Web",
-      "configurations": ["API: Debug", "Web: Launch Chrome"],
+      "name": "Local Full Stack: API + Web",    
+      "configurations": ["Local API: Debug", "Local Web: Launch Chrome"],
+      "stopAll": true
+    },
+    {
+      "name": "Local Development Full Stack: API + Web",
+      "configurations": ["LocDev API: Debug", "LocDev Web: Launch Chrome"],
       "stopAll": true
     }
   ]
