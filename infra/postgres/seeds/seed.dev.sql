@@ -9,7 +9,7 @@ VALUES
   ('33333333-3333-3333-3333-333333333333', 'ulla@acme.example', 'Ulla User', 'Ulla', 'User', 'en', 'Europe/Zurich', 'active'),
   ('33333333-3333-3333-3333-333333333334', 'urs@acme.example', 'Urs User', 'Uli', 'User', 'en', 'Europe/Zurich', 'active'),
   ('33333333-3333-3333-3333-333333333335', 'ueli@acme.example', 'Ueli User', 'Ueli', 'User', 'de', 'Europe/Zurich', 'active'),
-  ('33333333-3333-3333-3333-333333333336', 'ueli2@acme.example', 'Ueli2 User', 'Ueli2', 'User', 'de', 'Europe/Zurich', 'inactive'),
+  ('33333333-3333-3333-3333-333333333336', 'ueli2@acme.example', 'Ueli2 User', 'Ueli2', 'User', 'de', 'Europe/Zurich', 'deactivated'),
   ('44444444-4444-4444-4444-444444444444', 'hans@acme.example', 'Hans Hansi', 'Hans', 'Hansi', 'de', 'Europe/Zurich', 'active')
 ON CONFLICT (email) DO NOTHING;
 
@@ -25,7 +25,7 @@ INSERT INTO organization_memberships (id, organization_id, user_id, status, join
 VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'active', to_date('2023-01-01', 'YYYY-MM-DD')),
   ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-02-01', 'YYYY-MM-DD')),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222223', 'active', to_date('2021-01-01', 'YYYY-MM-DD')),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222223', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222223', 'active', to_date('2021-01-01', 'YYYY-MM-DD')),
   ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'active', to_date('2020-01-01', 'YYYY-MM-DD')),
   ('aaaaaaaa-aaaa-aaaa-aaaa-333333333334', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333334', 'active', to_date('2022-01-01', 'YYYY-MM-DD')),
   ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333335', 'active', to_date('2023-01-01', 'YYYY-MM-DD')),
@@ -37,12 +37,17 @@ VALUES
   ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-01-01', 'YYYY-MM-DD'))
 ON CONFLICT (organization_id, user_id) DO UPDATE SET status = EXCLUDED.status;
 
--- Roles per membership (a membership can hold more than one; each of these holds exactly one for now).
+-- Assign each demo membership its intended role.
 INSERT INTO membership_roles (membership_id, role_id)
 VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', '00000000-0000-0000-0000-000000000002'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', '00000000-0000-0000-0000-000000000006'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222223', '00000000-0000-0000-0000-000000000006'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', '00000000-0000-0000-0000-000000000003'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333334', '00000000-0000-0000-0000-000000000003'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', '00000000-0000-0000-0000-000000000003'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333336', '00000000-0000-0000-0000-000000000003'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-444444444444', '00000000-0000-0000-0000-000000000003'),
   ('eeeeeeee-eeee-eeee-eeee-111111111111', '00000000-0000-0000-0000-000000000002'),
   ('eeeeeeee-eeee-eeee-eeee-222222222222', '00000000-0000-0000-0000-000000000003')
 ON CONFLICT (membership_id, role_id) DO NOTHING;
@@ -93,8 +98,8 @@ UPDATE roles SET translations = translations || '{"de":"Benutzer"}'::jsonb WHERE
 INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash)
 VALUES
   ('11111111-1111-1111-1111-111111111111', 'password', 'admin@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
-  ('22222222-2222-2222-2222-222222222222', 'password', 'manager@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
-  ('33333333-3333-3333-3333-333333333333', 'password', 'user@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6')
+  ('22222222-2222-2222-2222-222222222222', 'password', 'marta@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
+  ('33333333-3333-3333-3333-333333333333', 'password', 'ulla@acme.example', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6')
 ON CONFLICT DO NOTHING;
 
 -- Pending invitation for the login screen's "invited user" demo (token: dev-invite-0001).

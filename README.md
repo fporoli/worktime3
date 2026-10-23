@@ -109,12 +109,18 @@ migrations and stays manual: `npm run db:seed`.
 
 ```sh
 cp .env.example .env
+. ./env.sh
 docker compose -f compose/docker-compose.local.yml up -d   # pg + migrate + keycloak + mailpit
 npm install
 npm run db:seed
 npm run build --workspaces
 npm run test --workspaces
 ```
+
+The seed commands read `DATABASE_URL` from `.env` when it is not already set
+in the shell.
+
+On Windows Command Prompt, load the same `.env` with `call env.bat`.
 
 Then run the API and web app on the host (separate terminals):
 
