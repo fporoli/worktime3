@@ -8,7 +8,7 @@ for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%~dp0.env") do set "%%A=%%B
 
 rem psql itself reads PG* names rather than POSTGRES_*.
 set "PGHOST=%POSTGRES_HOST%"
-set "PGPORT=%PG_PORT%"
+set "PGPORT=%POSTGRES_PORT%"
 set "PGUSER=%POSTGRES_USER%"
 set "PGPASSWORD=%POSTGRES_PASSWORD%"
 set "PGDATABASE=%POSTGRES_DB%"
