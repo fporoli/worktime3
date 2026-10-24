@@ -17,7 +17,7 @@
     "db:introspect": "npm run db:introspect --workspace=@worktime3/api"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "devDependencies": {
     "pg": "^8.23.0",

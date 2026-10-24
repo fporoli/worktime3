@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 # Install from the root lockfile so the image gets exactly the versions the host build/tests use —
 # a bare `npm install` resolved newer semver-compatible releases (e.g. nodemailer shipping its own,
