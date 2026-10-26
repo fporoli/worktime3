@@ -57,9 +57,6 @@ export async function sendMail(options: MailOptions, timeoutMs = 5000): Promise<
       to: options.to,
       subject: options.subject,
       text: options.text,
-      // Every message here is plain ASCII — keep the wire format simple/predictable
-      // instead of nodemailer's auto quoted-printable/base64 detection.
-      textEncoding: '7bit',
     });
   } finally {
     transport.close();
