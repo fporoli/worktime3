@@ -63,3 +63,4 @@ jobs:
           build-args: |
             VITE_API_URL=https://wtservice.turbotapir.com/api/v1
             VITE_KEYCLOAK_URL=https://wtauth.turbotapir.com
+            VITE_SHOW_DEMO_ACCOUNTS=true

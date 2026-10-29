@@ -3,6 +3,7 @@ import { Alert, Box, Button, Container, Divider, Paper, Tab, Tabs, TextField, Ty
 import { ensureSsoInit, keycloak, startSsoLogin } from './auth';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
+const SHOW_DEMO_ACCOUNTS = import.meta.env.VITE_SHOW_DEMO_ACCOUNTS !== 'false';
 
 export interface Membership {
   organizationId: string;
@@ -236,15 +237,19 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
             <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
             <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
             <Button variant="contained" disabled={busy} onClick={() => submitLogin(email, password)}>Login</Button>
-            <Divider />
-            <Typography variant="caption" color="text.secondary">DEMO ACCOUNTS (password: {DEMO_PASSWORD})</Typography>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              {DEMO_ACCOUNTS.map((a) => (
-                <Button key={a.email} variant="outlined" size="small" disabled={busy} onClick={() => submitLogin(a.email, DEMO_PASSWORD)}>
-                  {a.label}
-                </Button>
-              ))}
-            </Box>
+            {SHOW_DEMO_ACCOUNTS && (
+              <>
+                <Divider />
+                <Typography variant="caption" color="text.secondary">DEMO ACCOUNTS (password: {DEMO_PASSWORD})</Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {DEMO_ACCOUNTS.map((a) => (
+                    <Button key={a.email} variant="outlined" size="small" disabled={busy} onClick={() => submitLogin(a.email, DEMO_PASSWORD)}>
+                      {a.label}
+                    </Button>
+                  ))}
+                </Box>
+              </>
+            )}
           </Box>
         )}
 

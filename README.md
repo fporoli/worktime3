@@ -1,7 +1,8 @@
 # worktime3
 
 Enterprise + individual time tracking: NestJS API, React+MUI web, Postgres,
-Keycloak (same database, `auth` schema), Caddy as the edge reverse proxy.
+Keycloak (same database, `auth` schema), and Caddy as the edge reverse proxy
+where the deployment uses it.
 Schema is versioned with Liquibase; the API talks to Postgres through
 Drizzle ORM, typed against that schema.
 
@@ -16,7 +17,9 @@ apps/web  (React + MUI, Vite)  --HTTP-->  apps/api  (NestJS)  --Drizzle-->  Post
                                           (IdP; stores its own tables in the
                                            `auth` schema of the same database)
 
-Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
+Caddy fronts web, API, and Keycloak in the `local` and `azure` Compose
+environments. The VPS stack uses the shared edge Caddy; `dev` accesses its
+host-run API and web app directly.
 ```
 
 - **apps/web** — React 18 + MUI + Vite. One PascalCase file per page,
@@ -49,12 +52,13 @@ Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
   times/expenses, run manually, separate from schema migrations.
 - **infra/keycloak** — realm export (`realm-worktime.json`) imported on
   Keycloak startup.
-- **infra/caddy** — one `Caddyfile.<env>` per environment.
-- **compose/docker-compose.{dev,local,vps,azure}.yml** — four environments,
-  same shape (see Ports below): `pg`, a one-shot `migrate` service, Keycloak,
-  and (except `dev`) `api`/`web`/`caddy` as containers too. `dev` runs
-  `api`/`web` on the host instead against dockerized `pg`/Keycloak/Mailpit —
-  this is the normal day-to-day setup.
+- **infra/caddy** — environment-specific Caddyfiles plus the shared VPS edge
+  proxy configuration.
+- **compose/docker-compose.{dev,local,vps,azure}.yml** — environment-specific
+  stacks. `dev` runs Postgres, migrations, Keycloak, and Mailpit in Docker,
+  with API/web on the host. `local` and `azure` run the full stack, including
+  Caddy, in Docker. `vps` connects its app containers to the shared Postgres
+  and edge-proxy network.
 
 ## Database: Liquibase (schema) + Drizzle (queries)
 
@@ -102,14 +106,17 @@ to reapply a modified one; add a new changeset instead.
 Seed data (`infra/postgres/seeds/seed.sql`) is separate from schema
 migrations and stays manual: `npm run db:seed`.
 
-## Ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
+## Host ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
 | Env | N | pg | keycloak | web | api |
 |---|---|----|----------|-----|-----|
 | dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
 | local (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
-| VPS | 3 | 5433 | 8093 | 3003 | 8003 |
+| VPS (shared edge network; no host ports published) | — | shared DB | edge | edge | edge |
 | Azure | 4 | 5434 | 8094 | 3004 | 8004 |
+
+On the VPS, the shared edge proxy routes `wt.turbotapir.com` to the web app,
+`wtservice.turbotapir.com` to the API, and `wtauth.turbotapir.com` to Keycloak.
 
 ## Dev and Local deployment
 
@@ -152,8 +159,10 @@ npm run db:seed
 
 ### Demo accounts
 
-The login screen's demo buttons use the seeded users `admin@acme.com`,
+Local dev builds show demo login buttons for the seeded users `admin@acme.com`,
 `marta@acme.com` (manager) and `ulla@acme.com` (user), password `dev1234`.
+The VPS production build hides these shared demo credentials. Provision real
+Keycloak accounts for VPS sign-in; the realm import does not create users.
 Invite token `dev-invite-0001` accepts an invitation as `invited@acme.com`.
 
 ## Roles

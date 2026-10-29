@@ -12,8 +12,10 @@ COPY . .
 # at whatever happens to be running on a dev machine's native API port instead of its own backend.
 ARG VITE_API_URL
 ARG VITE_KEYCLOAK_URL
+ARG VITE_SHOW_DEMO_ACCOUNTS
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL
+ENV VITE_SHOW_DEMO_ACCOUNTS=$VITE_SHOW_DEMO_ACCOUNTS
 RUN npm run build --workspace=@worktime3/web
 FROM nginx:alpine
 # --from=build, not a bare path: without it this copies apps/web/dist from the BUILD CONTEXT

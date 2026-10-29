@@ -2,15 +2,18 @@
 
 Postgres · Liquibase · Drizzle ORM
 
-30 tables across twelve subsystems, all scoped to a tenant through `organization_id` —
-which is `NOT NULL` on `project_times`, since every entry belongs to an organization
-whether or not it's tagged to a project. Each section below is a self-contained
-entity-relationship diagram for one subsystem; tables that also appear elsewhere
-(mainly `organizations` and `users`) are shown with just their primary key for
-context — their full column list lives in the section where they're introduced.
+31 application tables across thirteen subsystems. Many tenant-owned tables carry
+`organization_id` directly; global tables and tables scoped through a parent
+relationship do not. `project_times.organization_id` is required because every
+entry belongs to an organization whether or not it is tagged to a project. Each
+section below is a self-contained entity-relationship diagram for one subsystem;
+tables that also appear elsewhere (mainly `organizations` and `users`) are shown
+with just their primary key for context — their full column list lives in the
+section where they're introduced.
 
 **Notation:** `PK` primary key · `FK` foreign key · `UK` unique constraint.
-Timestamps (`created_at`/`updated_at`) are omitted from the diagrams for clarity.
+Routine creation/update timestamps are omitted for clarity; timestamps that are
+part of a table's domain data or history are shown.
 
 ## Identity & Organizations (4 tables)
 
@@ -31,6 +34,7 @@ erDiagram
         varchar display_name
         enum status
         varchar locale
+        jsonb basicdata "personal data"
     }
     USER_IDENTITIES {
         uuid id PK
@@ -65,6 +69,30 @@ erDiagram
 > Folded in from two 1:1 tables that used to sit beside `organizations` —
 > `organization_settings` (flattened into real columns) and
 > `sso_configurations` (kept as the `sso_config` JSON blob, same field names).
+
+## Basic Data History (1 table)
+
+Each user has a JSON document for personal data on `users.basicdata`. Change
+requests and approved/rejected revisions are recorded in a single history row
+per user; the application owns the shape and status values in its `history`
+array.
+
+```mermaid
+erDiagram
+    USERS ||--o| BASICDATA_VERSIONS : "tracks changes for"
+    USERS ||--o{ BASICDATA_VERSIONS : "lastmodified_by_user_id"
+
+    BASICDATA_VERSIONS {
+        uuid id PK
+        uuid user_id FK UK
+        integer version_nr "default 0, check: >= 0"
+        timestamptz created
+        timestamptz lastmodified
+        uuid lastmodified_by_user_id FK "nullable"
+        jsonb history "approved / changerequested / rejected revisions"
+    }
+    USERS { uuid id PK }
+```
 
 ## Access Control / RBAC (6 tables)
 
@@ -108,7 +136,9 @@ erDiagram
         uuid organization_id FK
         uuid user_id FK
         enum status "active / invited / suspended"
+        timestamptz joined_at "nullable"
         uuid manager_user_id FK "nullable — who timesheet approvals route to; null = top of chain"
+        timestamptz exit_at "nullable — membership end; must be after joined_at when both are set"
         jsonb settings "free-form per-membership bucket: validity dates, planned holidays, etc."
     }
     MEMBERSHIP_ROLES {
@@ -614,6 +644,6 @@ the latter is free-form.
 
 ---
 
-Generated from `apps/api/src/db/schema.ts` (Drizzle ORM, introspected from the
-Liquibase-managed schema) on 2026-09-18. A styled, interactive version of this
+Refreshed against `apps/api/src/db/schema.ts` and the Liquibase changelogs on
+2026-10-29. A styled, interactive version of this
 reference is also published as a Claude artifact.
