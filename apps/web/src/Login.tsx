@@ -62,9 +62,9 @@ export function clearSession() {
 }
 
 const DEMO_ACCOUNTS = [
-  { email: 'admin@acme.example', label: 'Admin (Acme)' },
-  { email: 'marta@acme.example', label: 'Manager (Acme)' },
-  { email: 'ulla@acme.example', label: 'User (Acme)' },
+  { email: 'admin@acme.com', label: 'Admin (Acme)' },
+  { email: 'marta@acme.com', label: 'Manager (Acme)' },
+  { email: 'ulla@acme.com', label: 'User (Acme)' },
 ];
 const DEMO_PASSWORD = 'dev1234';
 const DEMO_INVITE_TOKEN = 'dev-invite-0001';
@@ -275,7 +275,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         {mode === 'invite' && (
           <Box sx={{ display: 'grid', gap: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Accept an organization invitation. Demo token <code>{DEMO_INVITE_TOKEN}</code> joins Acme as <code>invited@acme.example</code>.
+              Accept an organization invitation. Demo token <code>{DEMO_INVITE_TOKEN}</code> joins Acme as <code>invited@acme.com</code>.
             </Typography>
             <TextField label="Invitation token" value={token} onChange={(e) => setToken(e.target.value)} size="small" />
             <TextField label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />

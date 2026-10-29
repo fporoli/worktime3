@@ -4,7 +4,7 @@ case $- in
 esac
 
 set -a
-. ./.env
+. ./.env.local
 _env_sh_status=$?
 
 if [ "$_env_sh_allexport_was_set" -eq 1 ]; then

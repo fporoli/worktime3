@@ -19,15 +19,21 @@ apps/web  (React + MUI, Vite)  --HTTP-->  apps/api  (NestJS)  --Drizzle-->  Post
 Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
 ```
 
-- **apps/web** — React 18 + MUI + Vite. `Login.tsx` (local + Keycloak SSO +
-  invite-accept flows), `App.tsx` (time entry + overview), `Management.tsx`
-  (teams/projects/subprojects, admin+manager), `Invitations.tsx` (send/list/
-  revoke org invites, admin+manager), `AdminSettings.tsx` (static-data enums
-  + organization profile/domains/SSO, admin-only), `auth.ts` (Keycloak client
-  + token refresh), `aggregate.ts` (daily/weekly/monthly bucketing).
+- **apps/web** — React 18 + MUI + Vite. One PascalCase file per page,
+  lazy-loaded from `App.tsx` (nav drawer, session, org switcher, role gating):
+  `Login.tsx` (local + Keycloak SSO + invite-accept flows), `Home`,
+  project-time entry in `App.tsx`, `WorkTime` (check-in/out), `Absences`,
+  `Timesheet`, `Approvals`, `Expenses` / `ExpenseReports` /
+  `ExpenseProcessing`, `TeamHours`, `Management` (teams/projects/subprojects),
+  `Invitations`, `Users`, `AdminSettings` (static-data enums),
+  `OrganizationSettings`, `AuditLog`, `Assistant` (AI chat), plus
+  `NotificationBell`. `auth.ts` (Keycloak client + token refresh),
+  `aggregate.ts` (daily/weekly/monthly bucketing), `i18n.tsx` (en/de/fr/it).
 - **apps/api** — NestJS. One controller per resource
-  (`orgs`, `teams`, `projects` [+ subprojects], `project-time`, `users`,
-  `static-data`, `roles`, `audit`, `auth`). `access.ts` holds the
+  (`auth`, `users`, `basicdata`, `orgs`, `roles`, `teams`, `projects`
+  [+ subprojects], `project-time`, `work-time`, `absences`, `balances`,
+  `timesheets`, `expenses`, `expense-reports`, `workflows`, `static-data`,
+  `audit`, `assistant`, `notifications` [+ WebSocket gateway]). `access.ts` holds the
   authorization helpers every controller calls (`isOrgAdmin`,
   `isOrgManagerOrAdmin`, `callerUserId`, …) — resolved from the caller's
   validated JWT, never trusted from the request body. `jwt.ts`/`jwt.guard.ts`
@@ -39,16 +45,16 @@ Caddy fronts web+api+Keycloak per environment (compose/docker-compose.*.yml).
 - **packages/shared** — cross-cutting TS types/constants (role ids, RBAC
   permission matrix) mirrored — not yet consumed — by both apps.
 - **infra/liquibase** — the database schema's source of truth (see below).
-- **infra/postgres/seeds** — `seed.dev.sql`: demo org/users/projects/work
-  times, run manually, separate from schema migrations.
+- **infra/postgres/seeds** — `seed.sql`: demo orgs/users/projects/project
+  times/expenses, run manually, separate from schema migrations.
 - **infra/keycloak** — realm export (`realm-worktime.json`) imported on
   Keycloak startup.
 - **infra/caddy** — one `Caddyfile.<env>` per environment.
-- **compose/docker-compose.{local,dev,vps,azure}.yml** — four environments,
+- **compose/docker-compose.{dev,local,vps,azure}.yml** — four environments,
   same shape (see Ports below): `pg`, a one-shot `migrate` service, Keycloak,
-  and (except `local`) `api`/`web`/`caddy` as containers too. `local` runs
-  `api`/`web` on the host instead (`npm run dev` per workspace) against
-  dockerized `pg`/Keycloak/Mailpit — this is the normal day-to-day setup.
+  and (except `dev`) `api`/`web`/`caddy` as containers too. `dev` runs
+  `api`/`web` on the host instead against dockerized `pg`/Keycloak/Mailpit —
+  this is the normal day-to-day setup.
 
 ## Database: Liquibase (schema) + Drizzle (queries)
 
@@ -93,41 +99,60 @@ Never edit `schema.ts`/`relations.ts` by hand, and never edit an already-
 applied changelog file — Liquibase checksums each changeset and will refuse
 to reapply a modified one; add a new changeset instead.
 
-Seed data (`infra/postgres/seeds/seed.dev.sql`) is separate from schema
+Seed data (`infra/postgres/seeds/seed.sql`) is separate from schema
 migrations and stays manual: `npm run db:seed`.
 
 ## Ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
 | Env | N | pg | keycloak | web | api |
 |---|---|----|----------|-----|-----|
-| local dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
-| docker dev (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
+| dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
+| local (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
 | VPS | 3 | 5433 | 8093 | 3003 | 8003 |
 | Azure | 4 | 5434 | 8094 | 3004 | 8004 |
 
-## Local dev
+## Dev and Local deployment
+
+Each environment has its own env file: `.env.dev` (N=1) and `.env.local`
+(N=2), copied from `env.example.dev.cfg` / `env.example.local.cfg`.
+`env.dev.sh` / `env.local.sh` (Windows: `call env.dev.bat` /
+`call env.local.bat`) export that file's variables into the current shell;
+the npm `db:*` scripts read `DATABASE_URL` from there.
+
+**dev** (pg + Keycloak + Mailpit in Docker, API + web on the host):
 
 ```sh
-cp .env.example .env
-. ./env.sh
-docker compose -f compose/docker-compose.local.yml up -d   # pg + migrate + keycloak + mailpit
+cp env.example.dev.cfg .env.dev        # Windows: copy
+. ./env.dev.sh                         # Windows: call env.dev.bat
+docker compose -f compose/docker-compose.dev.yml up -d   # pg + migrate + keycloak + mailpit
 npm install
 npm run db:seed
 npm run build --workspaces
 npm run test --workspaces
 ```
 
-The seed commands read `DATABASE_URL` from `.env` when it is not already set
-in the shell.
-
-On Windows Command Prompt, load the same `.env` with `call env.bat`.
-
-Then run the API and web app on the host (separate terminals):
+Then run the API and web app on the host (separate terminals), or use the
+"Development Full Stack: API + Web" VS Code launch config:
 
 ```sh
-npm run start --workspace=@worktime3/api   # or: node apps/api/dist/main.js
-npm run dev --workspace=@worktime3/web     # vite, http://localhost:3001
+cd apps/api && node --env-file=../../.env.dev dist/main.js   # http://localhost:8001
+npm run dev --workspace=@worktime3/web                       # vite, http://localhost:3001
 ```
+
+**local** (everything in Docker, behind Caddy):
+
+```sh
+cp env.example.local.cfg .env.local
+. ./env.local.sh
+docker compose -f compose/docker-compose.local.yml up -d --build
+npm run db:seed
+```
+
+### Demo accounts
+
+The login screen's demo buttons use the seeded users `admin@acme.com`,
+`marta@acme.com` (manager) and `ulla@acme.com` (user), password `dev1234`.
+Invite token `dev-invite-0001` accepts an invitation as `invited@acme.com`.
 
 ## Roles
 
@@ -142,14 +167,15 @@ Keycloak realm `worktime` (see `infra/keycloak/realm-worktime.json`).
 ## Email
 
 The API sends mail via [nodemailer](https://nodemailer.com), configured from
-`SMTP_HOST/PORT/FROM/USER/PASSWORD/SECURE` (see `.env.example`). Sends are
+`SMTP_HOST/PORT/FROM/USER/PASSWORD/SECURE` (see `env.example.dev.cfg`). Sends are
 best-effort — a missing/misconfigured server never fails a request.
 
-- **`local` and `dev`** (non-prod): each runs its own
-  [Mailpit](https://github.com/axllent/mailpit) catcher — `local` on
-  `localhost:1025` / inbox UI `:8025`, `dev` on `:1026` / `:8026` (offset so
-  both can run at once) — and the `api` container's SMTP env vars already
-  point at it. No auth, nothing real is sent.
+- **`dev` and `local`** (non-prod): each runs its own
+  [Mailpit](https://github.com/axllent/mailpit) catcher — `dev` on
+  `localhost:1025` / inbox UI `:8025`, `local` on `:1026` / `:8026` (offset so
+  both can run at once). The host-run API in `dev` points at it via
+  `.env.dev`; the `api` container in `local` is wired to it in the compose
+  file. No auth, nothing real is sent.
 - **`vps`/`azure`**: `SMTP_HOST` is unset by default (mail silently no-ops
   until configured — nothing to do for a first deploy). Set
   `SMTP_HOST/PORT/USER/PASSWORD` (+ `SMTP_SECURE=true` for an implicit-TLS

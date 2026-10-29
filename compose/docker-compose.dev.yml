@@ -1,26 +1,28 @@
-# Distinct project name so `docker compose -f docker-compose.dev.yml up` never collides with
-# docker-compose.local.yml (same directory => same default project name => Compose treats
-# their same-named services, e.g. pg/keycloak/mailpit, as one and recreates them into this
-# file's config — different ports and containers instead of local.yml's own).
-# pg/Keycloak data lives on the host under ../data-dev (mirrors ../data-local for the `local`
-# profile) so it survives `docker compose down` and can be inspected directly.
-name: worktime-dev
+
+
+
+
 services:
   pg:
     image: postgres:16
-    ports: ["5432:5432"]
+    ports: ["5431:5432"]
     environment:
       POSTGRES_DB: worktime
       POSTGRES_USER: worktime
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
     volumes:
-      - ../data-dev/pg:/var/lib/postgresql/data
+      - ../data-local/pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U worktime"]
       interval: 2s
       timeout: 3s
       retries: 30
   # One-shot: applies infra/liquibase/changelog via Liquibase, then exits.
+  # Schema is no longer seeded through docker-entrypoint-initdb.d — that only
+  # ever ran once, on an empty volume, which is exactly how this local
+  # database went stale relative to schema.sql in the past. Liquibase tracks
+  # applied changesets in the database itself, so `migrate` is safe to rerun
+  # on every `docker compose up`.
   migrate:
     build: { context: ../infra/liquibase, dockerfile: Dockerfile }
     volumes:
@@ -35,15 +37,15 @@ services:
       pg: { condition: service_healthy }
   mailpit:
     image: axllent/mailpit
-    ports: ["1026:1025", "8026:8025"]
+    ports: ["1025:1025", "8025:8025"]
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
-      # intentional. Fine here — this catcher never leaves the compose network.
+      # intentional. Fine here — this catcher never leaves localhost, no real mail.
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
-    # No host port here — caddy is the single entrypoint, proxying :8092 to this container.
+    ports: ["8091:8080"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://pg:5432/worktime?currentSchema=auth
@@ -52,42 +54,9 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
     volumes:
-      - ../data-dev/kc:/opt/keycloak/data
+      - ../data-local/kc:/opt/keycloak/data
       - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start-dev", "--import-realm"]
     depends_on:
+      # Needs the `auth` schema, which migrate's first changeset creates.
       migrate: { condition: service_completed_successfully }
-  api:
-    build: { context: .., dockerfile: apps/api/Dockerfile }
-    # No host port here — caddy is the single entrypoint, proxying :8002 to this container.
-    environment:
-      DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:-worktime_dev_only}@pg:5432/worktime
-      API_PORT: 8000
-      # Local catcher by default (same as the `local` profile's Mailpit) — override
-      # SMTP_HOST/PORT/USER/PASSWORD/SECURE/FROM to point at a real relay instead.
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-      SMTP_FROM: ${SMTP_FROM:-worktime@localhost}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-    depends_on:
-      migrate: { condition: service_completed_successfully }
-      mailpit: { condition: service_started }
-  web:
-    build:
-      context: ..
-      dockerfile: apps/web/Dockerfile
-      # This runs in the browser, not in the Docker network — it must be a host-reachable URL
-      # (caddy's), not the internal `api:8000` service address.
-      args:
-        VITE_API_URL: http://localhost:8002/api/v1
-        VITE_KEYCLOAK_URL: http://localhost:8092
-    # No host port here — caddy is the single entrypoint, proxying :3002 to this container.
-    depends_on: [api]
-  caddy:
-    image: caddy:2
-    ports: ["3002:3002", "8002:8002", "8092:8092"]
-    volumes:
-      - ../infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
-    depends_on: [api, web, keycloak]
