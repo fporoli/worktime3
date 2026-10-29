@@ -19,8 +19,8 @@ npm run db:seed            # demo data (infra/postgres/seeds/seed.sql); needs DA
 npm run build              # all workspaces (api: tsc; web: tsc --noEmit + vite build)
 npm test                   # all workspaces
 
-cd apps/api && node --env-file=../../.env.dev dist/main.js   # API on :8001 (needs a prior build)
-npm run dev --workspace=@worktime3/web                       # Vite on :3001
+npm run start --workspace=@worktime3/api   # API on :8001 (needs a prior build)
+npm run dev --workspace=@worktime3/web     # Vite on :3001
 
 npm run db:migrate         # apply Liquibase changelogs to $DATABASE_URL (Docker required)
 npm run db:introspect      # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
@@ -35,11 +35,12 @@ the day-to-day setup. **local** (N=2, `.env.local`) runs everything in Docker
 behind Caddy on 5432/8092/3002/8002. The VS Code launch configs "Development …"
 and "Local …" debug the API against `.env.dev` and `.env.local` respectively.
 
-`npm run start --workspace=@worktime3/api` and `infra/postgres/run-seed.mjs`
-still fall back to a root `.env`, which no longer exists. Without
-`DATABASE_URL` the API starts in offline mode, and every endpoint, including
-login, returns `{ ok: true, offline: true }`. That looks like success but
-does nothing.
+npm scripts are environment-agnostic. They read all config from the shell and
+never from an env file, so source `env.dev.sh` / `env.local.sh` first. Don't
+add per-environment script variants or `--env-file` flags. `db:seed` exits if
+`DATABASE_URL` is unset. The API still starts without it, in offline mode
+(logged as a WARNING at startup), and every endpoint, including login, then
+returns `{ ok: true, offline: true }`. That looks like success but does nothing.
 
 Demo logins (from `seed.sql`, used by the Login screen buttons):
 `admin@acme.com`, `marta@acme.com` (manager), `ulla@acme.com` (user), password `dev1234`.

@@ -116,8 +116,10 @@ migrations and stays manual: `npm run db:seed`.
 Each environment has its own env file: `.env.dev` (N=1) and `.env.local`
 (N=2), copied from `env.example.dev.cfg` / `env.example.local.cfg`.
 `env.dev.sh` / `env.local.sh` (Windows: `call env.dev.bat` /
-`call env.local.bat`) export that file's variables into the current shell;
-the npm `db:*` scripts read `DATABASE_URL` from there.
+`call env.local.bat`) export that file's variables into the current shell.
+The npm scripts are environment-agnostic and read everything (`DATABASE_URL`
+etc.) from the shell, so load an environment first. `db:seed` refuses to
+run without `DATABASE_URL`, and the API logs an OFFLINE warning at startup.
 
 **dev** (pg + Keycloak + Mailpit in Docker, API + web on the host):
 
@@ -135,8 +137,8 @@ Then run the API and web app on the host (separate terminals), or use the
 "Development Full Stack: API + Web" VS Code launch config:
 
 ```sh
-cd apps/api && node --env-file=../../.env.dev dist/main.js   # http://localhost:8001
-npm run dev --workspace=@worktime3/web                       # vite, http://localhost:3001
+npm run start --workspace=@worktime3/api   # http://localhost:8001 (after . ./env.dev.sh)
+npm run dev --workspace=@worktime3/web     # vite, http://localhost:3001
 ```
 
 **local** (everything in Docker, behind Caddy):
