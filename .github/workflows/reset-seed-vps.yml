@@ -1,0 +1,87 @@
+name: Reset and seed VPS database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type RESET worktime3 public schema to continue'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worktime3-vps-database-reset
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require explicit destructive-operation confirmation
+        if: inputs.confirmation != 'RESET worktime3 public schema'
+        run: |
+          echo "Reset not run. Provide the exact confirmation phrase to proceed."
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reset and seed the VPS public schema
+        if: inputs.confirmation == 'RESET worktime3 public schema'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -eu
+            cd /opt/worktime3
+            test "$(git branch --show-current)" = "main"
+            git pull --ff-only origin main
+            test -f compose/.env
+            docker inspect edge-pg >/dev/null
+            docker inspect worktime3-api >/dev/null
+
+            auth_tables_before="$(docker exec edge-pg psql -U postgres -d worktime -Atqc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth'")"
+            test "$auth_tables_before" -gt 0
+
+            backup_dir="$HOME/worktime3-db-backups"
+            mkdir -p "$backup_dir"
+            timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+            backup_file="$backup_dir/public-before-reset-$timestamp.dump"
+            docker exec edge-pg pg_dump -U worktime -d worktime --schema=public --format=custom > "$backup_file"
+            test -s "$backup_file"
+            echo "Public-schema backup saved to $backup_file"
+
+            docker stop worktime3-api
+
+            docker exec edge-pg psql -U postgres -d worktime -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION worktime; GRANT ALL ON SCHEMA public TO public;"
+
+            export API_IMAGE=ghcr.io/fporoli/worktime3/api:latest
+            export WEB_IMAGE=ghcr.io/fporoli/worktime3/web:latest
+            docker compose -f compose/docker-compose.vps.yml run --rm --build --no-deps migrate
+
+            seed_file="/tmp/worktime3-seed-$timestamp.sql"
+            docker cp infra/postgres/seeds/seed.sql "edge-pg:$seed_file"
+            docker exec edge-pg psql -U postgres -d worktime --no-psqlrc --set=ON_ERROR_STOP=1 --single-transaction -f "$seed_file"
+            docker exec edge-pg rm -f "$seed_file"
+
+            counts="$(docker exec edge-pg psql -U postgres -d worktime -Atqc "SELECT (SELECT count(*) FROM public.users), (SELECT count(*) FROM public.organizations), (SELECT count(*) FROM public.user_identities WHERE provider = 'password'), (SELECT count(*) FROM public.databasechangelog), (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth')")"
+            test "$counts" = "8|2|3|62|$auth_tables_before"
+            echo "Verified users|organizations|password identities|changesets|auth tables: $counts"
+
+            docker start worktime3-api
+
+      - name: Verify seeded demo login
+        if: inputs.confirmation == 'RESET worktime3 public schema'
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 3 \
+            -X POST https://wtservice.turbotapir.com/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"admin@acme.com","password":"dev1234"}' \
+            | jq -e '.ok == true and .email == "admin@acme.com"' >/dev/null
+          echo "Seeded demo login verified."
