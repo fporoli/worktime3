@@ -1,17 +1,47 @@
 name: deploy-azure
+# Rolls the Azure Container Apps stack (created by infra/azure/provision.sh) to an image tag
+# from build-push: runs migrations first, then updates api and web. The Postgres server and Keycloak
+# are left alone. Needs secrets AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID
+# (`provision.sh github`) and variable AZURE_RESOURCE_GROUP.
 on:
   workflow_dispatch:
     inputs:
-      image_tag: { description: 'Image tag', required: true, default: 'latest' }
+      image_tag: { description: 'Image tag (prefer a sha-xxxxxxx tag over latest)', required: true, default: 'latest' }
+permissions:
+  id-token: write
+  contents: read
+concurrency:
+  group: worktime3-azure-deploy
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      IMAGES: ghcr.io/${{ github.repository }}
+      TAG: ${{ inputs.image_tag }}
     steps:
-      - uses: actions/checkout@v7
       - uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Deploy containers (Azure CLI / App Service placeholders)
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az extension add --name containerapp --upgrade --only-show-errors
+      - name: Run migrations
         run: |
-          echo "Set AZURE_CREDENTIALS, ACR_NAME secrets first."
-          echo "Then: az acr login; docker compose -f compose/docker-compose.azure.yml up -d"
+          az containerapp job update -g "$RG" -n worktime3-migrate --image "$IMAGES/migrate:$TAG" -o none
+          execution=$(az containerapp job start -g "$RG" -n worktime3-migrate --query name -o tsv)
+          while :; do
+            status=$(az containerapp job execution show -g "$RG" -n worktime3-migrate --job-execution-name "$execution" --query properties.status -o tsv)
+            case "$status" in
+              Succeeded) break ;;
+              Failed|Stopped|Degraded) echo "Migration $execution ended $status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+      # A unique revision suffix forces a new revision, so a moved tag like `latest` is re-pulled.
+      - name: Roll out api and web
+        run: |
+          suffix="r${{ github.run_number }}-${{ github.run_attempt }}"
+          az containerapp update -g "$RG" -n worktime3-api --image "$IMAGES/api:$TAG" --revision-suffix "$suffix" -o none
+          az containerapp update -g "$RG" -n worktime3-web --image "$IMAGES/web-azure:$TAG" --revision-suffix "$suffix" -o none

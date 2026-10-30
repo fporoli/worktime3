@@ -207,8 +207,32 @@ fails the build before it reaches any real environment.
 
 ## Deploy
 
-- VPS/Azure workflows are manual (`workflow_dispatch`) and need secrets:
-  `VPS_HOST/VPS_USER/VPS_SSH_KEY`, `AZURE_CREDENTIALS`.
-- Both bring up their compose file's `migrate` service before `api`/Keycloak,
-  same as local/dev — no separate migration step to remember.
+- VPS/Azure workflows are manual (`workflow_dispatch`). VPS needs secrets
+  `VPS_HOST/VPS_USER/VPS_SSH_KEY` and brings up its compose file's `migrate`
+  service before `api`/Keycloak, same as local/dev.
 - GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).
+
+### Azure Container Apps
+
+The apps run as Container Apps in a VNet-integrated environment:
+`worktime3-auth` (Keycloak), `worktime3-api`, `worktime3-web`, plus the
+`worktime3-migrate` and `worktime3-seed` jobs. Postgres is an Azure Database
+for PostgreSQL Flexible Server (Burstable B1ms, private access in the same
+VNet, TLS required, `citext`/`uuid-ossp` allowlisted via `azure.extensions`). `build-push` publishes the extra
+`migrate`, `seed` and `web-azure` images; `web-azure` has the Azure hostnames
+baked in from the repo variables `AZURE_API_URL` / `AZURE_KEYCLOAK_URL`.
+(`compose/docker-compose.azure.yml` is the older single-host variant.)
+
+First deploy, from Git Bash with the Azure CLI logged into the target tenant:
+
+```sh
+cp infra/azure/env.example.azure.cfg infra/azure/.env.azure   # fill in
+bash infra/azure/provision.sh base     # network, Postgres, storage, environment; prints gh commands
+#   set the printed repo variables, then run build-push and wait for it
+bash infra/azure/provision.sh apps     # migrations, keycloak, api, web
+bash infra/azure/provision.sh seed     # optional demo data, fresh database only
+bash infra/azure/provision.sh github   # deploy identity; prints gh secret commands
+```
+
+After that, `deploy-azure` (manual) runs migrations and rolls api/web to an
+image tag. Backups are Flexible Server's built-in daily ones (7 days).

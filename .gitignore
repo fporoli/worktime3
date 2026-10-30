@@ -151,3 +151,6 @@ data-dev/
 apps/api/data/
 .DS_Store
 .vscode/settings.json
+
+# Azure specs rendered by infra/azure/provision.sh (contain secrets)
+infra/azure/.rendered/

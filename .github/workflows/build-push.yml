@@ -64,3 +64,64 @@ jobs:
             VITE_API_URL=https://wtservice.turbotapir.com/api/v1
             VITE_KEYCLOAK_URL=https://wtauth.turbotapir.com
             VITE_SHOW_DEMO_ACCOUNTS=true
+      # Azure Container Apps can't mount repo files, so migrations and the demo seed ship as
+      # images there (see infra/azure/provision.sh). Compose environments build migrate locally.
+      - name: Migrate metadata
+        id: migrate-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/migrate
+          tags: |
+            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=sha
+      - name: Build and push migrate
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/liquibase
+          push: true
+          tags: ${{ steps.migrate-meta.outputs.tags }}
+          labels: ${{ steps.migrate-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Seed metadata
+        id: seed-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/seed
+          tags: |
+            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=sha
+      - name: Build and push seed
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/postgres
+          file: infra/postgres/seed.Dockerfile
+          push: true
+          tags: ${{ steps.seed-meta.outputs.tags }}
+          labels: ${{ steps.seed-meta.outputs.labels }}
+      # Same web app with the Azure Container Apps hostnames baked in. Skipped until the repo
+      # variables exist (`infra/azure/provision.sh base` prints the commands to set them).
+      - name: Web (Azure) metadata
+        id: web-azure-meta
+        if: vars.AZURE_API_URL != ''
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/web-azure
+          tags: |
+            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=sha
+      - name: Build and push Web (Azure)
+        if: vars.AZURE_API_URL != ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ${{ steps.web-azure-meta.outputs.tags }}
+          labels: ${{ steps.web-azure-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_URL=${{ vars.AZURE_API_URL }}
+            VITE_KEYCLOAK_URL=${{ vars.AZURE_KEYCLOAK_URL }}
+            VITE_SHOW_DEMO_ACCOUNTS=true
