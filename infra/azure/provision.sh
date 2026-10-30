@@ -86,14 +86,28 @@ base() {
   subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$SUBNET" --query id)"
   pg_subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" --query id)"
 
-  # Private access: az creates the private DNS zone and links it to the VNet, so apps in
-  # the environment resolve $PG_HOST to the server's private IP. Takes several minutes.
+  # Private access: the zone linked to the VNet is what lets apps in the environment
+  # resolve $PG_HOST to the server's private IP.
+  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com" pg_zone_id
+  if ! az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
+    az network private-dns zone create -g "$RESOURCE_GROUP" -n "$pg_zone" -o none
+  fi
+  if ! az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
+    az network private-dns link vnet create -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" \
+      --virtual-network "$VNET" --registration-enabled false -o none
+  fi
+  pg_zone_id="$(tsv network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" --query id)"
+
+  # Takes several minutes.
   if ! az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none 2>/dev/null; then
     az postgres flexible-server create -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -l "$LOCATION" \
       --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 16 \
-      --admin-user worktime --admin-password "$POSTGRES_PASSWORD" --database-name worktime \
-      --subnet "$pg_subnet_id" --private-dns-zone "$PG_SERVER_NAME.private.postgres.database.azure.com" \
+      --admin-user worktime --admin-password "$POSTGRES_PASSWORD" \
+      --subnet "$pg_subnet_id" --private-dns-zone "$pg_zone_id" \
       --yes -o none
+  fi
+  if ! az postgres flexible-server db show -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none 2>/dev/null; then
+    az postgres flexible-server db create -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none
   fi
   # Flexible Server only allows extensions on this list; 001-initial-schema.sql creates both.
   az postgres flexible-server parameter set -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" \
