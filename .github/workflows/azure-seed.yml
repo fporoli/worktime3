@@ -1,0 +1,13 @@
+name: azure-seed
+# Loads the demo data. Fresh database only.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: seed
+    secrets: inherit

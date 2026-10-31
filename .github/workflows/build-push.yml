@@ -101,6 +101,24 @@ jobs:
           labels: ${{ steps.seed-meta.outputs.labels }}
       # Same web app with the Azure Container Apps hostnames baked in. Skipped until the repo
       # variables exist (`infra/azure/provision.sh base` prints the commands to set them).
+      - name: DB tools metadata
+        id: dbtools-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/dbtools
+          tags: |
+            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=sha
+      - name: Build and push DB tools
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/postgres
+          file: infra/postgres/dbtools.Dockerfile
+          push: true
+          tags: ${{ steps.dbtools-meta.outputs.tags }}
+          labels: ${{ steps.dbtools-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Web (Azure) metadata
         id: web-azure-meta
         if: vars.AZURE_API_URL != ''

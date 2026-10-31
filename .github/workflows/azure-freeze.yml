@@ -1,0 +1,13 @@
+name: azure-freeze
+# Stops the apps and Postgres to save costs. Azure restarts Postgres after 7 days.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: freeze
+    secrets: inherit

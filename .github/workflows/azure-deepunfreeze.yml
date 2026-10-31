@@ -1,0 +1,13 @@
+name: azure-deepunfreeze
+# Recreates the Postgres server, restores the newest dump, starts the apps.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: deepunfreeze
+    secrets: inherit

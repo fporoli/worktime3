@@ -89,5 +89,5 @@ services:
     image: caddy:2
     ports: ["3002:3002", "8002:8002", "8092:8092"]
     volumes:
-      - ../infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - ../infra/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
     depends_on: [api, web, keycloak]

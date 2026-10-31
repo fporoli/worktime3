@@ -1,0 +1,13 @@
+name: azure-deepfreeze
+# Stops the apps, dumps the database to blob storage, then deletes the Postgres server.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: deepfreeze
+    secrets: inherit

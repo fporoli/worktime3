@@ -1,0 +1,14 @@
+name: azure-adminer
+# Re-applies the Adminer app. The first run has to be `provision.sh adminer` from a laptop,
+# which also sets up Entra sign-in; this workflow fails until that has happened.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: adminer
+    secrets: inherit

@@ -8,9 +8,21 @@
 #                         environment; prints the hostnames and the GitHub variables to set
 #   provision.sh apps     migrate job (and runs it), keycloak, api, web
 #   provision.sh seed     loads infra/postgres/seeds/seed.sql (fresh database only)
-#   provision.sh github   identity that .github/workflows/deploy-azure.yml logs in with
+#   provision.sh github   identity that .github/workflows/azure-deploy.yml logs in with
+#   provision.sh secrets  copies .env.azure to the GitHub secrets and variables that the
+#                         azure-* workflows read
+#   provision.sh freeze   stops the apps and Postgres to save costs; nothing is deleted
+#   provision.sh unfreeze starts them again
+#   provision.sh deepfreeze    stops the apps, dumps the database to blob storage, then
+#                              deletes the Postgres server
+#   provision.sh deepunfreeze  recreates the server, restores the newest dump, starts the apps
+#   provision.sh dropdb   stops the apps and deletes the Postgres server without a dump
+#   provision.sh initdb   creates an empty server, runs migrations, starts the apps
+#   provision.sh adminer  Adminer database UI behind Entra sign-in and a password prompt.
+#                         The first run needs a laptop: it creates the Entra registration
 #
 # Needs: az CLI (logged in: az login --tenant <id>), node, bash (Git Bash on Windows).
+# The azure-* GitHub workflows run the same phases, with the config in their environment.
 set -euo pipefail
 # Git Bash would otherwise rewrite slash-leading arguments ("/subscriptions/...",
 # "/account/share") into Windows paths before az sees them.
@@ -21,11 +33,15 @@ REPO="$(cd "$HERE/../.." && pwd)"
 CONFIG="$HERE/.env.azure"
 RENDER="$HERE/.rendered"
 
-[ -f "$CONFIG" ] || { echo "Missing $CONFIG: copy env.example.azure.cfg to .env.azure and fill it in." >&2; exit 1; }
-set -a
-# shellcheck disable=SC1090
-. <(tr -d '\r' < "$CONFIG")
-set +a
+if [ -f "$CONFIG" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . <(tr -d '\r' < "$CONFIG")
+  set +a
+elif [ -z "${GITHUB_ACTIONS:-}" ]; then
+  echo "Missing $CONFIG: copy env.example.azure.cfg to .env.azure and fill it in." >&2
+  exit 1
+fi
 
 ENV_NAME=worktime3-env
 VNET=worktime3-vnet
@@ -35,8 +51,11 @@ PG_HOST="${PG_SERVER_NAME:-}.postgres.database.azure.com"
 AUTH_APP=worktime3-auth
 API_APP=worktime3-api
 WEB_APP=worktime3-web
+ADMINER_APP=worktime3-adminer
 MIGRATE_JOB=worktime3-migrate
 SEED_JOB=worktime3-seed
+DB_JOB=worktime3-dbtools
+DUMP_CONTAINER=db-dumps
 
 # az on Windows prints CRLF, which would end up inside every captured value.
 tsv() { az "$@" -o tsv | tr -d '\r'; }
@@ -61,6 +80,51 @@ login_check() {
 
 env_domain() { tsv containerapp env show -g "$RESOURCE_GROUP" -n "$ENV_NAME" --query properties.defaultDomain; }
 
+ensure_postgres() {
+  # Private access: the zone linked to the VNet is what lets apps in the environment
+  # resolve $PG_HOST to the server's private IP.
+  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com" pg_zone_id pg_subnet_id
+  if ! az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
+    az network private-dns zone create -g "$RESOURCE_GROUP" -n "$pg_zone" -o none
+  fi
+  if ! az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
+    az network private-dns link vnet create -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" \
+      --virtual-network "$VNET" --registration-enabled false -o none
+  fi
+  pg_zone_id="$(tsv network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" --query id)"
+  pg_subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" --query id)"
+
+  # Takes several minutes.
+  if ! az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none 2>/dev/null; then
+    az postgres flexible-server create -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -l "$LOCATION" \
+      --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 16 \
+      --admin-user worktime --admin-password "$POSTGRES_PASSWORD" \
+      --subnet "$pg_subnet_id" --private-dns-zone "$pg_zone_id" \
+      --yes -o none
+  fi
+  if ! az postgres flexible-server db show -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none 2>/dev/null; then
+    az postgres flexible-server db create -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none
+  fi
+  # Flexible Server only allows extensions on this list; 001-initial-schema.sql creates both.
+  az postgres flexible-server parameter set -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" \
+    --name azure.extensions --value CITEXT,UUID-OSSP -o none
+}
+
+# The DNS zone goes too: it is billed monthly and ensure_postgres recreates it.
+delete_postgres() {
+  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com"
+  if pg_exists; then
+    az postgres flexible-server delete -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" --yes -o none
+  fi
+  if az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
+    az network private-dns link vnet delete -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" --yes -o none
+  fi
+  if az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
+    az network private-dns zone delete -g "$RESOURCE_GROUP" -n "$pg_zone" --yes -o none
+  fi
+  echo "  $PG_SERVER_NAME deleted"
+}
+
 base() {
   require PG_SERVER_NAME POSTGRES_PASSWORD DOCS_STORAGE_ACCOUNT
   az extension add --name containerapp --upgrade --only-show-errors
@@ -82,36 +146,10 @@ base() {
     az network vnet subnet create -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" \
       --address-prefixes 10.40.2.0/28 --delegations Microsoft.DBforPostgreSQL/flexibleServers -o none
   fi
-  local subnet_id pg_subnet_id
+  local subnet_id
   subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$SUBNET" --query id)"
-  pg_subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" --query id)"
 
-  # Private access: the zone linked to the VNet is what lets apps in the environment
-  # resolve $PG_HOST to the server's private IP.
-  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com" pg_zone_id
-  if ! az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
-    az network private-dns zone create -g "$RESOURCE_GROUP" -n "$pg_zone" -o none
-  fi
-  if ! az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
-    az network private-dns link vnet create -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" \
-      --virtual-network "$VNET" --registration-enabled false -o none
-  fi
-  pg_zone_id="$(tsv network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" --query id)"
-
-  # Takes several minutes.
-  if ! az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none 2>/dev/null; then
-    az postgres flexible-server create -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -l "$LOCATION" \
-      --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 16 \
-      --admin-user worktime --admin-password "$POSTGRES_PASSWORD" \
-      --subnet "$pg_subnet_id" --private-dns-zone "$pg_zone_id" \
-      --yes -o none
-  fi
-  if ! az postgres flexible-server db show -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none 2>/dev/null; then
-    az postgres flexible-server db create -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none
-  fi
-  # Flexible Server only allows extensions on this list; 001-initial-schema.sql creates both.
-  az postgres flexible-server parameter set -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" \
-    --name azure.extensions --value CITEXT,UUID-OSSP -o none
+  ensure_postgres
 
   # Uploaded documents (DOCUMENTS_DIR): plain files, so cheap standard SMB is fine.
   if ! az storage account show -g "$RESOURCE_GROUP" -n "$DOCS_STORAGE_ACCOUNT" -o none 2>/dev/null; then
@@ -145,8 +183,8 @@ Next, give build-push the Azure hostnames for the web-azure image and build all 
   gh variable set AZURE_API_URL --body "https://$API_APP.$domain/api/v1"
   gh variable set AZURE_KEYCLOAK_URL --body "https://$AUTH_APP.$domain"
   gh variable set AZURE_RESOURCE_GROUP --body "$RESOURCE_GROUP"
-  gh workflow run build-push.yml --ref main
-Then: infra/azure/provision.sh apps
+  gh workflow run build-push.yml --ref $(git -C "$REPO" branch --show-current)
+Then, once it has finished: infra/azure/provision.sh apps
 EOF
 }
 
@@ -267,7 +305,7 @@ EOF
         value: "$KEYCLOAK_ADMIN_PASSWORD"
       - name: realm-json
         value: $realm_json
-    ingress: { external: true, targetPort: 8080, transport: auto }
+    ingress: { external: true, targetPort: 8080, transport: auto, allowInsecure: false }
   template:
     containers:
       - name: keycloak
@@ -314,7 +352,7 @@ EOF
       - name: api-jwt-secret
         value: "$API_JWT_SECRET"
 $smtp_secret
-    ingress: { external: true, targetPort: 8000, transport: auto }
+    ingress: { external: true, targetPort: 8000, transport: auto, allowInsecure: false }
   template:
     containers:
       - name: api
@@ -350,7 +388,7 @@ EOF
     secrets:
       - name: ghcr-token
         value: "$GHCR_TOKEN"
-    ingress: { external: true, targetPort: 80, transport: auto }
+    ingress: { external: true, targetPort: 80, transport: auto, allowInsecure: false }
   template:
     containers:
       - name: web
@@ -400,6 +438,77 @@ EOF
   run_job "$SEED_JOB"
 }
 
+# Entra sign-in in front of the whole app. No client secret: Azure then signs in with ID
+# tokens, so there is no credential to store, rotate or carry through app updates.
+adminer_signin() {
+  local name=worktime3-adminer app_id
+  app_id="$(tsv ad app list --display-name "$name" --query '[0].appId')"
+  [ -n "$app_id" ] || app_id="$(tsv ad app create --display-name "$name" --sign-in-audience AzureADMyOrg --query appId)"
+  az ad app update --id "$app_id" --enable-id-token-issuance true \
+    --web-redirect-uris "https://$ADMINER_APP.$DOMAIN/.auth/login/aad/callback" -o none
+  az ad sp show --id "$app_id" -o none 2>/dev/null || az ad sp create --id "$app_id" -o none
+  az containerapp auth microsoft update -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --client-id "$app_id" \
+    --issuer "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" --yes -o none
+  az containerapp auth update -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --enabled true \
+    --action RedirectToLoginPage --redirect-provider azureactivedirectory --require-https true -o none
+  echo "  $ADMINER_APP sign-in ok"
+}
+
+# Postgres has no public endpoint, so Adminer is the way in: it runs in the environment and
+# only it is public. Caddy adds the same Basic Auth prompt as the VPS (sites/db.caddy) on
+# 8081; Adminer stays on localhost. Requests reach Caddy only after Entra sign-in.
+adminer() {
+  require PG_SERVER_NAME ADMINER_PASSWORD_HASH
+  prepare_specs
+  # The deploy identity can't create the Entra registration, so a workflow must not be the
+  # one to create this app, or it would come up without sign-in.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    local enabled
+    enabled="$(tsv containerapp auth show -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --query platform.enabled 2>/dev/null || true)"
+    [ "${enabled,,}" = true ] || { echo "Run provision.sh adminer from a laptop first, to set up sign-in." >&2; exit 1; }
+  fi
+
+  local caddyfile
+  caddyfile="$(printf ':8081 {\n  basic_auth {\n    admin %s\n  }\n  reverse_proxy localhost:8080\n}\n' "$ADMINER_PASSWORD_HASH" |
+    node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0, "utf8")))')"
+  { spec_head; cat <<EOF
+    activeRevisionsMode: Single
+    secrets:
+      - name: ghcr-token
+        value: "$GHCR_TOKEN"
+      - name: caddyfile
+        value: $caddyfile
+    ingress: { external: true, targetPort: 8081, transport: auto, allowInsecure: false }
+  template:
+    containers:
+      - name: adminer
+        image: adminer:5
+        resources: { cpu: 0.25, memory: 0.5Gi }
+        env:
+          - { name: ADMINER_DEFAULT_SERVER, value: "$PG_HOST" }
+      - name: caddy
+        image: caddy:2
+        resources: { cpu: 0.25, memory: 0.5Gi }
+        volumeMounts:
+          - { volumeName: caddy-config, mountPath: /etc/caddy }
+    scale: { minReplicas: 0, maxReplicas: 1 }
+    volumes:
+      - name: caddy-config
+        storageType: Secret
+        secrets:
+          - { secretRef: caddyfile, path: Caddyfile }
+EOF
+  } > "$RENDER/adminer.yaml"
+  upsert app "$ADMINER_APP" "$RENDER/adminer.yaml"
+  [ -n "${GITHUB_ACTIONS:-}" ] || adminer_signin
+
+  cat <<EOF
+
+Adminer: https://$ADMINER_APP.$DOMAIN
+Choose PostgreSQL, then log in as worktime with POSTGRES_PASSWORD. Needs Postgres running.
+EOF
+}
+
 # Entra app + federated credential: GitHub Actions on main exchanges its OIDC token for
 # an Azure token, so no client secret is stored anywhere. Contributor on the group only.
 github() {
@@ -423,14 +532,227 @@ github() {
   fi
   cat <<EOF
 
-Deploy identity ready. Store it for .github/workflows/deploy-azure.yml:
+Deploy identity ready. Store it for .github/workflows/azure-deploy.yml:
   gh secret set AZURE_CLIENT_ID --body "$app_id"
   gh secret set AZURE_TENANT_ID --body "$AZURE_TENANT_ID"
   gh secret set AZURE_SUBSCRIPTION_ID --body "$AZURE_SUBSCRIPTION_ID"
+Then give the azure-* workflows the rest of the config: infra/azure/provision.sh secrets
 EOF
 }
 
+# gh reads each secret from stdin, so no value ends up on a command line. GitHub rejects
+# empty values, which is also what leaves the optional SMTP settings unset.
+secrets() {
+  require GITHUB_REPOSITORY LOCATION RESOURCE_GROUP PG_SERVER_NAME DOCS_STORAGE_ACCOUNT \
+    GHCR_USERNAME GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET
+  local name
+  for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET ADMINER_PASSWORD_HASH SMTP_PASSWORD; do
+    [ -z "${!name:-}" ] || printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY"
+  done
+  gh variable set AZURE_RESOURCE_GROUP --repo "$GITHUB_REPOSITORY" --body "$RESOURCE_GROUP"
+  gh variable set AZURE_LOCATION --repo "$GITHUB_REPOSITORY" --body "$LOCATION"
+  gh variable set AZURE_PG_SERVER_NAME --repo "$GITHUB_REPOSITORY" --body "$PG_SERVER_NAME"
+  gh variable set AZURE_DOCS_STORAGE_ACCOUNT --repo "$GITHUB_REPOSITORY" --body "$DOCS_STORAGE_ACCOUNT"
+  for name in GHCR_USERNAME KEYCLOAK_ADMIN SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USER SMTP_SECURE; do
+    [ -z "${!name:-}" ] || gh variable set "$name" --repo "$GITHUB_REPOSITORY" --body "${!name}"
+  done
+  echo "  GitHub secrets and variables set"
+}
+
+# The containerapp CLI has no stop/start, so the request goes straight to the ARM API. It
+# returns before the app has changed state, hence the polling.
+app_power() {
+  local action="$1" app="$2" attempt status
+  for attempt in $(seq 1 30); do
+    status="$(tsv containerapp show -g "$RESOURCE_GROUP" -n "$app" --query properties.runningStatus)"
+    case "$action:$status" in
+      stop:Stopped) echo "  $app stopped"; return 0 ;;
+      start:Stopped) ;;
+      start:*) echo "  $app started"; return 0 ;;
+    esac
+    [ "$attempt" != 1 ] || az rest --method post -o none --url \
+      "https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/containerApps/$app/$action?api-version=2025-01-01"
+    sleep 10
+  done
+  echo "$app did not $action in time; last status: $status" >&2
+  return 1
+}
+
+# Adminer is optional, so it only joins stop and start once it exists.
+adminer_if_present() { az containerapp show -g "$RESOURCE_GROUP" -n "$ADMINER_APP" -o none 2>/dev/null && echo "$ADMINER_APP"; }
+
+stop_apps() {
+  local app
+  for app in $(adminer_if_present) "$WEB_APP" "$API_APP" "$AUTH_APP"; do
+    app_power stop "$app"
+  done
+}
+
+# Postgres has to be up first: Keycloak and the API need it to start.
+start_apps() {
+  local app
+  for app in "$AUTH_APP" "$API_APP" "$WEB_APP" $(adminer_if_present); do
+    app_power start "$app"
+  done
+  echo
+  echo "Started. Keycloak needs another minute or so before sign-in works."
+}
+
+pg_exists() { az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none 2>/dev/null; }
+pg_state() { tsv postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" --query state; }
+pg_start() {
+  [ "$(pg_state)" = Ready ] || az postgres flexible-server start -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none
+  echo "  $PG_SERVER_NAME started"
+}
+
+freeze() {
+  require PG_SERVER_NAME
+  stop_apps
+  if ! pg_exists; then
+    echo "  $PG_SERVER_NAME does not exist, nothing to stop"
+    return 0
+  fi
+  [ "$(pg_state)" = Stopped ] || az postgres flexible-server stop -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none
+  echo "  $PG_SERVER_NAME stopped"
+  cat <<EOF
+
+Frozen. Azure restarts a stopped Postgres server after 7 days, so run freeze again before then.
+EOF
+}
+
+unfreeze() {
+  require PG_SERVER_NAME
+  pg_exists || { echo "$PG_SERVER_NAME does not exist: run deepunfreeze or initdb." >&2; exit 1; }
+  pg_start
+  start_apps
+}
+
+storage_key() { tsv storage account keys list -g "$RESOURCE_GROUP" -n "$DOCS_STORAGE_ACCOUNT" --query '[0].value'; }
+
+# A URL for one blob that stops working after two hours, so it can sit in the job's secrets.
+blob_url() {
+  local blob="$1" permissions="$2" key="$3" sas
+  sas="$(tsv storage blob generate-sas --account-name "$DOCS_STORAGE_ACCOUNT" --account-key "$key" \
+    --container-name "$DUMP_CONTAINER" --name "$blob" --permissions "$permissions" --https-only \
+    --expiry "$(date -u -d '+2 hours' +%Y-%m-%dT%H:%MZ)")"
+  printf 'https://%s.blob.core.windows.net/%s/%s?%s' "$DOCS_STORAGE_ACCOUNT" "$DUMP_CONTAINER" "$blob" "$sas"
+}
+
+# Runs dbtools.sh inside the environment, the only place that can reach the private server.
+db_job() {
+  local action="$1" url="$2"
+  prepare_specs
+  { spec_head; cat <<EOF
+    triggerType: Manual
+    replicaTimeout: 3600
+    replicaRetryLimit: 0
+    manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+    secrets:
+      - name: ghcr-token
+        value: "$GHCR_TOKEN"
+      - name: pg-password
+        value: "$POSTGRES_PASSWORD"
+      - name: blob-url
+        value: "$url"
+  template:
+    containers:
+      - name: dbtools
+        image: $IMAGES/dbtools:$IMAGE_TAG
+        args: ["$action"]
+        resources: { cpu: 0.5, memory: 1Gi }
+        env:
+          - { name: PGHOST, value: $PG_HOST }
+          - { name: PGSSLMODE, value: require }
+          - { name: PGPORT, value: "5432" }
+          - { name: PGDATABASE, value: worktime }
+          - { name: PGUSER, value: worktime }
+          - { name: PGPASSWORD, secretRef: pg-password }
+          - { name: BLOB_URL, secretRef: blob-url }
+EOF
+  } > "$RENDER/dbtools.yaml"
+  upsert job "$DB_JOB" "$RENDER/dbtools.yaml"
+  run_job "$DB_JOB"
+}
+
+deepfreeze() {
+  require PG_SERVER_NAME DOCS_STORAGE_ACCOUNT
+  stop_apps
+  if ! pg_exists; then
+    echo "  $PG_SERVER_NAME does not exist, nothing to dump"
+    return 0
+  fi
+  pg_start
+
+  local key blob size
+  key="$(storage_key)"
+  blob="worktime-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  az storage container create --account-name "$DOCS_STORAGE_ACCOUNT" --account-key "$key" \
+    --name "$DUMP_CONTAINER" -o none
+  db_job dump "$(blob_url "$blob" cw "$key")"
+
+  # Past this point the dump is the only copy, so check it arrived.
+  size="$(tsv storage blob show --account-name "$DOCS_STORAGE_ACCOUNT" --account-key "$key" \
+    --container-name "$DUMP_CONTAINER" --name "$blob" --query properties.contentLength)"
+  [ "${size:-0}" -gt 0 ] || { echo "Dump $blob is missing or empty, keeping $PG_SERVER_NAME." >&2; exit 1; }
+  echo "  $blob uploaded ($size bytes)"
+
+  delete_postgres
+  cat <<EOF
+
+Deep frozen. Dumps stay in storage account $DOCS_STORAGE_ACCOUNT, container $DUMP_CONTAINER.
+Bring it back with deepunfreeze.
+EOF
+}
+
+deepunfreeze() {
+  require LOCATION PG_SERVER_NAME POSTGRES_PASSWORD DOCS_STORAGE_ACCOUNT
+  if pg_exists; then
+    echo "$PG_SERVER_NAME already exists, so restoring could clash with its data. Use unfreeze, or dropdb first." >&2
+    exit 1
+  fi
+  local key blob
+  key="$(storage_key)"
+  # The timestamp in the name makes the last one in name order the newest.
+  blob="$(tsv storage blob list --account-name "$DOCS_STORAGE_ACCOUNT" --account-key "$key" \
+    --container-name "$DUMP_CONTAINER" --query 'sort_by(@, &name)[-1].name' 2>/dev/null || true)"
+  if [ -z "$blob" ] || [ "$blob" = None ]; then
+    echo "No dump in container $DUMP_CONTAINER: run initdb for an empty database." >&2
+    exit 1
+  fi
+  echo "  restoring $blob"
+
+  ensure_postgres
+  db_job restore "$(blob_url "$blob" r "$key")" || {
+    echo "Restore failed; $blob is untouched. Fix the cause, then run dropdb and deepunfreeze." >&2
+    exit 1
+  }
+  start_apps
+}
+
+dropdb() {
+  require PG_SERVER_NAME
+  local answer="${CONFIRM:-}"
+  if [ "$answer" != "$PG_SERVER_NAME" ]; then
+    read -r -p "This deletes $PG_SERVER_NAME and all its data, without a dump. Type its name to continue: " answer || true
+  fi
+  [ "$answer" = "$PG_SERVER_NAME" ] || { echo "Not confirmed, nothing deleted." >&2; exit 1; }
+  stop_apps
+  delete_postgres
+}
+
+initdb() {
+  require LOCATION PG_SERVER_NAME POSTGRES_PASSWORD
+  if pg_exists; then
+    echo "$PG_SERVER_NAME already exists: run dropdb first." >&2
+    exit 1
+  fi
+  ensure_postgres
+  run_job "$MIGRATE_JOB"
+  start_apps
+  echo "Demo data: infra/azure/provision.sh seed"
+}
+
 case "${1:-}" in
-  base|apps|seed|github) login_check; "$1" ;;
-  *) echo "Usage: $0 base|apps|seed|github" >&2; exit 1 ;;
+  base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb|adminer) login_check; "$1" ;;
+  *) echo "Usage: $0 base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb|adminer" >&2; exit 1 ;;
 esac

@@ -1,0 +1,56 @@
+name: azure-provision
+# Shared by the azure-* workflows: runs phases of infra/azure/provision.sh. The config that
+# lives in .env.azure on a laptop comes from the secrets and variables that
+# `provision.sh secrets` sets. The base and github phases stay on the laptop, because they
+# need more rights than the deploy identity has (Contributor on the resource group).
+on:
+  workflow_call:
+    inputs:
+      phases: { type: string, required: true }
+      confirm: { type: string, default: '' }
+      image_tag: { type: string, default: 'latest' }
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: worktime3-azure-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az extension add --name containerapp --upgrade --only-show-errors
+      - name: Run phases
+        env:
+          PHASES: ${{ inputs.phases }}
+          CONFIRM: ${{ inputs.confirm }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          LOCATION: ${{ vars.AZURE_LOCATION }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PG_SERVER_NAME: ${{ vars.AZURE_PG_SERVER_NAME }}
+          DOCS_STORAGE_ACCOUNT: ${{ vars.AZURE_DOCS_STORAGE_ACCOUNT }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          KEYCLOAK_ADMIN: ${{ vars.KEYCLOAK_ADMIN }}
+          KEYCLOAK_ADMIN_PASSWORD: ${{ secrets.KEYCLOAK_ADMIN_PASSWORD }}
+          API_JWT_SECRET: ${{ secrets.API_JWT_SECRET }}
+          ADMINER_PASSWORD_HASH: ${{ secrets.ADMINER_PASSWORD_HASH }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_FROM: ${{ vars.SMTP_FROM }}
+          SMTP_USER: ${{ vars.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SECURE: ${{ vars.SMTP_SECURE }}
+        run: |
+          for phase in $PHASES; do
+            bash infra/azure/provision.sh "$phase"
+          done

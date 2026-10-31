@@ -1,4 +1,4 @@
-name: deploy-azure
+name: azure-deploy
 # Rolls the Azure Container Apps stack (created by infra/azure/provision.sh) to an image tag
 # from build-push: runs migrations first, then updates api and web. The Postgres server and Keycloak
 # are left alone. Needs secrets AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID
