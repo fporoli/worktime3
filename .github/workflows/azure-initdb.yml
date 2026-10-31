@@ -1,0 +1,16 @@
+name: azure-initdb
+# Creates an empty Postgres server, runs migrations and starts the apps. Fails if a server
+# already exists; run azure-dropdb first.
+on:
+  workflow_dispatch:
+    inputs:
+      seed: { description: 'Also load the demo data', type: boolean, default: true }
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: ${{ inputs.seed && 'initdb seed' || 'initdb' }}
+    secrets: inherit

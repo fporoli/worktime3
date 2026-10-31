@@ -1,0 +1,13 @@
+name: azure-unfreeze
+# Starts Postgres and the apps after azure-freeze.
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: unfreeze
+    secrets: inherit

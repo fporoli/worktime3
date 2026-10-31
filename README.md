@@ -207,8 +207,66 @@ fails the build before it reaches any real environment.
 
 ## Deploy
 
-- VPS/Azure workflows are manual (`workflow_dispatch`) and need secrets:
-  `VPS_HOST/VPS_USER/VPS_SSH_KEY`, `AZURE_CREDENTIALS`.
-- Both bring up their compose file's `migrate` service before `api`/Keycloak,
-  same as local/dev — no separate migration step to remember.
+- VPS/Azure workflows are manual (`workflow_dispatch`). VPS needs secrets
+  `VPS_HOST/VPS_USER/VPS_SSH_KEY` and brings up its compose file's `migrate`
+  service before `api`/Keycloak, same as local/dev.
 - GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).
+
+To cut a release, push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`).
+`build-push` then publishes images tagged `v1.2.0`, without moving `latest`;
+deploy them by passing that as `image_tag`. Every image also records its nearest
+tag (`git describe`, so `v1.2.0-3-g97d21cd` for a later commit on main), commit
+and commit date, which the app shows under the user menu's **Information**
+(web and API separately, since they are deployed as separate images). Images
+built before any tag exists show as untagged; host builds as local.
+
+### Azure Container Apps
+
+The apps run as Container Apps in a VNet-integrated environment:
+`worktime3-auth` (Keycloak), `worktime3-api`, `worktime3-web`, plus the
+`worktime3-migrate` and `worktime3-seed` jobs. Postgres is an Azure Database
+for PostgreSQL Flexible Server (Burstable B1ms, private access in the same
+VNet, TLS required, `citext`/`uuid-ossp` allowlisted via `azure.extensions`). `build-push` publishes the extra
+`migrate`, `seed`, `dbtools` and `web-azure` images; `web-azure` has the Azure hostnames
+baked in from the repo variables `AZURE_API_URL` / `AZURE_KEYCLOAK_URL`.
+(`compose/docker-compose.azure.yml` is the older single-host variant.)
+
+First deploy, from Git Bash with the Azure CLI logged into the target tenant:
+
+```sh
+cp infra/azure/env.example.azure.cfg infra/azure/.env.azure   # fill in
+bash infra/azure/provision.sh base     # network, Postgres, storage, environment; prints gh commands
+#   set the printed repo variables, then run build-push and wait for it
+bash infra/azure/provision.sh apps     # migrations, keycloak, api, web
+bash infra/azure/provision.sh seed     # optional demo data, fresh database only
+bash infra/azure/provision.sh github   # deploy identity; prints gh secret commands
+bash infra/azure/provision.sh secrets  # copies .env.azure to the secrets the azure-* workflows read
+```
+
+After that, `azure-deploy` (manual) runs migrations and rolls api/web to an
+image tag. Backups are Flexible Server's built-in daily ones (7 days).
+
+Day-to-day operations are `provision.sh` phases, and each one is also a manual
+GitHub workflow, so they all show up under `azure-` in the Actions tab. They run
+from `main` only, which is the one ref the deploy identity trusts.
+
+| Phase | Workflow | What it does |
+|---|---|---|
+| `freeze` | `azure-freeze` | Stops the apps and Postgres. Storage is still billed, and Azure restarts a stopped server after 7 days, so re-run it before then. |
+| `unfreeze` | `azure-unfreeze` | Starts Postgres and the apps. |
+| `deepfreeze` | `azure-deepfreeze` | Stops the apps, dumps the database to the `db-dumps` blob container, then deletes the Postgres server and its DNS zone. The server is kept if the dump fails. |
+| `deepunfreeze` | `azure-deepunfreeze` | Recreates the server, restores the newest dump, starts the apps. |
+| `dropdb` | `azure-dropdb` | Stops the apps and deletes the server with no dump. All data is lost; you must type the server name to confirm. |
+| `initdb` | `azure-initdb` | Creates an empty server, runs migrations, starts the apps. Refuses if a server exists. |
+| `seed` | `azure-seed` | Loads the demo data, fresh database only. `azure-initdb` offers this as a checkbox. |
+| `apps` | `azure-apps` | Re-applies the app specs after a config or secret change. |
+| `adminer` | `azure-adminer` | Creates or updates the Adminer database UI. The first run must be from a laptop, because it creates the Entra registration. |
+
+`base` and `github` have no workflow: they need more rights than the deploy
+identity has. `azure-deploy` needs a running database, so unfreeze first.
+
+Adminer is the way into the private database: `worktime3-adminer` runs inside
+the environment, scales to zero, and stops and starts with the other apps. It
+asks for three logins: Microsoft sign-in (tenant accounts only), the browser
+prompt (`admin`, same password as the VPS), then Adminer's own. In Adminer
+choose PostgreSQL and log in as `worktime` with `POSTGRES_PASSWORD`.

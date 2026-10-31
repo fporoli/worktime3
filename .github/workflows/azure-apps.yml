@@ -1,0 +1,17 @@
+name: azure-apps
+# Re-applies the app specs from infra/azure/provision.sh (config, secrets, scaling) and runs
+# migrations. For a plain code rollout, use azure-deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag: { description: 'Image tag', required: true, default: 'latest' }
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  run:
+    uses: ./.github/workflows/azure-provision.yml
+    with:
+      phases: apps
+      image_tag: ${{ inputs.image_tag }}
+    secrets: inherit

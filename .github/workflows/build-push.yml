@@ -2,6 +2,7 @@ name: build-push
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       image_tag: { description: 'Image tag', required: true, default: 'latest' }
@@ -14,32 +15,48 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # git describe below needs the history and tags
+      # What the Information screen reports. A tag names its own image and leaves `latest` alone,
+      # so tagging an older commit can't roll `latest` back.
+      - name: Release metadata
+        id: release
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then default_tag="$GITHUB_REF_NAME"; else default_tag=latest; fi
+          {
+            echo "image_tag=${INPUT_IMAGE_TAG:-$default_tag}"
+            echo "release=$(git describe --tags --match 'v*' 2>/dev/null || true)"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "date=$(git log -1 --format=%cI)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: API metadata
         id: api-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/api
           tags: |
-            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=raw,value=${{ steps.release.outputs.image_tag }}
             type=sha
       - name: Web metadata
         id: web-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/web
           tags: |
-            type=raw,value=${{ inputs.image_tag || 'latest' }}
+            type=raw,value=${{ steps.release.outputs.image_tag }}
             type=sha
       - name: Build and push API
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/api/Dockerfile
@@ -48,8 +65,12 @@ jobs:
           labels: ${{ steps.api-meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_RELEASE=${{ steps.release.outputs.release }}
+            BUILD_COMMIT=${{ steps.release.outputs.commit }}
+            BUILD_DATE=${{ steps.release.outputs.date }}
       - name: Build and push Web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/web/Dockerfile
@@ -64,3 +85,88 @@ jobs:
             VITE_API_URL=https://wtservice.turbotapir.com/api/v1
             VITE_KEYCLOAK_URL=https://wtauth.turbotapir.com
             VITE_SHOW_DEMO_ACCOUNTS=true
+            VITE_BUILD_RELEASE=${{ steps.release.outputs.release }}
+            VITE_BUILD_COMMIT=${{ steps.release.outputs.commit }}
+            VITE_BUILD_DATE=${{ steps.release.outputs.date }}
+      # Azure Container Apps can't mount repo files, so migrations and the demo seed ship as
+      # images there (see infra/azure/provision.sh). Compose environments build migrate locally.
+      - name: Migrate metadata
+        id: migrate-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/migrate
+          tags: |
+            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=sha
+      - name: Build and push migrate
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/liquibase
+          push: true
+          tags: ${{ steps.migrate-meta.outputs.tags }}
+          labels: ${{ steps.migrate-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Seed metadata
+        id: seed-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/seed
+          tags: |
+            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=sha
+      - name: Build and push seed
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/postgres
+          file: infra/postgres/seed.Dockerfile
+          push: true
+          tags: ${{ steps.seed-meta.outputs.tags }}
+          labels: ${{ steps.seed-meta.outputs.labels }}
+      # Same web app with the Azure Container Apps hostnames baked in. Skipped until the repo
+      # variables exist (`infra/azure/provision.sh base` prints the commands to set them).
+      - name: DB tools metadata
+        id: dbtools-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/dbtools
+          tags: |
+            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=sha
+      - name: Build and push DB tools
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/postgres
+          file: infra/postgres/dbtools.Dockerfile
+          push: true
+          tags: ${{ steps.dbtools-meta.outputs.tags }}
+          labels: ${{ steps.dbtools-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Web (Azure) metadata
+        id: web-azure-meta
+        if: vars.AZURE_API_URL != ''
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/web-azure
+          tags: |
+            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=sha
+      - name: Build and push Web (Azure)
+        if: vars.AZURE_API_URL != ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ${{ steps.web-azure-meta.outputs.tags }}
+          labels: ${{ steps.web-azure-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_URL=${{ vars.AZURE_API_URL }}
+            VITE_KEYCLOAK_URL=${{ vars.AZURE_KEYCLOAK_URL }}
+            VITE_SHOW_DEMO_ACCOUNTS=true
+            VITE_BUILD_RELEASE=${{ steps.release.outputs.release }}
+            VITE_BUILD_COMMIT=${{ steps.release.outputs.commit }}
+            VITE_BUILD_DATE=${{ steps.release.outputs.date }}

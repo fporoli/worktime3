@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt.guard';
 import { HealthController } from './health.controller';
+import { AboutController } from './about.controller';
 import { ProjectTimeService } from './project-time.service';
 import { RbacService } from './rbac.service';
 import { AuditService } from './audit.service';
@@ -38,6 +39,7 @@ import { DbService } from './db.service';
 @Module({
   controllers: [
     HealthController,
+    AboutController,
     AuthController,
     UsersController,
     BasicDataController,
