@@ -11,5 +11,12 @@ RUN npm ci --workspace=@worktime3/api
 COPY . .
 RUN npm run build --workspace=@worktime3/api
 RUN npm prune --omit=dev --workspace=@worktime3/api
+# Shown on the Information screen. .git is not in the build context, so build-push passes these in.
+ARG BUILD_RELEASE
+ARG BUILD_COMMIT
+ARG BUILD_DATE
+ENV BUILD_RELEASE=$BUILD_RELEASE
+ENV BUILD_COMMIT=$BUILD_COMMIT
+ENV BUILD_DATE=$BUILD_DATE
 EXPOSE 8000
 CMD ["node", "apps/api/dist/main.js"]

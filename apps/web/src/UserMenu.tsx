@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import type { Session } from './Login';
 import { LOCALES, useT, type Locale } from './i18n';
+import AboutDialog from './AboutDialog';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -55,6 +56,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
   const [search, setSearch] = useState('');
   const [searchUsers, setSearchUsers] = useState<SearchUser[]>([]);
   const [switching, setSwitching] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
     if (!switchOpen || !currentOrgId || search.trim().length < 2) {
@@ -168,10 +170,20 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
         </Box>
         <Divider />
         <MenuItem onClick={openSettings}>{t('usermenu.settings')}</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); setAboutOpen(true); }}>{t('usermenu.information')}</MenuItem>
         {canSwitchUser && <MenuItem onClick={openSwitchUser}>Switch User...</MenuItem>}
         {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>Return to my account</MenuItem>}
         <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>{t('usermenu.logout')}</MenuItem>
       </Menu>
+
+      <AboutDialog
+        open={aboutOpen}
+        onClose={() => setAboutOpen(false)}
+        session={session}
+        authHeaders={authHeaders}
+        currentOrgId={currentOrgId}
+        adminSession={adminSession}
+      />
 
       <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>{t('usermenu.settings')}</DialogTitle>

@@ -212,6 +212,14 @@ fails the build before it reaches any real environment.
   service before `api`/Keycloak, same as local/dev.
 - GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).
 
+To cut a release, push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`).
+`build-push` then publishes images tagged `v1.2.0`, without moving `latest`;
+deploy them by passing that as `image_tag`. Every image also records its nearest
+tag (`git describe`, so `v1.2.0-3-g97d21cd` for a later commit on main), commit
+and commit date, which the app shows under the user menu's **Information**
+(web and API separately, since they are deployed as separate images). Images
+built before any tag exists show as untagged; host builds as local.
+
 ### Azure Container Apps
 
 The apps run as Container Apps in a VNet-integrated environment:
