@@ -4,7 +4,7 @@
 # file's config — different ports and containers instead of local.yml's own).
 # pg/Keycloak data lives on the host under ../data-dev (mirrors ../data-local for the `local`
 # profile) so it survives `docker compose down` and can be inspected directly.
-name: worktime-dev
+name: worktime-local
 services:
   pg:
     image: postgres:16
