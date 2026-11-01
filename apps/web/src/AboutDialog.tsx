@@ -106,7 +106,7 @@ export default function AboutDialog({ open, onClose, session, authHeaders, curre
     [t('about.email'), session.email],
     [t('about.userId'), session.userId],
     [t('about.organization'), membership?.name ?? '—'],
-    [t('about.roles'), membership?.roles.join(', ') || '—'],
+    [t('about.roles'), membership?.roles?.join(', ') || '—'],
     [t('about.signIn'), t(session.sso ? 'about.signInSso' : 'about.signInPassword')],
     ...(adminSession ? [[t('about.impersonatedBy'), `${adminSession.displayName} (${adminSession.email})`] as [string, string]] : []),
   ];

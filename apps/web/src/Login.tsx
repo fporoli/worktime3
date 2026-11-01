@@ -44,7 +44,9 @@ export function loadSession(): Session | null {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const session: unknown = JSON.parse(raw);
-    if (!session || typeof session !== 'object' || !Array.isArray((session as { memberships?: unknown }).memberships)) {
+    const memberships = (session as { memberships?: unknown } | null)?.memberships;
+    // Sessions saved before memberships carried `roles` are stale; force a fresh login.
+    if (!Array.isArray(memberships) || memberships.some((m) => !Array.isArray(m?.roles))) {
       clearSession();
       return null;
     }

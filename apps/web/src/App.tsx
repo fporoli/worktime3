@@ -209,7 +209,7 @@ export default function App() {
   const useProjectTimeRanges = session?.settings?.useProjectTimeMinutesRanges === true;
   // `role` collapses a membership to a single display role, which hides a billing_admin-only
   // membership — check the full roles list directly for the finance-processing nav entry.
-  const isBillingAdmin = session?.memberships.find((m) => m.organizationId === orgId)?.roles.includes('billing_admin') ?? false;
+  const isBillingAdmin = session?.memberships.find((m) => m.organizationId === orgId)?.roles?.includes('billing_admin') ?? false;
 
   const NAV_GROUPS: Array<{ header: string; items: Array<{ id: string; section: Section; label: string; visible: boolean; indent?: boolean; dividerBefore?: boolean }> }> = [
     {
@@ -282,7 +282,7 @@ export default function App() {
     if (session) {
       const nextRole = defaultRole(session, newOrgId);
       const nextCanManage = nextRole === 'manager' || nextRole === 'admin';
-      const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles.includes('billing_admin') ?? false;
+      const nextIsBillingAdmin = session.memberships.find((m) => m.organizationId === newOrgId)?.roles?.includes('billing_admin') ?? false;
       const stillVisible =
         section === 'home' || section === 'time' || section === 'timesheet' || section === 'workTime' || section === 'absences' || section === 'expenses' || section === 'expenseReports'
           ? true
