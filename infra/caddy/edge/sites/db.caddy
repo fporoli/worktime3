@@ -6,7 +6,7 @@
 # regenerate with: docker run --rm caddy:2 caddy hash-password --plaintext '<new password>'
 db.turbotapir.com {
   basic_auth {
-    admin $2a$14$Dza8tuKiqSQD78CLBAOmnOe0g6RyFhV7L36Tpq/YcTNspEcjg1npm
+    admin $2a$14$1BUcllvRQd9CuljpYoWWJ.37znd1QR05rTDZNZ/KJ5vWFc7guuEh6
   }
   reverse_proxy edge-adminer:8080
 }
