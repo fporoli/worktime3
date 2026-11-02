@@ -71,6 +71,17 @@ services:
     restart: unless-stopped
     depends_on:
       pg: { condition: service_healthy }
+  # Docker management UI, proxied by Caddy at portainer.turbotapir.com (see
+  # sites/portainer.caddy). Mounts the Docker socket, which is root-equivalent on the
+  # host, so no host ports are published; Caddy is the only way in.
+  portainer:
+    image: portainer/portainer-ce:lts
+    container_name: portainer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks: [edge]
+    restart: unless-stopped
 networks:
   edge:
     external: true
@@ -78,3 +89,4 @@ volumes:
   caddy_data:
   mailpit_data:
   pg_data:
+  portainer_data:
