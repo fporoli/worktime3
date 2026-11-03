@@ -15,6 +15,8 @@ permissions:
 jobs:
   provision:
     runs-on: ubuntu-latest
+    # Environment-level secrets/variables override repo-level ones of the same name.
+    environment: azure
     concurrency:
       group: worktime3-azure-deploy
       cancel-in-progress: false

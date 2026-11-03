@@ -19,6 +19,7 @@ jobs:
   reset:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: vps
     steps:
       - name: Require explicit destructive-operation confirmation
         if: inputs.confirmation != 'RESET worktime3 public schema'

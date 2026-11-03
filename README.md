@@ -207,9 +207,21 @@ fails the build before it reaches any real environment.
 
 ## Deploy
 
-- VPS/Azure workflows are manual (`workflow_dispatch`). VPS needs secrets
-  `VPS_HOST/VPS_USER/VPS_SSH_KEY` and brings up its compose file's `migrate`
-  service before `api`/Keycloak, same as local/dev.
+- VPS/Azure workflows are manual (`workflow_dispatch`) and take all their
+  config from GitHub Environments (Settings > Environments), not from files on a
+  server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
+  - **`vps`** environment. Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
+    `POSTGRES_PASSWORD` (hex only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`,
+    `API_JWT_SECRET`, `EDGE_PG_ADMIN_PASSWORD`, optional `SMTP_PASSWORD`.
+    Variables: `KEYCLOAK_ADMIN`, optional `SMTP_HOST/PORT/FROM/USER/SECURE`.
+    `deploy-vps` writes `compose/.env` on the server from these on every run and
+    brings up `migrate` before `api`/Keycloak. `deploy-vps-edge` syncs
+    `infra/caddy/edge` to `/opt/edge` (Caddy, shared Postgres, Adminer, Portainer).
+    Values must not contain a single quote.
+  - **`azure`** environment. Same names as `azure-provision.yml` lists
+    (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
+    Environment values override repo-level ones, so existing repo secrets keep
+    working until you move them.
 - GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).
 
 To cut a release, push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`).

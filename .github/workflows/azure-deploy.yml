@@ -16,6 +16,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: azure
     env:
       RG: ${{ vars.AZURE_RESOURCE_GROUP }}
       IMAGES: ghcr.io/${{ github.repository }}

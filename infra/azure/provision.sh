@@ -521,6 +521,12 @@ github() {
     az ad app federated-credential create --id "$app_id" -o none --parameters \
       "{\"name\":\"main\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:$GITHUB_REPOSITORY:ref:refs/heads/main\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
   fi
+  # Jobs that declare `environment: azure` present subject repo:<repo>:environment:azure
+  # instead of the branch subject above, so they need a credential of their own.
+  if ! tsv ad app federated-credential list --id "$app_id" --query '[].name' | grep -qx env-azure; then
+    az ad app federated-credential create --id "$app_id" -o none --parameters \
+      "{\"name\":\"env-azure\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:$GITHUB_REPOSITORY:environment:azure\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+  fi
   rg_id="$(tsv group show -n "$RESOURCE_GROUP" --query id)"
   if [ -z "$(tsv role assignment list --assignee "$app_id" --role Contributor --scope "$rg_id" --query '[0].id')" ]; then
     # A fresh service principal takes a moment to become visible to role assignments.
@@ -533,9 +539,9 @@ github() {
   cat <<EOF
 
 Deploy identity ready. Store it for .github/workflows/azure-deploy.yml:
-  gh secret set AZURE_CLIENT_ID --body "$app_id"
-  gh secret set AZURE_TENANT_ID --body "$AZURE_TENANT_ID"
-  gh secret set AZURE_SUBSCRIPTION_ID --body "$AZURE_SUBSCRIPTION_ID"
+  gh secret set --env azure AZURE_CLIENT_ID --body "$app_id"
+  gh secret set --env azure AZURE_TENANT_ID --body "$AZURE_TENANT_ID"
+  gh secret set --env azure AZURE_SUBSCRIPTION_ID --body "$AZURE_SUBSCRIPTION_ID"
 Then give the azure-* workflows the rest of the config: infra/azure/provision.sh secrets
 EOF
 }
@@ -546,17 +552,20 @@ secrets() {
   require GITHUB_REPOSITORY LOCATION RESOURCE_GROUP PG_SERVER_NAME DOCS_STORAGE_ACCOUNT \
     GHCR_USERNAME GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET
   local name
+  # Config lives in the `azure` GitHub Environment (the workflows declare it). Creating it
+  # is idempotent; the secrets and variables below are scoped to it, not the whole repo.
+  gh api -X PUT "repos/$GITHUB_REPOSITORY/environments/azure" --silent
   for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET ADMINER_PASSWORD_HASH SMTP_PASSWORD; do
-    [ -z "${!name:-}" ] || printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY"
+    [ -z "${!name:-}" ] || printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY" --env azure
   done
-  gh variable set AZURE_RESOURCE_GROUP --repo "$GITHUB_REPOSITORY" --body "$RESOURCE_GROUP"
-  gh variable set AZURE_LOCATION --repo "$GITHUB_REPOSITORY" --body "$LOCATION"
-  gh variable set AZURE_PG_SERVER_NAME --repo "$GITHUB_REPOSITORY" --body "$PG_SERVER_NAME"
-  gh variable set AZURE_DOCS_STORAGE_ACCOUNT --repo "$GITHUB_REPOSITORY" --body "$DOCS_STORAGE_ACCOUNT"
+  gh variable set AZURE_RESOURCE_GROUP --repo "$GITHUB_REPOSITORY" --env azure --body "$RESOURCE_GROUP"
+  gh variable set AZURE_LOCATION --repo "$GITHUB_REPOSITORY" --env azure --body "$LOCATION"
+  gh variable set AZURE_PG_SERVER_NAME --repo "$GITHUB_REPOSITORY" --env azure --body "$PG_SERVER_NAME"
+  gh variable set AZURE_DOCS_STORAGE_ACCOUNT --repo "$GITHUB_REPOSITORY" --env azure --body "$DOCS_STORAGE_ACCOUNT"
   for name in GHCR_USERNAME KEYCLOAK_ADMIN SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USER SMTP_SECURE; do
-    [ -z "${!name:-}" ] || gh variable set "$name" --repo "$GITHUB_REPOSITORY" --body "${!name}"
+    [ -z "${!name:-}" ] || gh variable set "$name" --repo "$GITHUB_REPOSITORY" --env azure --body "${!name}"
   done
-  echo "  GitHub secrets and variables set"
+  echo "  GitHub secrets and variables set in environment azure"
 }
 
 # The containerapp CLI has no stop/start, so the request goes straight to the ARM API. It
