@@ -509,6 +509,17 @@ Choose PostgreSQL, then log in as worktime with POSTGRES_PASSWORD. Needs Postgre
 EOF
 }
 
+# Creates the credential, or corrects its subject if one with that name already exists.
+federated_credential() {
+  local app_id="$1" cred="$2" subject="$3" params
+  params="{\"name\":\"$cred\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"$subject\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+  if tsv ad app federated-credential list --id "$app_id" --query '[].name' | grep -qx "$cred"; then
+    az ad app federated-credential update --id "$app_id" --federated-credential-id "$cred" --parameters "$params" -o none
+  else
+    az ad app federated-credential create --id "$app_id" --parameters "$params" -o none
+  fi
+}
+
 # Entra app + federated credential: GitHub Actions on main exchanges its OIDC token for
 # an Azure token, so no client secret is stored anywhere. Contributor on the group only.
 github() {
@@ -517,16 +528,15 @@ github() {
   app_id="$(tsv ad app list --display-name "$name" --query '[0].appId')"
   [ -n "$app_id" ] || app_id="$(tsv ad app create --display-name "$name" --query appId)"
   az ad sp show --id "$app_id" -o none 2>/dev/null || az ad sp create --id "$app_id" -o none
-  if ! tsv ad app federated-credential list --id "$app_id" --query '[].name' | grep -qx main; then
-    az ad app federated-credential create --id "$app_id" -o none --parameters \
-      "{\"name\":\"main\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:$GITHUB_REPOSITORY:ref:refs/heads/main\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
-  fi
-  # Jobs that declare `environment: azure` present subject repo:<repo>:environment:azure
-  # instead of the branch subject above, so they need a credential of their own.
-  if ! tsv ad app federated-credential list --id "$app_id" --query '[].name' | grep -qx env-azure; then
-    az ad app federated-credential create --id "$app_id" -o none --parameters \
-      "{\"name\":\"env-azure\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:$GITHUB_REPOSITORY:environment:azure\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
-  fi
+  # The subject prefix must match what GitHub puts in the token. Repos with immutable
+  # subjects (the default for new ones) send repo:<owner>@<id>/<repo>@<id>, not repo:<owner>/<repo>.
+  local prefix
+  prefix="$(gh api "repos/$GITHUB_REPOSITORY/actions/oidc/customization/sub" --jq .sub_claim_prefix 2>/dev/null || true)"
+  [ -n "$prefix" ] || prefix="repo:$GITHUB_REPOSITORY"
+  # `main` covers jobs without an environment; `env-azure` covers jobs that declare
+  # `environment: azure`, which present the environment subject instead of the branch one.
+  federated_credential "$app_id" main "$prefix:ref:refs/heads/main"
+  federated_credential "$app_id" env-azure "$prefix:environment:azure"
   rg_id="$(tsv group show -n "$RESOURCE_GROUP" --query id)"
   if [ -z "$(tsv role assignment list --assignee "$app_id" --role Contributor --scope "$rg_id" --query '[0].id')" ]; then
     # A fresh service principal takes a moment to become visible to role assignments.
