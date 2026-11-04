@@ -64,14 +64,15 @@ edge_up() {
   # one follows its three hostnames. Only files this run owns are replaced, so other
   # instances on the server keep theirs.
   for site in db mail portainer; do
-    sed "s/turbotapir\.com/$DOMAIN/g" "$ROOT/infra/caddy/edge/sites/$site.caddy" > "$EDGE/sites/$site.caddy"
+    sed -E -e "s/^(db|mail|portainer)\.turbotapir\.com/\1${TOOLS_SUFFIX:-}.turbotapir.com/" \
+      -e "s/turbotapir\.com/$DOMAIN/g" "$ROOT/infra/caddy/edge/sites/$site.caddy" > "$EDGE/sites/$site.caddy"
   done
   sed -e "s/__WEB_HOST__/$WEB_HOST/g" -e "s/__API_HOST__/$API_HOST/g" \
       -e "s/__AUTH_HOST__/$AUTH_HOST/g" -e "s/__PREFIX__/$PREFIX/g" \
     "$ROOT/infra/caddy/edge/sites/worktime3.caddy.tpl" > "$EDGE/sites/$PREFIX.caddy"
   (
     umask 077
-    printf "EDGE_PG_ADMIN_PASSWORD='%s'\nDOMAIN='%s'\n" "$EDGE_PG_ADMIN_PASSWORD" "$DOMAIN" > "$EDGE/.env"
+    printf "EDGE_PG_ADMIN_PASSWORD='%s'\nDOMAIN='%s'\nTOOLS_SUFFIX='%s'\n" "$EDGE_PG_ADMIN_PASSWORD" "$DOMAIN" "${TOOLS_SUFFIX:-}" > "$EDGE/.env"
   )
   (cd "$EDGE" && docker compose up -d --remove-orphans)
 }

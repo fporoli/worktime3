@@ -218,7 +218,7 @@ fails the build before it reaches any real environment.
       `EDGE_PG_ADMIN_PASSWORD` (the same on every instance sharing a server), optional
       `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
     - Variables: `VPS_HOST`, `VPS_USER`, `DOMAIN` (e.g. `turbotapir.com`) and the three subdomains `WEB_SUB`,
-      `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`, `wtauthpp`), `KEYCLOAK_ADMIN`,
+      `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`, `wtauthpp`), optional `TOOLS_SUFFIX` (e.g. `pp`: Portainer, Adminer and Mailpit become `portainerpp.`, `dbpp.`, `mailpp.`; needed when another server uses the same `DOMAIN`), `KEYCLOAK_ADMIN`,
       optional `SHOW_DEMO_ACCOUNTS` (`true`/`false`), `GHCR_USERNAME`, and
       `SMTP_HOST/PORT/FROM/USER/SECURE`.
     Run the `vps` workflow (*deploy* or *reset-seed*) from `main`, naming the environment.

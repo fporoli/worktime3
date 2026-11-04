@@ -78,7 +78,7 @@ services:
     container_name: portainer
     # Caddy terminates TLS and talks plain HTTP to Portainer, so its CSRF check sees an
     # Origin (https://portainer.<DOMAIN>) that doesn't match and answers 403.
-    command: ["--trusted-origins", "https://portainer.${DOMAIN:?required}"]
+    command: ["--trusted-origins", "https://portainer${TOOLS_SUFFIX:-}.${DOMAIN:?required}"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
