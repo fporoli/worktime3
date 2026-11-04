@@ -147,7 +147,13 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
   Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`
   deploy only through GitHub Actions, with config in the `vps` / `azure`
-  GitHub Environments. Ports follow `8090+N` (Keycloak), `5430+N`
+  GitHub Environments. A VPS GitHub Environment is one instance: its name sets
+  the container prefix, `/opt/worktime3-<env>` and the database (`vps` keeps the
+  legacy `worktime3` names), and `DOMAIN` + `WEB_SUB/API_SUB/AUTH_SUB`
+  (+ `TOOLS_SUFFIX` for portainer/db/mail) set its hostnames. `VPS_HOST/USER` are
+  variables, `VPS_SSH_KEY` a secret. Never hand-edit files on the server; change
+  `infra/vps/remote.sh` or `infra/caddy/edge/`. `deploy` does not seed: use the
+  `vps` workflow's `reset-seed` (destructive). Ports follow `8090+N` (Keycloak), `5430+N`
   (pg), `3000+N` (web), `8000+N` (API). Each compose file has a one-shot
   `migrate` service that runs before the API and Keycloak start.
 - Keycloak realm config: `infra/keycloak/realm-worktime.json`.

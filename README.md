@@ -56,9 +56,11 @@ host-run API and web app directly.
   proxy configuration.
 - **compose/docker-compose.{dev,local,vps}.yml** — environment-specific
   stacks. `dev` runs Postgres, migrations, Keycloak, and Mailpit in Docker,
-  with API/web on the host. `local` and `azure` run the full stack, including
-  Caddy, in Docker. `vps` connects its app containers to the shared Postgres
-  and edge-proxy network.
+  with API/web on the host. `local` runs the full stack, including Caddy, in
+  Docker. `vps` connects its app containers to the shared Postgres and
+  edge-proxy network. Azure has no compose file (`infra/azure/provision.sh`).
+- **infra/vps** — `remote.sh`, the script the `vps` workflow runs on the server.
+- **infra/azure** — `provision.sh`, the Azure Container Apps provisioning phases.
 
 ## Database: Liquibase (schema) + Drizzle (queries)
 
@@ -104,7 +106,9 @@ applied changelog file — Liquibase checksums each changeset and will refuse
 to reapply a modified one; add a new changeset instead.
 
 Seed data (`infra/postgres/seeds/seed.sql`) is separate from schema
-migrations and stays manual: `npm run db:seed`.
+migrations and stays manual: `npm run db:seed`. A deployed instance is never
+seeded by `deploy`: use the `vps` workflow's `reset-seed` or the `azure`
+workflow's `seed` / `initdb`.
 
 ## Host ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
@@ -113,10 +117,11 @@ migrations and stays manual: `npm run db:seed`.
 | dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
 | local (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
 | VPS (shared edge network; no host ports published) | — | shared DB | edge | edge | edge |
-| Azure | 4 | 5434 | 8094 | 3004 | 8004 |
 
-On the VPS, the shared edge proxy routes `wt.turbotapir.com` to the web app,
-`wtservice.turbotapir.com` to the API, and `wtauth.turbotapir.com` to Keycloak.
+Azure uses Container Apps ingress, not host ports. On the VPS the shared edge
+proxy routes each instance's three hostnames (`WEB_SUB`, `API_SUB`, `AUTH_SUB`
+under `DOMAIN`; production uses `wt`, `wtservice`, `wtauth` under
+`turbotapir.com`) to its web, API and Keycloak containers.
 
 ## Dev and Local deployment
 
@@ -161,8 +166,10 @@ npm run db:seed
 
 Local dev builds show demo login buttons for the seeded users `admin@acme.com`,
 `marta@acme.com` (manager) and `ulla@acme.com` (user), password `dev1234`.
-The VPS production build hides these shared demo credentials. Provision real
-Keycloak accounts for VPS sign-in; the realm import does not create users.
+On the VPS the buttons are controlled per instance by the `SHOW_DEMO_ACCOUNTS`
+variable (default `false`); the Azure image always shows them. The accounts
+exist only after a seed (`reset-seed` on the VPS). Otherwise provision real
+Keycloak accounts; the realm import does not create users.
 Invite token `dev-invite-0001` accepts an invitation as `invited@acme.com`.
 
 ## Roles
@@ -187,10 +194,12 @@ best-effort — a missing/misconfigured server never fails a request.
   both can run at once). The host-run API in `dev` points at it via
   `.env.dev`; the `api` container in `local` is wired to it in the compose
   file. No auth, nothing real is sent.
-- **`vps`/`azure`**: `SMTP_HOST` is unset by default (mail silently no-ops
-  until configured — nothing to do for a first deploy). Set
-  `SMTP_HOST/PORT/USER/PASSWORD` (+ `SMTP_SECURE=true` for an implicit-TLS
-  relay, typically port 465) as deploy secrets to send through a real relay;
+- **`vps`**: without `SMTP_HOST` the api uses the shared Mailpit on the edge
+  network (inbox at `mail.<DOMAIN>`, behind basic auth), so nothing is sent
+  for real. **`azure`**: `SMTP_HOST` is unset by default (mail silently
+  no-ops). To send through a real relay set `SMTP_HOST/PORT/FROM/USER` as
+  environment variables, `SMTP_PASSWORD` as a secret (+ `SMTP_SECURE=true`
+  for an implicit-TLS relay, typically port 465);
   nodemailer negotiates STARTTLS/AUTH itself, so any standard relay (SES,
   SendGrid, Mailgun, etc.) works without code changes.
 
@@ -211,28 +220,46 @@ fails the build before it reaches any real environment.
   config from GitHub Environments (Settings > Environments), not from files on a
   server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
   - **VPS: one GitHub Environment = one instance.** Production is the environment
-    named `vps`; create another (e.g. `preproduction`) to get a second instance, on the
+    named `vps`; create another (e.g. `preprod`) to get a second instance, on the
     same server or another one. Each environment holds:
-    - Secrets: `VPS_SSH_KEY`, `POSTGRES_PASSWORD` (hex only, it
-      goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`,
+    - Secrets: `VPS_SSH_KEY` (private key, no passphrase), `POSTGRES_PASSWORD` (hex
+      only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`,
       `EDGE_PG_ADMIN_PASSWORD` (the same on every instance sharing a server), optional
       `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
-    - Variables: `VPS_HOST`, `VPS_USER`, `DOMAIN` (e.g. `turbotapir.com`) and the three subdomains `WEB_SUB`,
-      `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`, `wtauthpp`), optional `TOOLS_SUFFIX` (e.g. `pp`: Portainer, Adminer and Mailpit become `portainerpp.`, `dbpp.`, `mailpp.`; needed when another server uses the same `DOMAIN`), `KEYCLOAK_ADMIN`,
-      optional `SHOW_DEMO_ACCOUNTS` (`true`/`false`), `GHCR_USERNAME`, and
-      `SMTP_HOST/PORT/FROM/USER/SECURE`.
-    Run the `vps` workflow (*deploy* or *reset-seed*) from `main`, naming the environment.
-    It ships the deploy files over SSH and runs `infra/vps/remote.sh`, which derives
-    everything instance-specific from the environment name: containers
-    (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`, a database and
-    role `worktime_<env>` on the shared Postgres (created if missing), and its own Caddy
-    site at the three hostnames. DNS A records for those hostnames must point at the
-    server. It also writes `compose/.env` and `/opt/edge/.env`, creates the `edge` network
-    if missing and brings up the edge stack (`infra/caddy/edge`: Caddy, shared Postgres,
-    Adminer, Portainer, which follow `DOMAIN`) before `migrate`, `api` and Keycloak. The
-    server keeps no git checkout and no hand-edited config. One web image serves every
-    instance: its API and Keycloak URLs are filled in when the container starts.
+    - Variables: `VPS_HOST`, `VPS_USER`, `DOMAIN` (e.g. `turbotapir.com`), the three
+      subdomains `WEB_SUB`, `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`,
+      `wtauthpp`), `KEYCLOAK_ADMIN`, and optionally `SHOW_DEMO_ACCOUNTS`
+      (`true`/`false`), `GHCR_USERNAME`, `SMTP_HOST/PORT/FROM/USER/SECURE` and
+      `TOOLS_SUFFIX`. The suffix renames the shared tools' hosts (`pp` gives
+      `portainerpp.`, `dbpp.`, `mailpp.`); set it when two servers use the same
+      `DOMAIN`, otherwise their tool hostnames collide.
+
+    Run the `vps` workflow from `main`, naming the environment and an `image_tag`
+    (prefer a `sha-` tag over `latest`):
+    - `deploy` ships the deploy files over SSH and runs `infra/vps/remote.sh`.
+    - `reset-seed` is destructive: it backs up and recreates the `public` schema,
+      migrates, loads the demo data and checks a demo login. It needs the
+      confirmation text. A new instance has no users until you run it once.
+
+    `remote.sh` derives everything instance-specific from the environment name:
+    containers (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`,
+    a database and role `worktime_<env>` on the shared Postgres (created if missing),
+    and its own Caddy site at the three hostnames. The `vps` environment keeps the
+    original names (`worktime3-*`, `/opt/worktime3`, database `worktime`). It also
+    writes `compose/.env` and `/opt/edge/.env`, creates the `edge` network if missing
+    and brings up the edge stack (`infra/caddy/edge`: Caddy, shared Postgres, Mailpit,
+    Adminer, Portainer, which follow `DOMAIN`) before `migrate`, `api` and Keycloak.
+    The server keeps no git checkout and no hand-edited config. One web image serves
+    every instance: its API and Keycloak URLs are filled in when the container starts.
     Values must not contain a single quote.
+
+    Server prerequisites: Docker with the compose plugin, and `VPS_USER` must be in
+    the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
+    `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
+    after anything root created them). DNS A records for the three hostnames and the
+    tool hostnames (`portainer`, `db`, `mail` plus `TOOLS_SUFFIX`) must point at the
+    server. Create the Portainer admin right after its first start: it locks itself
+    after 5 minutes without one.
   - **`azure`** environment. Same names as `azure.yml` lists
     (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
     Environment values override repo-level ones, so existing repo secrets keep
