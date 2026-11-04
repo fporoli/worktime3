@@ -213,11 +213,11 @@ fails the build before it reaches any real environment.
   - **VPS: one GitHub Environment = one instance.** Production is the environment
     named `vps`; create another (e.g. `preproduction`) to get a second instance, on the
     same server or another one. Each environment holds:
-    - Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `POSTGRES_PASSWORD` (hex only, it
+    - Secrets: `VPS_SSH_KEY`, `POSTGRES_PASSWORD` (hex only, it
       goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`,
       `EDGE_PG_ADMIN_PASSWORD` (the same on every instance sharing a server), optional
       `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
-    - Variables: `DOMAIN` (e.g. `turbotapir.com`) and the three subdomains `WEB_SUB`,
+    - Variables: `VPS_HOST`, `VPS_USER`, `DOMAIN` (e.g. `turbotapir.com`) and the three subdomains `WEB_SUB`,
       `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`, `wtauthpp`), `KEYCLOAK_ADMIN`,
       optional `SHOW_DEMO_ACCOUNTS` (`true`/`false`), `GHCR_USERNAME`, and
       `SMTP_HOST/PORT/FROM/USER/SECURE`.

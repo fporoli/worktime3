@@ -42,8 +42,8 @@ jobs:
       - name: Upload to VPS
         uses: appleboy/scp-action@v1
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          host: ${{ vars.VPS_HOST }}
+          username: ${{ vars.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           source: release.tgz
           target: /tmp/worktime3-release
@@ -73,8 +73,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_SECURE: ${{ vars.SMTP_SECURE }}
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          host: ${{ vars.VPS_HOST }}
+          username: ${{ vars.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script_stop: true
           envs: ACTION,ENVIRONMENT,DOMAIN,WEB_SUB,API_SUB,AUTH_SUB,SHOW_DEMO_ACCOUNTS,GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,REPO,POSTGRES_PASSWORD,KEYCLOAK_ADMIN,KEYCLOAK_ADMIN_PASSWORD,API_JWT_SECRET,EDGE_PG_ADMIN_PASSWORD,SMTP_HOST,SMTP_PORT,SMTP_FROM,SMTP_USER,SMTP_PASSWORD,SMTP_SECURE
