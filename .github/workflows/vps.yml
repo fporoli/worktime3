@@ -38,7 +38,7 @@ jobs:
         run: echo "Reset not run. Provide the exact confirmation phrase to proceed." && exit 1
       - uses: actions/checkout@v7
       - name: Package deploy files
-        run: tar czf release.tgz compose/docker-compose.vps.yml infra/liquibase infra/postgres/seeds/seed.sql infra/caddy/edge infra/vps
+        run: tar czf release.tgz compose/docker-compose.vps.yml infra/liquibase infra/keycloak infra/postgres/seeds/seed.sql infra/caddy/edge infra/vps
       - name: Upload to VPS
         uses: appleboy/scp-action@v1
         with:
