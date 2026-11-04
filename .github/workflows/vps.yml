@@ -8,6 +8,7 @@ name: vps
 # VPS_HOST adds an instance next to the others, with its own subdomains.
 #   deploy      edge stack + worktime3 (migrate, api, web, Keycloak) at the given image tag
 #   reset-seed  DESTRUCTIVE: backs up, drops and re-creates the public schema, loads demo data
+#   destroy     DESTRUCTIVE: removes this instance (containers, database, files, Caddy site)
 on:
   workflow_dispatch:
     inputs:
@@ -15,10 +16,10 @@ on:
         description: 'What to run'
         required: true
         type: choice
-        options: [deploy, reset-seed]
+        options: [deploy, reset-seed, destroy]
       environment: { description: 'GitHub Environment = instance (vps is production)', default: 'vps' }
       image_tag: { description: 'Image tag (prefer a sha-xxxxxxx tag over latest)', default: 'latest' }
-      confirmation: { description: 'reset-seed only: type RESET worktime3 public schema' }
+      confirmation: { description: 'reset-seed: type RESET worktime3 public schema. destroy: type DESTROY <environment name>' }
 permissions:
   contents: read
 concurrency:
@@ -36,6 +37,9 @@ jobs:
       - name: Require explicit destructive-operation confirmation
         if: inputs.action == 'reset-seed' && inputs.confirmation != 'RESET worktime3 public schema'
         run: echo "Reset not run. Provide the exact confirmation phrase to proceed." && exit 1
+      - name: Require explicit destroy confirmation
+        if: inputs.action == 'destroy' && inputs.confirmation != format('DESTROY {0}', inputs.environment)
+        run: echo "Destroy not run. Type DESTROY followed by the environment name." && exit 1
       - uses: actions/checkout@v7
       - name: Package deploy files
         run: tar czf release.tgz compose/docker-compose.vps.yml infra/liquibase infra/keycloak infra/postgres/seeds/seed.sql infra/caddy/edge infra/vps
@@ -66,7 +70,7 @@ jobs:
           KEYCLOAK_ADMIN: ${{ vars.KEYCLOAK_ADMIN }}
           KEYCLOAK_ADMIN_PASSWORD: ${{ secrets.KEYCLOAK_ADMIN_PASSWORD }}
           API_JWT_SECRET: ${{ secrets.API_JWT_SECRET }}
-          EDGE_PG_ADMIN_PASSWORD: ${{ secrets.EDGE_PG_ADMIN_PASSWORD }}
+          PG_PORT: ${{ vars.PG_PORT }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}
           SMTP_FROM: ${{ vars.SMTP_FROM }}
@@ -77,7 +81,7 @@ jobs:
           host: ${{ vars.VPS_HOST }}
           username: ${{ vars.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: ACTION,ENVIRONMENT,DOMAIN,TOOLS_SUFFIX,WEB_SUB,API_SUB,AUTH_SUB,SHOW_DEMO_ACCOUNTS,GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,REPO,POSTGRES_PASSWORD,KEYCLOAK_ADMIN,KEYCLOAK_ADMIN_PASSWORD,API_JWT_SECRET,EDGE_PG_ADMIN_PASSWORD,SMTP_HOST,SMTP_PORT,SMTP_FROM,SMTP_USER,SMTP_PASSWORD,SMTP_SECURE
+          envs: ACTION,ENVIRONMENT,DOMAIN,TOOLS_SUFFIX,WEB_SUB,API_SUB,AUTH_SUB,SHOW_DEMO_ACCOUNTS,GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,REPO,POSTGRES_PASSWORD,KEYCLOAK_ADMIN,KEYCLOAK_ADMIN_PASSWORD,API_JWT_SECRET,PG_PORT,SMTP_HOST,SMTP_PORT,SMTP_FROM,SMTP_USER,SMTP_PASSWORD,SMTP_SECURE
           script: |
             set -eu
             rm -rf /tmp/worktime3-release/src

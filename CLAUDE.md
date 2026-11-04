@@ -153,7 +153,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   (+ `TOOLS_SUFFIX` for portainer/db/mail) set its hostnames. `VPS_HOST/USER` are
   variables, `VPS_SSH_KEY` a secret. Never hand-edit files on the server; change
   `infra/vps/remote.sh` or `infra/caddy/edge/`. `deploy` does not seed: use the
-  `vps` workflow's `reset-seed` (destructive). Ports follow `8090+N` (Keycloak), `5430+N`
+  `vps` workflow's `reset-seed` (destructive). Each VPS instance has its own Postgres
+  container (`PG_PORT`, role/db `worktime`); only Caddy, Mailpit and Portainer are shared
+  (`infra/caddy/edge`). Ports follow `8090+N` (Keycloak), `5430+N`
   (pg), `3000+N` (web), `8000+N` (API). Each compose file has a one-shot
   `migrate` service that runs before the API and Keycloak start.
 - Keycloak realm config: `infra/keycloak/realm-worktime.json`.

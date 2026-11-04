@@ -57,8 +57,8 @@ host-run API and web app directly.
 - **compose/docker-compose.{dev,local,vps}.yml** — environment-specific
   stacks. `dev` runs Postgres, migrations, Keycloak, and Mailpit in Docker,
   with API/web on the host. `local` runs the full stack, including Caddy, in
-  Docker. `vps` connects its app containers to the shared Postgres and
-  edge-proxy network. Azure has no compose file (`infra/azure/provision.sh`).
+  Docker. `vps` is one stack per instance (own Postgres, Keycloak, API, web)
+  that joins the server's shared edge proxy network. Azure has no compose file (`infra/azure/provision.sh`).
 - **infra/vps** — `remote.sh`, the script the `vps` workflow runs on the server.
 - **infra/azure** — `provision.sh`, the Azure Container Apps provisioning phases.
 
@@ -116,7 +116,7 @@ workflow's `seed` / `initdb`.
 |---|---|----|----------|-----|-----|
 | dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
 | local (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
-| VPS (shared edge network; no host ports published) | — | shared DB | edge | edge | edge |
+| VPS instances (one stack each; only `pg` is published, on `PG_PORT`) | — | 5433 production, 5434 preprod, 5435 test (your choice) | edge | edge | edge |
 
 Azure uses Container Apps ingress, not host ports. On the VPS the shared edge
 proxy routes each instance's three hostnames (`WEB_SUB`, `API_SUB`, `AUTH_SUB`
@@ -221,34 +221,43 @@ fails the build before it reaches any real environment.
   server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
   - **VPS: one GitHub Environment = one instance.** Production is the environment
     named `vps`; create another (e.g. `preprod`) to get a second instance, on the
-    same server or another one. Each environment holds:
+    same server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
+    (`wttest`) can all run on one host. Each environment holds:
     - Secrets: `VPS_SSH_KEY` (private key, no passphrase), `POSTGRES_PASSWORD` (hex
-      only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`,
-      `EDGE_PG_ADMIN_PASSWORD` (the same on every instance sharing a server), optional
+      only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`, optional
       `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
-    - Variables: `VPS_HOST`, `VPS_USER`, `DOMAIN` (e.g. `turbotapir.com`), the three
+    - Variables: `VPS_HOST`, `VPS_USER`, `PG_PORT` (this instance's published Postgres
+      port; unique per server, e.g. 5433/5434/5435), `DOMAIN` (e.g. `turbotapir.com`), the three
       subdomains `WEB_SUB`, `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`,
       `wtauthpp`), `KEYCLOAK_ADMIN`, and optionally `SHOW_DEMO_ACCOUNTS`
       (`true`/`false`), `GHCR_USERNAME`, `SMTP_HOST/PORT/FROM/USER/SECURE` and
       `TOOLS_SUFFIX`. The suffix renames the shared tools' hosts (`pp` gives
-      `portainerpp.`, `dbpp.`, `mailpp.`); set it when two servers use the same
+      `portainerpp.`, `mailpp.`); set it when two servers use the same
       `DOMAIN`, otherwise their tool hostnames collide.
 
     Run the `vps` workflow from `main`, naming the environment and an `image_tag`
     (prefer a `sha-` tag over `latest`):
     - `deploy` ships the deploy files over SSH and runs `infra/vps/remote.sh`.
+    - `destroy` is destructive: it removes the instance (containers, its Postgres and
+      volume, `/opt/worktime3*`, its Caddy site, and its database on the old `edge-pg`
+      if still there). A last dump stays in the deploy user's home. The shared edge
+      stack and other instances stay. Confirmation text: `DESTROY <environment>`.
     - `reset-seed` is destructive: it backs up and recreates the `public` schema,
       migrates, loads the demo data and checks a demo login. It needs the
       confirmation text. A new instance has no users until you run it once.
 
     `remote.sh` derives everything instance-specific from the environment name:
     containers (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`,
-    a database and role `worktime_<env>` on the shared Postgres (created if missing),
-    and its own Caddy site at the three hostnames. The `vps` environment keeps the
-    original names (`worktime3-*`, `/opt/worktime3`, database `worktime`). It also
-    writes `compose/.env` and `/opt/edge/.env`, creates the `edge` network if missing
-    and brings up the edge stack (`infra/caddy/edge`: Caddy, shared Postgres, Mailpit,
-    Adminer, Portainer, which follow `DOMAIN`) before `migrate`, `api` and Keycloak.
+    its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
+    Compose project) published on `PG_PORT`, and its own Caddy site at the three
+    hostnames. The `vps` environment keeps the original names (`worktime3-*`,
+    `/opt/worktime3`). It also writes `compose/.env` and `/opt/edge/.env`, creates the
+    `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: Caddy,
+    Mailpit, Portainer, shared by all instances and following `DOMAIN`) before the
+    instance's `pg`, `migrate`, `api` and Keycloak. The first deploy after the move from
+    the old shared Postgres copies the instance's database from `edge-pg` into its own
+    Postgres (dump kept in `/opt/worktime3*`, old data untouched); once the site works,
+    remove the old server with `docker rm -f edge-pg`.
     The server keeps no git checkout and no hand-edited config. One web image serves
     every instance: its API and Keycloak URLs are filled in when the container starts.
     Values must not contain a single quote.
@@ -257,14 +266,16 @@ fails the build before it reaches any real environment.
     the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
     `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
     after anything root created them). DNS A records for the three hostnames and the
-    tool hostnames (`portainer`, `db`, `mail` plus `TOOLS_SUFFIX`) must point at the
-    server. Create the Portainer admin right after its first start: it locks itself
+    tool hostnames (`portainer`, `mail` plus `TOOLS_SUFFIX`) must point at the
+    server. Each instance's Postgres port is reachable from anywhere unless the server
+    firewall limits it: allow only your own IPs. Connect with a normal client to
+    `VPS_HOST:<PG_PORT>` as role `worktime`, database `worktime`, with that
+    environment's `POSTGRES_PASSWORD`. Create the Portainer admin right after its first start: it locks itself
     after 5 minutes without one.
   - **`azure`** environment. Same names as `azure.yml` lists
     (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
     Environment values override repo-level ones, so existing repo secrets keep
     working until you move them.
-- GitHub Pages deploys `docs/` automatically on push to main (docs only, not the app).
 
 To cut a release, push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`).
 `build-push` then publishes images tagged `v1.2.0`, without moving `latest`;

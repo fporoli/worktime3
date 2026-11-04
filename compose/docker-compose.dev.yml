@@ -1,7 +1,6 @@
-
-
-
-
+# `dev` profile: pg + Keycloak + Mailpit in Docker, API and web on the host. Data lives under
+# ../data-dev (the `local` profile uses ../data-local).
+name: worktime-dev
 services:
   pg:
     image: postgres:16
@@ -11,7 +10,7 @@ services:
       POSTGRES_USER: worktime
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktime_dev_only}
     volumes:
-      - ../data-local/pg:/var/lib/postgresql/data
+      - ../data-dev/pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U worktime"]
       interval: 2s
@@ -54,7 +53,7 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_only}
     volumes:
-      - ../data-local/kc:/opt/keycloak/data
+      - ../data-dev/kc:/opt/keycloak/data
       - ../infra/keycloak/realm-worktime.json:/opt/keycloak/data/import/realm-worktime.json:ro
     command: ["start-dev", "--import-realm"]
     depends_on:
