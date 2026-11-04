@@ -17,7 +17,7 @@ apps/web  (React + MUI, Vite)  --HTTP-->  apps/api  (NestJS)  --Drizzle-->  Post
                                           (IdP; stores its own tables in the
                                            `auth` schema of the same database)
 
-Caddy fronts web, API, and Keycloak in the `local` and `azure` Compose
+Caddy fronts web, API, and Keycloak in the `local` Compose
 environments. The VPS stack uses the shared edge Caddy; `dev` accesses its
 host-run API and web app directly.
 ```
@@ -54,7 +54,7 @@ host-run API and web app directly.
   Keycloak startup.
 - **infra/caddy** — environment-specific Caddyfiles plus the shared VPS edge
   proxy configuration.
-- **compose/docker-compose.{dev,local,vps,azure}.yml** — environment-specific
+- **compose/docker-compose.{dev,local,vps}.yml** — environment-specific
   stacks. `dev` runs Postgres, migrations, Keycloak, and Mailpit in Docker,
   with API/web on the host. `local` and `azure` run the full stack, including
   Caddy, in Docker. `vps` connects its app containers to the shared Postgres
@@ -207,18 +207,33 @@ fails the build before it reaches any real environment.
 
 ## Deploy
 
-- VPS/Azure workflows are manual (`workflow_dispatch`) and take all their
+- The `vps` and `azure` workflows are manual (`workflow_dispatch`) and take all their
   config from GitHub Environments (Settings > Environments), not from files on a
   server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
-  - **`vps`** environment. Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
-    `POSTGRES_PASSWORD` (hex only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`,
-    `API_JWT_SECRET`, `EDGE_PG_ADMIN_PASSWORD`, optional `SMTP_PASSWORD`.
-    Variables: `KEYCLOAK_ADMIN`, optional `SMTP_HOST/PORT/FROM/USER/SECURE`.
-    `deploy-vps` writes `compose/.env` on the server from these on every run and
-    brings up `migrate` before `api`/Keycloak. `deploy-vps-edge` syncs
-    `infra/caddy/edge` to `/opt/edge` (Caddy, shared Postgres, Adminer, Portainer).
+  - **VPS: one GitHub Environment = one instance.** Production is the environment
+    named `vps`; create another (e.g. `preproduction`) to get a second instance, on the
+    same server or another one. Each environment holds:
+    - Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `POSTGRES_PASSWORD` (hex only, it
+      goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`,
+      `EDGE_PG_ADMIN_PASSWORD` (the same on every instance sharing a server), optional
+      `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
+    - Variables: `DOMAIN` (e.g. `turbotapir.com`) and the three subdomains `WEB_SUB`,
+      `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`, `wtauthpp`), `KEYCLOAK_ADMIN`,
+      optional `SHOW_DEMO_ACCOUNTS` (`true`/`false`), `GHCR_USERNAME`, and
+      `SMTP_HOST/PORT/FROM/USER/SECURE`.
+    Run the `vps` workflow (*deploy* or *reset-seed*) from `main`, naming the environment.
+    It ships the deploy files over SSH and runs `infra/vps/remote.sh`, which derives
+    everything instance-specific from the environment name: containers
+    (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`, a database and
+    role `worktime_<env>` on the shared Postgres (created if missing), and its own Caddy
+    site at the three hostnames. DNS A records for those hostnames must point at the
+    server. It also writes `compose/.env` and `/opt/edge/.env`, creates the `edge` network
+    if missing and brings up the edge stack (`infra/caddy/edge`: Caddy, shared Postgres,
+    Adminer, Portainer, which follow `DOMAIN`) before `migrate`, `api` and Keycloak. The
+    server keeps no git checkout and no hand-edited config. One web image serves every
+    instance: its API and Keycloak URLs are filled in when the container starts.
     Values must not contain a single quote.
-  - **`azure`** environment. Same names as `azure-provision.yml` lists
+  - **`azure`** environment. Same names as `azure.yml` lists
     (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
     Environment values override repo-level ones, so existing repo secrets keep
     working until you move them.
@@ -241,7 +256,6 @@ for PostgreSQL Flexible Server (Burstable B1ms, private access in the same
 VNet, TLS required, `citext`/`uuid-ossp` allowlisted via `azure.extensions`). `build-push` publishes the extra
 `migrate`, `seed`, `dbtools` and `web-azure` images; `web-azure` has the Azure hostnames
 baked in from the repo variables `AZURE_API_URL` / `AZURE_KEYCLOAK_URL`.
-(`compose/docker-compose.azure.yml` is the older single-host variant.)
 
 First deploy, from Git Bash with the Azure CLI logged into the target tenant:
 
@@ -258,21 +272,22 @@ bash infra/azure/provision.sh secrets  # copies .env.azure to the secrets the az
 After that, `azure-deploy` (manual) runs migrations and rolls api/web to an
 image tag. Backups are Flexible Server's built-in daily ones (7 days).
 
-Day-to-day operations are `provision.sh` phases, and each one is also a manual
-GitHub workflow, so they all show up under `azure-` in the Actions tab. They run
-from `main` only, which is the one ref the deploy identity trusts.
+Day-to-day operations are `provision.sh` phases. Run them from the Actions tab
+with the single `azure` workflow: pick an action from the dropdown. They run
+from `main` only, which is the one ref the deploy identity trusts. A code
+rollout is the separate `azure-deploy` workflow.
 
-| Phase | Workflow | What it does |
-|---|---|---|
-| `freeze` | `azure-freeze` | Stops the apps and Postgres. Storage is still billed, and Azure restarts a stopped server after 7 days, so re-run it before then. |
-| `unfreeze` | `azure-unfreeze` | Starts Postgres and the apps. |
-| `deepfreeze` | `azure-deepfreeze` | Stops the apps, dumps the database to the `db-dumps` blob container, then deletes the Postgres server and its DNS zone. The server is kept if the dump fails. |
-| `deepunfreeze` | `azure-deepunfreeze` | Recreates the server, restores the newest dump, starts the apps. |
-| `dropdb` | `azure-dropdb` | Stops the apps and deletes the server with no dump. All data is lost; you must type the server name to confirm. |
-| `initdb` | `azure-initdb` | Creates an empty server, runs migrations, starts the apps. Refuses if a server exists. |
-| `seed` | `azure-seed` | Loads the demo data, fresh database only. `azure-initdb` offers this as a checkbox. |
-| `apps` | `azure-apps` | Re-applies the app specs after a config or secret change. |
-| `adminer` | `azure-adminer` | Creates or updates the Adminer database UI. The first run must be from a laptop, because it creates the Entra registration. |
+| Action | What it does |
+|---|---|
+| `freeze` | Stops the apps and Postgres. Storage is still billed, and Azure restarts a stopped server after 7 days, so re-run it before then. |
+| `unfreeze` | Starts Postgres and the apps. |
+| `deepfreeze` | Stops the apps, dumps the database to the `db-dumps` blob container, then deletes the Postgres server and its DNS zone. The server is kept if the dump fails. |
+| `deepunfreeze` | Recreates the server, restores the newest dump, starts the apps. |
+| `dropdb` | Stops the apps and deletes the server with no dump. All data is lost; you must type the server name in `confirm`. |
+| `initdb` | Creates an empty server, runs migrations, starts the apps. Refuses if a server exists. The `seed` checkbox also loads the demo data. |
+| `seed` | Loads the demo data, fresh database only. |
+| `apps` | Re-applies the app specs after a config or secret change. |
+| `adminer` | Creates or updates the Adminer database UI. The first run must be from a laptop, because it creates the Entra registration. |
 
 `base` and `github` have no workflow: they need more rights than the deploy
 identity has. `azure-deploy` needs a running database, so unfreeze first.

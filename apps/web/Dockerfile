@@ -28,4 +28,7 @@ FROM nginx:alpine
 # (i.e. whatever's already on the host from a native `npm run build`), silently bypassing the
 # `build` stage above entirely and shipping whatever URLs were baked in by a local dev build.
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+# Swaps the __WT_*__ placeholders for the container's WT_* env at start (see the script).
+COPY apps/web/docker-entrypoint.d/40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh
 EXPOSE 80

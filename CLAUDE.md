@@ -143,8 +143,11 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 - `packages/shared` (role ids, RBAC matrix) mirrors API constants but is not
   imported by either app yet.
-- Environments: `compose/docker-compose.{dev,local,vps,azure}.yml` with
-  `infra/caddy/Caddyfile.<env>`. Ports follow `8090+N` (Keycloak), `5430+N`
+- Environments: `compose/docker-compose.{dev,local,vps}.yml`; `local` uses
+  `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
+  Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`
+  deploy only through GitHub Actions, with config in the `vps` / `azure`
+  GitHub Environments. Ports follow `8090+N` (Keycloak), `5430+N`
   (pg), `3000+N` (web), `8000+N` (API). Each compose file has a one-shot
   `migrate` service that runs before the API and Keycloak start.
 - Keycloak realm config: `infra/keycloak/realm-worktime.json`.

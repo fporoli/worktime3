@@ -79,12 +79,14 @@ jobs:
           labels: ${{ steps.web-meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Vite inlines these at build time (see apps/web/Dockerfile) — baked to the VPS's
-          # real domains since that's this workflow's one real deploy target today.
+          # Vite inlines these at build time (see apps/web/Dockerfile). They are placeholders on
+          # purpose: the container swaps in its own WT_API_URL / WT_KEYCLOAK_URL /
+          # WT_SHOW_DEMO_ACCOUNTS at start (apps/web/docker-entrypoint.d), so one image serves
+          # every VPS instance. The web-azure image below still bakes real URLs.
           build-args: |
-            VITE_API_URL=https://wtservice.turbotapir.com/api/v1
-            VITE_KEYCLOAK_URL=https://wtauth.turbotapir.com
-            VITE_SHOW_DEMO_ACCOUNTS=true
+            VITE_API_URL=__WT_API_URL__
+            VITE_KEYCLOAK_URL=__WT_KEYCLOAK_URL__
+            VITE_SHOW_DEMO_ACCOUNTS=__WT_SHOW_DEMO_ACCOUNTS__
             VITE_BUILD_RELEASE=${{ steps.release.outputs.release }}
             VITE_BUILD_COMMIT=${{ steps.release.outputs.commit }}
             VITE_BUILD_DATE=${{ steps.release.outputs.date }}

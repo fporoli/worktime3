@@ -13,10 +13,9 @@
 # gives a web UI to manage any project's database, proxied at db.turbotapir.com behind
 # Caddy basic_auth (see sites/db.caddy) — pick the target database inside Adminer itself.
 #
-# Lives at /opt/edge on the VPS, independent of any single project's git checkout or
-# deploy pipeline. Bootstrapped once by hand; after that it just keeps running, and
-# each project drops its own site file into ./sites/ on every deploy and reloads this
-# Caddy (see worktime3's .github/workflows/deploy-vps.yml for that project's half).
+# Lives at /opt/edge on the VPS and is written there by the vps workflow
+# (.github/workflows/vps.yml via infra/vps/remote.sh), together with .env. Each project
+# drops its own site file into ./sites/ and the Caddy is reloaded on every deploy.
 name: edge
 services:
   caddy:
@@ -78,8 +77,8 @@ services:
     image: portainer/portainer-ce:lts
     container_name: portainer
     # Caddy terminates TLS and talks plain HTTP to Portainer, so its CSRF check sees an
-    # Origin (https://portainer.turbotapir.com) that doesn't match and answers 403.
-    command: ["--trusted-origins", "https://portainer.turbotapir.com"]
+    # Origin (https://portainer.<DOMAIN>) that doesn't match and answers 403.
+    command: ["--trusted-origins", "https://portainer.${DOMAIN:?required}"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data

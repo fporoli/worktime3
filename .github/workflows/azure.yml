@@ -1,14 +1,20 @@
-name: azure-provision
-# Shared by the azure-* workflows: runs phases of infra/azure/provision.sh. The config that
-# lives in .env.azure on a laptop comes from the secrets and variables that
-# `provision.sh secrets` sets. The base and github phases stay on the laptop, because they
-# need more rights than the deploy identity has (Contributor on the resource group).
+name: azure
+# One entry point for everything the deploy identity may do on Azure: pick an action and run.
+# Each action is a phase of infra/azure/provision.sh. Config comes from the `azure` GitHub
+# Environment (set by `provision.sh secrets`). The base and github phases stay on a laptop:
+# they need more rights than the deploy identity has (Contributor on the resource group).
+# A plain code rollout is azure-deploy.yml, which stays separate.
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      phases: { type: string, required: true }
-      confirm: { type: string, default: '' }
-      image_tag: { type: string, default: 'latest' }
+      action:
+        description: 'What to run'
+        required: true
+        type: choice
+        options: [apps, seed, initdb, freeze, unfreeze, deepfreeze, deepunfreeze, adminer, dropdb]
+      image_tag: { description: 'Image tag (apps only)', default: 'latest' }
+      seed: { description: 'initdb only: also load the demo data', type: boolean, default: true }
+      confirm: { description: 'dropdb only: type the Postgres server name to confirm' }
 permissions:
   id-token: write
   contents: read
@@ -30,9 +36,9 @@ jobs:
       - run: az extension add --name containerapp --upgrade --only-show-errors
       - name: Run phases
         env:
-          PHASES: ${{ inputs.phases }}
+          PHASES: ${{ inputs.action == 'initdb' && inputs.seed && 'initdb seed' || inputs.action }}
           CONFIRM: ${{ inputs.confirm }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           LOCATION: ${{ vars.AZURE_LOCATION }}

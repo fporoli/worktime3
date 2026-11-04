@@ -1,0 +1,96 @@
+name: vps
+# The only way anything reaches the VPS. Ships the repo's deploy files from this checkout over
+# SSH and runs infra/vps/remote.sh there, so the server holds no git checkout and no
+# hand-maintained config. One GitHub Environment = one instance: pick it in `environment`
+# (`vps` is production, e.g. `preproduction` is another one). Each environment holds its own
+# secrets and variables (Settings > Environments, list in the README's Deploy section), so
+# an environment with a different VPS_HOST deploys to another server, and one with the same
+# VPS_HOST adds an instance next to the others, with its own subdomains.
+#   deploy      edge stack + worktime3 (migrate, api, web, Keycloak) at the given image tag
+#   reset-seed  DESTRUCTIVE: backs up, drops and re-creates the public schema, loads demo data
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to run'
+        required: true
+        type: choice
+        options: [deploy, reset-seed]
+      environment: { description: 'GitHub Environment = instance (vps is production)', default: 'vps' }
+      image_tag: { description: 'Image tag (prefer a sha-xxxxxxx tag over latest)', default: 'latest' }
+      confirmation: { description: 'reset-seed only: type RESET worktime3 public schema' }
+permissions:
+  contents: read
+concurrency:
+  group: worktime3-vps
+  cancel-in-progress: false
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Only main may deploy
+        if: github.ref != 'refs/heads/main'
+        run: echo "Run this workflow from main." && exit 1
+      - name: Require explicit destructive-operation confirmation
+        if: inputs.action == 'reset-seed' && inputs.confirmation != 'RESET worktime3 public schema'
+        run: echo "Reset not run. Provide the exact confirmation phrase to proceed." && exit 1
+      - uses: actions/checkout@v7
+      - name: Package deploy files
+        run: tar czf release.tgz compose/docker-compose.vps.yml infra/liquibase infra/postgres/seeds/seed.sql infra/caddy/edge infra/vps
+      - name: Upload to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: release.tgz
+          target: /tmp/worktime3-release
+      - name: Run on VPS
+        uses: appleboy/ssh-action@v1
+        env:
+          ACTION: ${{ inputs.action }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          WEB_SUB: ${{ vars.WEB_SUB }}
+          API_SUB: ${{ vars.API_SUB }}
+          AUTH_SUB: ${{ vars.AUTH_SUB }}
+          SHOW_DEMO_ACCOUNTS: ${{ vars.SHOW_DEMO_ACCOUNTS }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+          REPO: ${{ github.repository }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          KEYCLOAK_ADMIN: ${{ vars.KEYCLOAK_ADMIN }}
+          KEYCLOAK_ADMIN_PASSWORD: ${{ secrets.KEYCLOAK_ADMIN_PASSWORD }}
+          API_JWT_SECRET: ${{ secrets.API_JWT_SECRET }}
+          EDGE_PG_ADMIN_PASSWORD: ${{ secrets.EDGE_PG_ADMIN_PASSWORD }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_FROM: ${{ vars.SMTP_FROM }}
+          SMTP_USER: ${{ vars.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SECURE: ${{ vars.SMTP_SECURE }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          envs: ACTION,ENVIRONMENT,DOMAIN,WEB_SUB,API_SUB,AUTH_SUB,SHOW_DEMO_ACCOUNTS,GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,REPO,POSTGRES_PASSWORD,KEYCLOAK_ADMIN,KEYCLOAK_ADMIN_PASSWORD,API_JWT_SECRET,EDGE_PG_ADMIN_PASSWORD,SMTP_HOST,SMTP_PORT,SMTP_FROM,SMTP_USER,SMTP_PASSWORD,SMTP_SECURE
+          script: |
+            set -eu
+            rm -rf /tmp/worktime3-release/src
+            mkdir -p /tmp/worktime3-release/src
+            tar xzf /tmp/worktime3-release/release.tgz -C /tmp/worktime3-release/src
+            bash /tmp/worktime3-release/src/infra/vps/remote.sh "$ACTION"
+            rm -rf /tmp/worktime3-release
+      - name: Verify seeded demo login
+        if: inputs.action == 'reset-seed'
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 3 \
+            -X POST https://${{ vars.API_SUB }}.${{ vars.DOMAIN }}/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"admin@acme.com","password":"dev1234"}' \
+            | jq -e '.ok == true and .email == "admin@acme.com"' >/dev/null
+          echo "Seeded demo login verified."
