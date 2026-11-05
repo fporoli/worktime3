@@ -231,13 +231,16 @@ fails the build before it reaches any real environment.
       subdomains `WEB_SUB`, `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`,
       `wtauthpp`), `KEYCLOAK_ADMIN`, and optionally `SHOW_DEMO_ACCOUNTS`
       (`true`/`false`), `GHCR_USERNAME`, `SMTP_HOST/PORT/FROM/USER/SECURE` and
-      `TOOLS_SUFFIX`. The suffix renames the shared tools' hosts (`pp` gives
-      `portainerpp.`, `mailpp.`); set it when two servers use the same
-      `DOMAIN`, otherwise their tool hostnames collide.
+      `MAIL_SUB` (publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>`).
 
     Run the `vps` workflow from `main`, naming the environment and an `image_tag`
     (prefer a `sha-` tag over `latest`):
     - `deploy` ships the deploy files over SSH and runs `infra/vps/remote.sh`.
+    - `portainer` (re)deploys Portainer, the Docker UI for the whole server, at
+      `portainer.<DOMAIN>`. It is its own stack in `/opt/edge/portainer`, so instance
+      deploys never touch it; run it once per server, with any environment of that
+      server (it uses that environment's `DOMAIN`). `portainer-remove` takes it down and
+      keeps its data volume.
     - `destroy` is destructive: it removes the instance (containers, its Postgres and
       volume, `/opt/worktime3-<env>`, its Caddy site, and its database on a leftover
       `edge-pg` if there is one). A last dump stays in the deploy user's home. The shared edge
@@ -251,8 +254,8 @@ fails the build before it reaches any real environment.
     its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
     Compose project) published on `PG_PORT`, and its own Caddy site at the three
     hostnames. It also writes `compose/.env` and `/opt/edge/.env`, creates the
-    `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: Caddy,
-    Portainer, shared by all instances and following `DOMAIN`) before the
+    `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: just the
+    Caddy shared by all instances) before the
     instance's `pg`, `mailpit`, `migrate`, `api` and Keycloak. A leftover `edge-pg` (the old shared
     Postgres) is not used any more: remove it with `docker rm -f edge-pg`.
     The server keeps no git checkout and no hand-edited config. One web image serves
@@ -262,13 +265,14 @@ fails the build before it reaches any real environment.
     Server prerequisites: Docker with the compose plugin, and `VPS_USER` must be in
     the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
     `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
-    after anything root created them). DNS A records for the three hostnames and the
-    Portainer hostname (`portainer` plus `TOOLS_SUFFIX`) and, if set, `MAIL_SUB`, must point at the
+    after anything root created them). DNS A records for the three hostnames,
+    `portainer.<DOMAIN>` and, if set, each `MAIL_SUB` hostname must point at the
     server. Each instance's Postgres port is reachable from anywhere unless the server
     firewall limits it: allow only your own IPs. Connect with a normal client to
     `VPS_HOST:<PG_PORT>` as role `worktime`, database `worktime`, with that
     environment's `POSTGRES_PASSWORD`. Create the Portainer admin right after its first start: it locks itself
-    after 5 minutes without one.
+    after 5 minutes without one (an existing admin survives the move out of the
+    edge stack, because the data volume is reused).
   - **`azure`** environment. Same names as `azure.yml` lists
     (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
     Environment values override repo-level ones, so existing repo secrets keep

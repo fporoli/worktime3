@@ -149,12 +149,12 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   deploy only through GitHub Actions, with config in GitHub Environments
   (`azure`, and one per VPS instance: `prod`, `preprod`, `test`, ...). A VPS GitHub Environment is one instance: its name sets
   the container prefix, `/opt/worktime3-<env>`, its own Postgres, and `DOMAIN` + `WEB_SUB/API_SUB/AUTH_SUB`
-  (+ `TOOLS_SUFFIX` for portainer, optional `MAIL_SUB` for the Mailpit inbox) set its hostnames. `VPS_HOST/USER` are
+  (optional `MAIL_SUB` for the Mailpit inbox) set its hostnames. `VPS_HOST/USER` are
   variables, `VPS_SSH_KEY` a secret. Never hand-edit files on the server; change
   `infra/vps/remote.sh` or `infra/caddy/edge/`. `deploy` does not seed: use the
   `vps` workflow's `reset-seed` (destructive). Each VPS instance has its own Postgres
-  container (`PG_PORT`, role/db `worktime`) and Mailpit; only Caddy and Portainer are shared
-  (`infra/caddy/edge`). Ports follow `8090+N` (Keycloak), `5430+N`
+  container (`PG_PORT`, role/db `worktime`) and Mailpit; only Caddy is shared (`infra/caddy/edge`).
+  Portainer is its own per-server stack (`infra/portainer`, `vps` workflow action `portainer`). Ports follow `8090+N` (Keycloak), `5430+N`
   (pg), `3000+N` (web), `8000+N` (API). Each compose file has a one-shot
   `migrate` service that runs before the API and Keycloak start.
 - Keycloak realm config: `infra/keycloak/realm-worktime.json`.

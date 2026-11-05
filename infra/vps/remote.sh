@@ -3,9 +3,10 @@
 # the secrets and variables of the chosen GitHub Environment as environment variables.
 # Nothing on the server is edited by hand and there is no git checkout there.
 #
-#   remote.sh deploy        edge stack (Caddy, Portainer), then this instance
+#   remote.sh deploy        edge stack (Caddy), then this instance
 #                           (own Postgres and Mailpit, migrate, api, web, Keycloak), then reload Caddy
 #   remote.sh reset-seed    backs up and drops the public schema, migrates, loads the demo data
+#   remote.sh portainer     (re)deploys Portainer, one per server, in its own stack
 #   remote.sh destroy       removes this instance entirely (a final dump is kept in $HOME)
 #
 # One GitHub Environment = one instance. Everything instance-specific derives from its name
@@ -60,12 +61,9 @@ edge_up() {
   docker network inspect edge >/dev/null 2>&1 || docker network create edge
   mkdir -p "$EDGE/sites"
   cp "$ROOT/infra/caddy/edge/docker-compose.yml" "$ROOT/infra/caddy/edge/Caddyfile" "$EDGE/"
-  # Site files are rendered, not copied: the shared ones follow DOMAIN, this instance's own
-  # one follows its three hostnames. Only files this run owns are replaced, so other
-  # instances on the server keep theirs.
-  sed -E -e "s/^portainer\.turbotapir\.com/portainer${TOOLS_SUFFIX:-}.turbotapir.com/" \
-    -e "s/turbotapir\.com/$DOMAIN/g" "$ROOT/infra/caddy/edge/sites/portainer.caddy" > "$EDGE/sites/portainer.caddy"
-  # Shared tools that moved into each instance (Adminer, Mailpit): drop what older deploys left.
+  # This instance's site file is rendered from its three hostnames. Only files this run owns
+  # are replaced, so other instances' sites (and portainer.caddy) stay.
+  # Tools that moved into each instance (Adminer, Mailpit): drop what older deploys left.
   rm -f "$EDGE/sites/db.caddy" "$EDGE/sites/mail.caddy"
   docker rm -f edge-adminer mailpit >/dev/null 2>&1 || true
   sed -e "s/__WEB_HOST__/$WEB_HOST/g" -e "s/__API_HOST__/$API_HOST/g" \
@@ -76,13 +74,34 @@ edge_up() {
     sed -e "s/__MAIL_HOST__/$MAIL_SUB.$DOMAIN/g" -e "s/__PREFIX__/$PREFIX/g" \
       "$ROOT/infra/caddy/edge/sites/worktime3-mail.caddy.tpl" >> "$EDGE/sites/$PREFIX.caddy"
   fi
-  (
-    umask 077
-    printf "DOMAIN='%s'\nTOOLS_SUFFIX='%s'\n" "$DOMAIN" "${TOOLS_SUFFIX:-}" > "$EDGE/.env"
-  )
   # No --remove-orphans: a leftover legacy `edge-pg` (the old shared Postgres) is not part of
   # this stack any more; remove it yourself with `docker rm -f edge-pg` when nothing needs it.
   (cd "$EDGE" && docker compose up -d)
+}
+
+# Portainer: one per server, its own stack in $EDGE/portainer, independent of every instance.
+portainer_up() {
+  local dir="$EDGE/portainer" owner
+  docker network inspect edge >/dev/null 2>&1 || docker network create edge
+  mkdir -p "$dir" "$EDGE/sites"
+  cp "$SRC/infra/portainer/docker-compose.yml" "$dir/docker-compose.yml"
+  sed "s/turbotapir\.com/$DOMAIN/g" "$SRC/infra/portainer/portainer.caddy" > "$EDGE/sites/portainer.caddy"
+  ( umask 077; printf "DOMAIN='%s'\n" "$DOMAIN" > "$dir/.env" )
+  # Adopt the container the old edge stack ran: same name, its data volume is reused.
+  owner="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' portainer 2>/dev/null || true)"
+  if [ -n "$owner" ] && [ "$owner" != portainer ]; then docker rm -f portainer >/dev/null; fi
+  (cd "$dir" && docker compose up -d)
+  if docker inspect edge-caddy >/dev/null 2>&1; then caddy_reload; fi
+}
+
+portainer_remove() {
+  local dir="$EDGE/portainer"
+  if [ -f "$dir/docker-compose.yml" ]; then (cd "$dir" && docker compose down); fi
+  docker rm -f portainer >/dev/null 2>&1 || true
+  rm -f "$EDGE/sites/portainer.caddy"
+  rm -rf "$dir"
+  if docker inspect edge-caddy >/dev/null 2>&1; then caddy_reload; fi
+  echo "Portainer removed (its data volume edge_portainer_data is kept)."
 }
 
 # Starts this instance's Postgres and waits until it accepts connections.
@@ -192,7 +211,9 @@ destroy() {
 
 case "${1:-}" in
   destroy) destroy ;;
+  portainer) portainer_up ;;
+  portainer-remove) portainer_remove ;;
   deploy) deploy ;;
   reset-seed) reset_seed ;;
-  *) echo "usage: remote.sh deploy|reset-seed|destroy" >&2; exit 2 ;;
+  *) echo "usage: remote.sh deploy|reset-seed|destroy|portainer|portainer-remove" >&2; exit 2 ;;
 esac

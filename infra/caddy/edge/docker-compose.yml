@@ -2,7 +2,7 @@
 # e.g. worktime2) that needs port 80/443 — only one process can bind those, so each
 # project runs its own app containers but not its own Caddy.
 #
-# Only Caddy and Portainer are shared. Every instance (production, preprod, test, ...) runs
+# Only Caddy is part of this stack (Portainer has its own, infra/portainer). Every instance (production, preprod, test, ...) runs
 # its own Postgres and Mailpit in its own Compose project (compose/docker-compose.vps.yml).
 #
 # Lives at /opt/edge on the VPS and is written there by the vps workflow
@@ -22,23 +22,8 @@ services:
       - caddy_data:/data
     networks: [edge]
     restart: unless-stopped
-  # Docker management UI, proxied by Caddy at portainer.turbotapir.com (see
-  # sites/portainer.caddy). Mounts the Docker socket, which is root-equivalent on the
-  # host, so no host ports are published; Caddy is the only way in.
-  portainer:
-    image: portainer/portainer-ce:lts
-    container_name: portainer
-    # Caddy terminates TLS and talks plain HTTP to Portainer, so its CSRF check sees an
-    # Origin (https://portainer.<DOMAIN>) that doesn't match and answers 403.
-    command: ["--trusted-origins", "https://portainer${TOOLS_SUFFIX:-}.${DOMAIN:?required}"]
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-    networks: [edge]
-    restart: unless-stopped
 networks:
   edge:
     external: true
 volumes:
   caddy_data:
-  portainer_data:
