@@ -27,6 +27,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  # This instance's own mail catcher: the api's default SMTP target, so nothing is sent for
+  # real unless SMTP_HOST points at a relay. Its inbox UI is exposed only when MAIL_SUB is set
+  # (Caddy site with Basic Auth, see infra/caddy/edge/sites/worktime3-mail.caddy.tpl). Reached
+  # by its container name, like pg, since the `edge` network is shared with other instances.
+  mailpit:
+    image: axllent/mailpit
+    container_name: ${CONTAINER_PREFIX:?required}-mailpit
+    networks: [default, edge]
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
+      # intentional. Fine here: SMTP traffic to it never leaves the instance's network.
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    volumes:
+      - mailpit_data:/data
+    restart: unless-stopped
   # One-shot: applies infra/liquibase/changelog via Liquibase, then exits.
   migrate:
     build: { context: ../infra/liquibase, dockerfile: Dockerfile }
@@ -83,9 +99,9 @@ services:
       # falling back to the insecure hardcoded dev secret — set a real random value.
       API_JWT_SECRET: ${API_JWT_SECRET:?required}
       APP_BASE_URL: https://${WEB_HOST:?required}
-      # Defaults to the shared Mailpit catcher on the edge network (see
-      # infra/caddy/edge/) — override via compose/.env to point at a real relay instead.
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      # Defaults to this instance's Mailpit catcher — override via compose/.env (the SMTP_*
+      # variables of the GitHub Environment) to point at a real relay instead.
+      SMTP_HOST: ${SMTP_HOST:-${CONTAINER_PREFIX:?required}-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-worktime@localhost}
       SMTP_USER: ${SMTP_USER:-}
@@ -93,6 +109,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
     depends_on:
       migrate: { condition: service_completed_successfully }
+      mailpit: { condition: service_started }
   web:
     image: ${WEB_IMAGE:?required}
     # No host port here — the shared edge Caddy (see infra/caddy/edge/) is the single
@@ -115,3 +132,4 @@ networks:
     external: true
 volumes:
   pg_data:
+  mailpit_data:

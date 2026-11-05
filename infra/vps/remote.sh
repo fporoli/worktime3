@@ -3,8 +3,8 @@
 # the secrets and variables of the chosen GitHub Environment as environment variables.
 # Nothing on the server is edited by hand and there is no git checkout there.
 #
-#   remote.sh deploy        edge stack (Caddy, Mailpit, Portainer), then this instance
-#                           (own Postgres, migrate, api, web, Keycloak), then reload Caddy
+#   remote.sh deploy        edge stack (Caddy, Portainer), then this instance
+#                           (own Postgres and Mailpit, migrate, api, web, Keycloak), then reload Caddy
 #   remote.sh reset-seed    backs up and drops the public schema, migrates, loads the demo data
 #   remote.sh destroy       removes this instance entirely (a final dump is kept in $HOME)
 #
@@ -41,7 +41,7 @@ install_files() {
 }
 
 # Values are single-quoted so compose does not interpolate `$`; they must not contain a
-# single quote. SMTP_* may be empty: the compose file falls back to the shared Mailpit.
+# single quote. SMTP_* may be empty: the compose file falls back to the instance's Mailpit.
 write_app_env() {
   export REALM_FILE="$ROOT/rendered/realm-worktime.json" CONTAINER_PREFIX="$PREFIX" \
     PG_PORT WEB_HOST API_HOST AUTH_HOST
@@ -63,15 +63,19 @@ edge_up() {
   # Site files are rendered, not copied: the shared ones follow DOMAIN, this instance's own
   # one follows its three hostnames. Only files this run owns are replaced, so other
   # instances on the server keep theirs.
-  for site in mail portainer; do
-    sed -E -e "s/^(mail|portainer)\.turbotapir\.com/\1${TOOLS_SUFFIX:-}.turbotapir.com/" \
-      -e "s/turbotapir\.com/$DOMAIN/g" "$ROOT/infra/caddy/edge/sites/$site.caddy" > "$EDGE/sites/$site.caddy"
-  done
-  rm -f "$EDGE/sites/db.caddy"      # Adminer is gone
-  docker rm -f edge-adminer >/dev/null 2>&1 || true
+  sed -E -e "s/^portainer\.turbotapir\.com/portainer${TOOLS_SUFFIX:-}.turbotapir.com/" \
+    -e "s/turbotapir\.com/$DOMAIN/g" "$ROOT/infra/caddy/edge/sites/portainer.caddy" > "$EDGE/sites/portainer.caddy"
+  # Shared tools that moved into each instance (Adminer, Mailpit): drop what older deploys left.
+  rm -f "$EDGE/sites/db.caddy" "$EDGE/sites/mail.caddy"
+  docker rm -f edge-adminer mailpit >/dev/null 2>&1 || true
   sed -e "s/__WEB_HOST__/$WEB_HOST/g" -e "s/__API_HOST__/$API_HOST/g" \
       -e "s/__AUTH_HOST__/$AUTH_HOST/g" -e "s/__PREFIX__/$PREFIX/g" \
     "$ROOT/infra/caddy/edge/sites/worktime3.caddy.tpl" > "$EDGE/sites/$PREFIX.caddy"
+  # Optional inbox UI of this instance's Mailpit, at MAIL_SUB.DOMAIN (needs a DNS record).
+  if [ -n "${MAIL_SUB:-}" ]; then
+    sed -e "s/__MAIL_HOST__/$MAIL_SUB.$DOMAIN/g" -e "s/__PREFIX__/$PREFIX/g" \
+      "$ROOT/infra/caddy/edge/sites/worktime3-mail.caddy.tpl" >> "$EDGE/sites/$PREFIX.caddy"
+  fi
   (
     umask 077
     printf "DOMAIN='%s'\nTOOLS_SUFFIX='%s'\n" "$DOMAIN" "${TOOLS_SUFFIX:-}" > "$EDGE/.env"
@@ -174,8 +178,8 @@ destroy() {
   fi
 
   [ -f "$ROOT/compose/docker-compose.vps.yml" ] && "${COMPOSE[@]}" down -v --remove-orphans || true
-  for n in web api keycloak pg; do docker rm -f "$PREFIX-$n" >/dev/null 2>&1 || true; done
-  docker volume rm "${PREFIX}_pg_data" >/dev/null 2>&1 || true
+  for n in web api keycloak mailpit pg; do docker rm -f "$PREFIX-$n" >/dev/null 2>&1 || true; done
+  docker volume rm "${PREFIX}_pg_data" "${PREFIX}_mailpit_data" >/dev/null 2>&1 || true
   if [ "$legacy" = 1 ]; then
     docker exec edge-pg psql -U postgres -v ON_ERROR_STOP=1 \
       -c "DROP DATABASE IF EXISTS \"$LEGACY_DB\" WITH (FORCE)" -c "DROP ROLE IF EXISTS \"$LEGACY_DB\""

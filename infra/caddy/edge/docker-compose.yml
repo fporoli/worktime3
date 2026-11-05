@@ -2,13 +2,8 @@
 # e.g. worktime2) that needs port 80/443 — only one process can bind those, so each
 # project runs its own app containers but not its own Caddy.
 #
-# Also runs one shared Mailpit SMTP catcher — projects' api containers connect to it
-# by container name over the "edge" network, and its web UI is proxied by Caddy at
-# mail.turbotapir.com (see sites/mail.caddy), one inbox shared across every project
-# instead of a per-project catcher.
-#
-# Each instance (production, preprod, test, ...) runs its own Postgres in its own Compose
-# project (compose/docker-compose.vps.yml); only Caddy, Mailpit and Portainer are shared.
+# Only Caddy and Portainer are shared. Every instance (production, preprod, test, ...) runs
+# its own Postgres and Mailpit in its own Compose project (compose/docker-compose.vps.yml).
 #
 # Lives at /opt/edge on the VPS and is written there by the vps workflow
 # (.github/workflows/vps.yml via infra/vps/remote.sh), together with .env. Each project
@@ -25,18 +20,6 @@ services:
       # Persists issued certs across restarts/redeploys — without this, every restart
       # would re-request from Let's Encrypt and risk its rate limits.
       - caddy_data:/data
-    networks: [edge]
-    restart: unless-stopped
-  mailpit:
-    image: axllent/mailpit
-    container_name: mailpit
-    environment:
-      MP_SMTP_AUTH_ACCEPT_ANY: 1
-      # Newer Mailpit refuses AUTH over a plaintext connection unless told this is
-      # intentional. Fine here — SMTP traffic to it never leaves the edge network.
-      MP_SMTP_AUTH_ALLOW_INSECURE: 1
-    volumes:
-      - mailpit_data:/data
     networks: [edge]
     restart: unless-stopped
   # Docker management UI, proxied by Caddy at portainer.turbotapir.com (see
@@ -58,5 +41,4 @@ networks:
     external: true
 volumes:
   caddy_data:
-  mailpit_data:
   portainer_data:

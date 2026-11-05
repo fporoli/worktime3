@@ -194,9 +194,9 @@ best-effort — a missing/misconfigured server never fails a request.
   both can run at once). The host-run API in `dev` points at it via
   `.env.dev`; the `api` container in `local` is wired to it in the compose
   file. No auth, nothing real is sent.
-- **`vps`**: without `SMTP_HOST` the api uses the shared Mailpit on the edge
-  network (inbox at `mail.<DOMAIN>`, behind basic auth), so nothing is sent
-  for real. **`azure`**: `SMTP_HOST` is unset by default (mail silently
+- **`vps`**: without `SMTP_HOST` the api uses the instance's own Mailpit
+  (`worktime3-<env>-mailpit`), so nothing is sent for real. Set `MAIL_SUB` to
+  publish its inbox at `<MAIL_SUB>.<DOMAIN>` behind basic auth (user `admin`). **`azure`**: `SMTP_HOST` is unset by default (mail silently
   no-ops). To send through a real relay set `SMTP_HOST/PORT/FROM/USER` as
   environment variables, `SMTP_PASSWORD` as a secret (+ `SMTP_SECURE=true`
   for an implicit-TLS relay, typically port 465);
@@ -252,8 +252,8 @@ fails the build before it reaches any real environment.
     Compose project) published on `PG_PORT`, and its own Caddy site at the three
     hostnames. It also writes `compose/.env` and `/opt/edge/.env`, creates the
     `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: Caddy,
-    Mailpit, Portainer, shared by all instances and following `DOMAIN`) before the
-    instance's `pg`, `migrate`, `api` and Keycloak. A leftover `edge-pg` (the old shared
+    Portainer, shared by all instances and following `DOMAIN`) before the
+    instance's `pg`, `mailpit`, `migrate`, `api` and Keycloak. A leftover `edge-pg` (the old shared
     Postgres) is not used any more: remove it with `docker rm -f edge-pg`.
     The server keeps no git checkout and no hand-edited config. One web image serves
     every instance: its API and Keycloak URLs are filled in when the container starts.
@@ -263,7 +263,7 @@ fails the build before it reaches any real environment.
     the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
     `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
     after anything root created them). DNS A records for the three hostnames and the
-    tool hostnames (`portainer`, `mail` plus `TOOLS_SUFFIX`) must point at the
+    Portainer hostname (`portainer` plus `TOOLS_SUFFIX`) and, if set, `MAIL_SUB`, must point at the
     server. Each instance's Postgres port is reachable from anywhere unless the server
     firewall limits it: allow only your own IPs. Connect with a normal client to
     `VPS_HOST:<PG_PORT>` as role `worktime`, database `worktime`, with that
