@@ -1,6 +1,6 @@
 # Portainer (see docker-compose.yml next to this file). It has its own login;
 # the first-run admin account must be created right after it starts (Portainer locks
 # itself after 5 minutes without one).
-portainer.turbotapir.com {
+__PORTAINER_HOST__ {
   reverse_proxy portainer:9000
 }

@@ -85,8 +85,11 @@ portainer_up() {
   docker network inspect edge >/dev/null 2>&1 || docker network create edge
   mkdir -p "$dir" "$EDGE/sites"
   cp "$SRC/infra/portainer/docker-compose.yml" "$dir/docker-compose.yml"
-  sed "s/turbotapir\.com/$DOMAIN/g" "$SRC/infra/portainer/portainer.caddy" > "$EDGE/sites/portainer.caddy"
-  ( umask 077; printf "DOMAIN='%s'\n" "$DOMAIN" > "$dir/.env" )
+  # Hostname is PORTAINER_SUB.DOMAIN (PORTAINER_SUB defaults to "portainer"): servers sharing a
+  # DOMAIN need different names, since each name's DNS record points at one server.
+  local host="${PORTAINER_SUB:-portainer}.$DOMAIN"
+  sed "s/__PORTAINER_HOST__/$host/g" "$SRC/infra/portainer/portainer.caddy" > "$EDGE/sites/portainer.caddy"
+  ( umask 077; printf "PORTAINER_HOST='%s'\n" "$host" > "$dir/.env" )
   # Adopt the container the old edge stack ran: same name, its data volume is reused.
   owner="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' portainer 2>/dev/null || true)"
   if [ -n "$owner" ] && [ "$owner" != portainer ]; then docker rm -f portainer >/dev/null; fi

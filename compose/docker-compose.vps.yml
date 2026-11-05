@@ -8,13 +8,14 @@ services:
   # This instance's own Postgres (role and database `worktime`; Keycloak shares it in the
   # `auth` schema). Others reach it by its container name, never by `pg`: keycloak and api are
   # also on the shared `edge` network, where another `pg` (the legacy edge-pg) may exist.
-  # Published on PG_PORT so a desktop client can connect: every instance on
+  # Published on the server's loopback only (127.0.0.1:PG_PORT), so it is reachable solely through
+  # an SSH tunnel to the host: every instance on
   # a server needs its own port (e.g. 5433 production, 5434 preprod, 5435 test). It is on the
   # instance's private network only, so several instances can each have a service named `pg`.
   pg:
     image: postgres:16
     container_name: ${CONTAINER_PREFIX:?required}-pg
-    ports: ["${PG_PORT:?required}:5432"]
+    ports: ["127.0.0.1:${PG_PORT:?required}:5432"]
     environment:
       POSTGRES_DB: worktime
       POSTGRES_USER: worktime

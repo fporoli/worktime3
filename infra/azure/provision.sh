@@ -116,10 +116,13 @@ delete_postgres() {
   if pg_exists; then
     az postgres flexible-server delete -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" --yes -o none
   fi
-  if az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
-    az network private-dns link vnet delete -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" --yes -o none
-  fi
   if az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
+    # Delete every link in the zone, not just ours: Azure refuses to delete a zone that
+    # still has nested resources (CannotDeleteResource).
+    local link
+    for link in $(az network private-dns link vnet list -g "$RESOURCE_GROUP" -z "$pg_zone" --query '[].name' -o tsv | tr -d '\r'); do
+      az network private-dns link vnet delete -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$link" --yes -o none
+    done
     az network private-dns zone delete -g "$RESOURCE_GROUP" -n "$pg_zone" --yes -o none
   fi
   echo "  $PG_SERVER_NAME deleted"

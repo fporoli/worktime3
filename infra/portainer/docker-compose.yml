@@ -1,7 +1,7 @@
 # Portainer, the Docker management UI for the whole server (every instance's containers,
 # not one instance). Its own stack so no instance deploy touches it: deployed by the vps
 # workflow's `portainer` action to /opt/edge/portainer, proxied by the edge Caddy at
-# portainer.<DOMAIN> (infra/portainer/portainer.caddy, copied to /opt/edge/sites). Mounts the
+# <PORTAINER_SUB>.<DOMAIN> (infra/portainer/portainer.caddy, copied to /opt/edge/sites). Mounts the
 # Docker socket, which is root-equivalent on the host, so no host ports are published.
 name: portainer
 services:
@@ -9,8 +9,8 @@ services:
     image: portainer/portainer-ce:lts
     container_name: portainer
     # Caddy terminates TLS and talks plain HTTP to Portainer, so its CSRF check sees an
-    # Origin (https://portainer.<DOMAIN>) that doesn't match and answers 403.
-    command: ["--trusted-origins", "https://portainer.${DOMAIN:?required}"]
+    # Origin (https://<PORTAINER_SUB>.<DOMAIN>) that doesn't match and answers 403.
+    command: ["--trusted-origins", "https://${PORTAINER_HOST:?required}"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data

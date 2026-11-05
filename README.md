@@ -62,6 +62,93 @@ host-run API and web app directly.
 - **infra/vps** — `remote.sh`, the script the `vps` workflow runs on the server.
 - **infra/azure** — `provision.sh`, the Azure Container Apps provisioning phases.
 
+### Request flow
+
+1. The web app obtains a token (local HS256 login or Keycloak SSO, see
+   `auth.ts`) and sends it as a bearer token on every call. Each page calls
+   the API directly under the global prefix `/api/v1`; there is no shared
+   client layer or state store.
+2. The global `JwtAuthGuard` validates the token (local secret or Keycloak
+   JWKS) and attaches `req.user`. Routes marked `@Public()` skip the guard.
+3. The handler gets the Drizzle client from `DbService.getDb()`, resolves the
+   caller's user id from the validated token (`callerUserId`), and checks
+   access with the helpers in `access.ts`. Every org-scoped handler does this
+   itself; there is no central policy layer.
+4. Writes go through Drizzle, then record history via
+   `VersionsService.record(...)` (tables carry no `created_at`/`updated_at`)
+   and, where relevant, create notifications and send best-effort mail.
+5. Errors come back as data, not exceptions: `{ ok: false, error: 'kebab-code' }`
+   on failure, `{ ok: true, ... }` on success, and empty shapes for reads the
+   caller may not see.
+
+### Multi-tenancy and authorization
+
+- Data is partitioned by organization. A user can belong to several
+  organizations through `organization_memberships`, and the web app
+  re-resolves the user's role whenever the org switcher changes.
+- Roles are per organization, and a membership can hold several
+  (`membership_roles`): `user`, `manager`, `admin`, plus HR and billing
+  variants. Authorization is checked with `isOrgMember`, `isOrgManagerOrAdmin`,
+  `isOrgAdmin`, `isOrgHrOrAdmin`, `isOrgBillingAdmin`, `isManagerOf`,
+  `canManageTeamMembers`, and `isOwnerAdminOrManagerOf`.
+- "Manager of X" is the specific `organization_memberships.manager_user_id`,
+  so approvals route to the member's own manager, not to any manager in the
+  org.
+- Time-entry writes additionally check `isPeriodLocked`: a month that is
+  submitted or approved is read-only until it is reopened.
+
+### Domain areas
+
+The API keeps these concerns separate; each has its own controller/service
+and tables:
+
+| Area | What it is | Where |
+| --- | --- | --- |
+| Project time | Hours booked against projects and subprojects | `project-time.*`, `projects.controller.ts` |
+| Work time | Check-in/check-out attendance | `work-time.*` |
+| Balances | Vacation and overtime accounts | `balances.*`, `absences.controller.ts` |
+| Timesheets | Monthly submission and approval of project time | `timesheets.controller.ts` |
+| Expenses | Expense items and expense reports | `expenses.controller.ts`, `expense-reports.controller.ts` |
+| Basic data | Personal data with an HR change-request/approval history | `basicdata.*` |
+| Static data | Admin-editable dropdown vocabularies | `static-data.controller.ts` |
+| Audit | Version history of changed rows | `versions.service.ts`, `audit.*` |
+
+### Approval workflows and notifications
+
+Timesheets, expense reports, absences, and timesheet reopen requests all go
+through `workflows.service.ts`. A submission is routed to the requester's
+manager, and each state change creates a notification through
+`notifications.service.ts`. That service persists the row and pushes it to
+connected clients over the WebSocket gateway at `/ws/notifications`, which the
+web app consumes via `useNotifications.ts` and `NotificationBell`.
+
+### AI assistant
+
+`assistant.service.ts` uses the OpenAI SDK against Gemini's or OpenAI's
+compatible endpoint, with tool-calling. Every tool runs the same
+authorization as its REST equivalent, using the caller's real identity, so the
+assistant can never see or do more than the user could through the UI. Without
+`GEMINI_API_KEY`/`OPENAI_API_KEY` it returns
+`{ ok: false, error: 'assistant-not-configured' }`.
+
+### Graceful degradation
+
+The API is built to start and answer even when pieces are missing:
+
+- Without `DATABASE_URL` it runs in offline mode (a startup warning is
+  logged) and every endpoint, including login, returns
+  `{ ok: true, offline: true }`. This looks like success but does nothing.
+- Mail is best-effort and never fails a request.
+- The assistant degrades as described above.
+
+### Schema ownership
+
+Liquibase owns the schema and Drizzle owns the queries. Changelogs in
+`infra/liquibase/changelog/` are the source of truth. `schema.ts` and
+`relations.ts` are regenerated from the migrated database with
+`npm run db:introspect`, never edited by hand. Details are in the next
+section.
+
 ## Database: Liquibase (schema) + Drizzle (queries)
 
 **Liquibase owns the schema.** `infra/liquibase/changelog/` holds one file
@@ -116,7 +203,7 @@ workflow's `seed` / `initdb`.
 |---|---|----|----------|-----|-----|
 | dev (pg+kc in containers, api+web local) | 1 | 5431 | 8091 | 3001 | 8001 |
 | local (all dockerized) | 2 | 5432 | 8092 | 3002 | 8002 |
-| VPS instances (one stack each; only `pg` is published, on `PG_PORT`) | — | 5433 production, 5434 preprod, 5435 test (your choice) | edge | edge | edge |
+| VPS instances (one stack each; only `pg` is published, on `127.0.0.1:PG_PORT`, reachable via SSH tunnel) | — | 5433 production, 5434 preprod, 5435 test (your choice) | edge | edge | edge |
 
 Azure uses Container Apps ingress, not host ports. On the VPS the shared edge
 proxy routes each instance's three hostnames (`WEB_SUB`, `API_SUB`, `AUTH_SUB`
@@ -226,12 +313,14 @@ fails the build before it reaches any real environment.
     - Secrets: `VPS_SSH_KEY` (private key, no passphrase), `POSTGRES_PASSWORD` (hex
       only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`, optional
       `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
-    - Variables: `VPS_HOST`, `VPS_USER`, `PG_PORT` (this instance's published Postgres
-      port; unique per server, e.g. 5433/5434/5435), `DOMAIN` (e.g. `turbotapir.com`), the three
+    - Variables: `VPS_HOST`, `VPS_USER`, `PG_PORT` (this instance's Postgres
+      loopback port on the server; unique per server, e.g. 5433/5434/5435), `DOMAIN` (e.g. `turbotapir.com`), the three
       subdomains `WEB_SUB`, `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`,
       `wtauthpp`), `KEYCLOAK_ADMIN`, and optionally `SHOW_DEMO_ACCOUNTS`
       (`true`/`false`), `GHCR_USERNAME`, `SMTP_HOST/PORT/FROM/USER/SECURE` and
-      `MAIL_SUB` (publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>`).
+      `MAIL_SUB` (publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>`),
+      `PORTAINER_SUB` (Portainer hostname `<PORTAINER_SUB>.<DOMAIN>`, default `portainer`; set it
+      per server when servers share a `DOMAIN`, e.g. `portainerpp`).
 
     Run the `vps` workflow from `main`, naming the environment and an `image_tag`
     (prefer a `sha-` tag over `latest`):
@@ -252,7 +341,7 @@ fails the build before it reaches any real environment.
     `remote.sh` derives everything instance-specific from the environment name:
     containers (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`,
     its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
-    Compose project) published on `PG_PORT`, and its own Caddy site at the three
+    Compose project) bound to `127.0.0.1:PG_PORT` on the server, and its own Caddy site at the three
     hostnames. It also writes `compose/.env` and `/opt/edge/.env`, creates the
     `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: just the
     Caddy shared by all instances) before the
@@ -266,10 +355,11 @@ fails the build before it reaches any real environment.
     the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
     `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
     after anything root created them). DNS A records for the three hostnames,
-    `portainer.<DOMAIN>` and, if set, each `MAIL_SUB` hostname must point at the
-    server. Each instance's Postgres port is reachable from anywhere unless the server
-    firewall limits it: allow only your own IPs. Connect with a normal client to
-    `VPS_HOST:<PG_PORT>` as role `worktime`, database `worktime`, with that
+    `<PORTAINER_SUB>.<DOMAIN>` (default `portainer`) and, if set, each `MAIL_SUB` hostname must point at the
+    server. Each instance's Postgres listens on the server's loopback only, so it is reachable
+    solely through an SSH tunnel to the host:
+    `ssh -N -L 5434:127.0.0.1:<PG_PORT> <VPS_USER>@<VPS_HOST>`, then connect a normal client to
+    `localhost:5434` as role `worktime`, database `worktime`, with that
     environment's `POSTGRES_PASSWORD`. Create the Portainer admin right after its first start: it locks itself
     after 5 minutes without one (an existing admin survives the move out of the
     edge stack, because the data volume is reused).
