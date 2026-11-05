@@ -11,20 +11,16 @@
 # One GitHub Environment = one instance. Everything instance-specific derives from its name
 # (ENVIRONMENT), its hostnames (DOMAIN + WEB_SUB/API_SUB/AUTH_SUB) and its Postgres port
 # (PG_PORT), so several instances (production, preprod, test, ...) can share a server: each
-# gets its own containers, Compose project, directory, Postgres and Caddy site. The
-# environment named `vps` is production and keeps the original container and directory
-# names; any other name, e.g. `preprod`, gets suffixed ones.
+# gets its own containers (worktime3-<env>-*), Compose project, /opt/worktime3-<env>,
+# Postgres and Caddy site.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # the files just shipped
 EDGE=/opt/edge
 
 slug="$(printf '%s' "${ENVIRONMENT:?required}" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-' | sed 's/-*$//')"
-if [ "$slug" = vps ]; then
-  PREFIX=worktime3 LEGACY_DB=worktime
-else
-  PREFIX="worktime3-$slug" LEGACY_DB="worktime_${slug//-/_}"
-fi
+PREFIX="worktime3-$slug"
+LEGACY_DB="worktime_${slug//-/_}"   # only used by `destroy`, for databases on the removed shared edge-pg
 ROOT="/opt/$PREFIX"
 PG="$PREFIX-pg"
 WEB_HOST="${WEB_SUB:?required}.${DOMAIN:?required}"
@@ -80,8 +76,8 @@ edge_up() {
     umask 077
     printf "DOMAIN='%s'\nTOOLS_SUFFIX='%s'\n" "$DOMAIN" "${TOOLS_SUFFIX:-}" > "$EDGE/.env"
   )
-  # No --remove-orphans: the legacy shared `edge-pg` (see migrate_legacy) must stay up until
-  # you have checked the migrated data and removed it yourself.
+  # No --remove-orphans: a leftover legacy `edge-pg` (the old shared Postgres) is not part of
+  # this stack any more; remove it yourself with `docker rm -f edge-pg` when nothing needs it.
   (cd "$EDGE" && docker compose up -d)
 }
 
@@ -95,37 +91,6 @@ pg_up() {
   done
   echo "$PG did not become ready" >&2
   exit 1
-}
-
-# One-time move from the old shared Postgres (`edge-pg`, one database per instance) into this
-# instance's own Postgres. Runs only when edge-pg still has this instance's legacy database
-# and the new Postgres has no tables yet. Non-destructive: the legacy database is left in
-# place, and a dump stays in $ROOT. The api and Keycloak are stopped first so no write is lost.
-migrate_legacy() {
-  docker inspect edge-pg >/dev/null 2>&1 || return 0
-  [ "$(docker exec edge-pg psql -U postgres -Atqc "SELECT 1 FROM pg_database WHERE datname = '$LEGACY_DB'")" = 1 ] || return 0
-  local has
-  has="$(docker exec "$PG" psql -U worktime -d worktime -Atqc "SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('public', 'auth')")"
-  [ "$has" = 0 ] || return 0
-
-  echo "Moving database $LEGACY_DB from edge-pg into $PG"
-  docker stop "$PREFIX-api" "$PREFIX-keycloak" >/dev/null 2>&1 || true
-  local dump q before after
-  dump="$ROOT/legacy-$LEGACY_DB-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  docker exec edge-pg pg_dump -U postgres -d "$LEGACY_DB" --format=custom > "$dump"
-  test -s "$dump"
-  # --no-owner: everything ends up owned by this instance's `worktime` role. Harmless
-  # notices (e.g. "schema public already exists") are expected, so success is judged below.
-  docker exec -i "$PG" pg_restore -U worktime -d worktime --no-owner --no-privileges < "$dump" || true
-
-  q="SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('public', 'auth')"
-  before="$(docker exec edge-pg psql -U postgres -d "$LEGACY_DB" -Atqc "$q")"
-  after="$(docker exec "$PG" psql -U worktime -d worktime -Atqc "$q")"
-  if [ "$before" != "$after" ] || [ "$after" = 0 ]; then
-    echo "Move failed: $before tables in edge-pg/$LEGACY_DB, $after in $PG. The old database is untouched; dump: $dump" >&2
-    exit 1
-  fi
-  echo "Moved $after tables. Dump kept at $dump. After checking the site you can remove the old server: docker rm -f edge-pg"
 }
 
 ghcr_login() {
@@ -144,7 +109,6 @@ deploy() {
   ghcr_login
   edge_up
   pg_up
-  migrate_legacy
   # api/web are pre-built images (no `build:` context), so `--build` below only rebuilds
   # migrate's local Dockerfile; it never re-pulls api/web from GHCR. Without this explicit
   # pull, `up` reuses whatever is cached under the same tag and runs stale code.

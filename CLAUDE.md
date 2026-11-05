@@ -146,10 +146,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 - Environments: `compose/docker-compose.{dev,local,vps}.yml`; `local` uses
   `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
   Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`
-  deploy only through GitHub Actions, with config in the `vps` / `azure`
-  GitHub Environments. A VPS GitHub Environment is one instance: its name sets
-  the container prefix, `/opt/worktime3-<env>` and the database (`vps` keeps the
-  legacy `worktime3` names), and `DOMAIN` + `WEB_SUB/API_SUB/AUTH_SUB`
+  deploy only through GitHub Actions, with config in GitHub Environments
+  (`azure`, and one per VPS instance: `prod`, `preprod`, `test`, ...). A VPS GitHub Environment is one instance: its name sets
+  the container prefix, `/opt/worktime3-<env>`, its own Postgres, and `DOMAIN` + `WEB_SUB/API_SUB/AUTH_SUB`
   (+ `TOOLS_SUFFIX` for portainer/db/mail) set its hostnames. `VPS_HOST/USER` are
   variables, `VPS_SSH_KEY` a secret. Never hand-edit files on the server; change
   `infra/vps/remote.sh` or `infra/caddy/edge/`. `deploy` does not seed: use the

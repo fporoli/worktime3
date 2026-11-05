@@ -17,7 +17,7 @@ on:
         required: true
         type: choice
         options: [deploy, reset-seed, destroy]
-      environment: { description: 'GitHub Environment = instance (vps is production)', default: 'vps' }
+      environment: { description: 'GitHub Environment = instance (prod, preprod, test, ...)', default: 'prod' }
       image_tag: { description: 'Image tag (prefer a sha-xxxxxxx tag over latest)', default: 'latest' }
       confirmation: { description: 'reset-seed: type RESET worktime3 public schema. destroy: type DESTROY <environment name>' }
 permissions:

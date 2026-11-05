@@ -220,7 +220,7 @@ fails the build before it reaches any real environment.
   config from GitHub Environments (Settings > Environments), not from files on a
   server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
   - **VPS: one GitHub Environment = one instance.** Production is the environment
-    named `vps`; create another (e.g. `preprod`) to get a second instance, on the
+    named `prod`; create another (e.g. `preprod`) to get a second instance, on the
     same server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
     (`wttest`) can all run on one host. Each environment holds:
     - Secrets: `VPS_SSH_KEY` (private key, no passphrase), `POSTGRES_PASSWORD` (hex
@@ -239,8 +239,8 @@ fails the build before it reaches any real environment.
     (prefer a `sha-` tag over `latest`):
     - `deploy` ships the deploy files over SSH and runs `infra/vps/remote.sh`.
     - `destroy` is destructive: it removes the instance (containers, its Postgres and
-      volume, `/opt/worktime3*`, its Caddy site, and its database on the old `edge-pg`
-      if still there). A last dump stays in the deploy user's home. The shared edge
+      volume, `/opt/worktime3-<env>`, its Caddy site, and its database on a leftover
+      `edge-pg` if there is one). A last dump stays in the deploy user's home. The shared edge
       stack and other instances stay. Confirmation text: `DESTROY <environment>`.
     - `reset-seed` is destructive: it backs up and recreates the `public` schema,
       migrates, loads the demo data and checks a demo login. It needs the
@@ -250,14 +250,11 @@ fails the build before it reaches any real environment.
     containers (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`,
     its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
     Compose project) published on `PG_PORT`, and its own Caddy site at the three
-    hostnames. The `vps` environment keeps the original names (`worktime3-*`,
-    `/opt/worktime3`). It also writes `compose/.env` and `/opt/edge/.env`, creates the
+    hostnames. It also writes `compose/.env` and `/opt/edge/.env`, creates the
     `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: Caddy,
     Mailpit, Portainer, shared by all instances and following `DOMAIN`) before the
-    instance's `pg`, `migrate`, `api` and Keycloak. The first deploy after the move from
-    the old shared Postgres copies the instance's database from `edge-pg` into its own
-    Postgres (dump kept in `/opt/worktime3*`, old data untouched); once the site works,
-    remove the old server with `docker rm -f edge-pg`.
+    instance's `pg`, `migrate`, `api` and Keycloak. A leftover `edge-pg` (the old shared
+    Postgres) is not used any more: remove it with `docker rm -f edge-pg`.
     The server keeps no git checkout and no hand-edited config. One web image serves
     every instance: its API and Keycloak URLs are filled in when the container starts.
     Values must not contain a single quote.
