@@ -7,58 +7,32 @@ import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
 import { BasicDataService } from './basicdata.service';
 import { users } from './db/schema';
+import { FieldsService } from './fields.service';
+import { BASICDATA_FORM, editableKeys, validateFields } from '@worktime3/shared/fields';
 
 /**
- * These four live as real columns on `users`, not in the basicdata jsonb — `update()` below
- * routes them to a `users` update instead of merging them into users.basicdata.
+ * Nested objects and lists the field registry does not describe yet (docs/FIELD_CONFIG.md, "Basic
+ * data specifics"). Anyone may change them via a change request.
  */
-const USER_COLUMN_MAP = {
-  displayName: 'display_name',
-  firstName: 'first_name',
-  middleName: 'middle_name',
-  lastName: 'last_name',
-} as const;
+const NESTED_KEYS = ['bankAccounts', 'emergencyContacts', 'partner', 'children'] as const;
+
+/** Every key an HR/admin direct edit may set: the registry's writable fields plus the nested ones. */
+const ALL_KEYS = [...editableKeys(BASICDATA_FORM, 'hr'), ...NESTED_KEYS];
+
+/** Keys an employee may change about themselves through a change request (`editableBy: 'self'`). */
+const SELF_SERVICE_KEYS = [...editableKeys(BASICDATA_FORM, 'self'), ...NESTED_KEYS];
 
 /**
- * "Personalien" — identity fields an employee cannot self-service; only an admin/HR direct edit
- * may touch these, so they never appear in a self-requested patch (see `requestChange` below).
+ * Registry fields stored in real `users` columns rather than the basicdata jsonb: `update()` routes
+ * them to a `users` update instead of merging them into users.basicdata.
  */
-const ADMIN_ONLY_KEYS = [
-  'personnelNumber',
-  'gender',
-  'birthDate',
-  'socialSecurityNumber',
-  'languageCode',
-  'placeOfOrigin',
-  'nationality',
-  'residencePermitCode',
-  'displayName',
-  'firstName',
-  'middleName',
-  'lastName',
-] as const;
+const USER_COLUMN_MAP: Record<string, string> = Object.fromEntries(
+  BASICDATA_FORM.fields
+    .filter((f) => !f.readOnly && f.storage.kind === 'column' && f.storage.table === 'users')
+    .map((f) => [f.key, f.storage.column]),
+);
 
-/** Address/bank/emergency-contact/family fields anyone may edit themselves (via a change request, unless they're admin/HR). */
-const SELF_SERVICE_KEYS = [
-  'salutation',
-  'street',
-  'postalCode',
-  'city',
-  'country',
-  'canton',
-  'phone1',
-  'phone2',
-  'mobile',
-  'email',
-  'bankAccounts',
-  'emergencyContacts',
-  'civilStatus',
-  'civilStatusSince',
-  'partner',
-  'children',
-] as const;
-
-const ALL_KEYS = [...ADMIN_ONLY_KEYS, ...SELF_SERVICE_KEYS];
+export { ALL_KEYS as BASICDATA_HR_KEYS, SELF_SERVICE_KEYS as BASICDATA_SELF_KEYS, USER_COLUMN_MAP as BASICDATA_USER_COLUMNS };
 
 /** Keep only known top-level keys from `keys`, and cap overall size so nobody can stuff arbitrary payloads in here. */
 function sanitizePatch(body: unknown, keys: readonly string[]): Record<string, unknown> | null {
@@ -79,6 +53,7 @@ export class BasicDataController {
     private readonly audit: AuditService,
     private readonly versionsService: VersionsService,
     private readonly basicData: BasicDataService,
+    private readonly fields: FieldsService,
   ) {}
 
   @Get('organizations/:orgId/users/:userId/basicdata')
@@ -131,13 +106,16 @@ export class BasicDataController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgHrOrAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
-    const patch = sanitizePatch(body.patch, ALL_KEYS);
-    if (!patch) return { ok: false, error: 'invalid-patch' };
+    const sanitized = sanitizePatch(body.patch, ALL_KEYS);
+    if (!sanitized) return { ok: false, error: 'invalid-patch' };
+    const checked = await this.validate(orgId, sanitized);
+    if (!checked.ok) return checked;
+    const patch = checked.patch;
 
     const userColumnPatch: Partial<typeof users.$inferInsert> = {};
     const basicdataPatch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patch)) {
-      const column = (USER_COLUMN_MAP as Record<string, string>)[key];
+      const column = USER_COLUMN_MAP[key];
       if (column) (userColumnPatch as Record<string, unknown>)[column] = value;
       else basicdataPatch[key] = value;
     }
@@ -166,8 +144,11 @@ export class BasicDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (callerId !== userId) return { ok: false, error: 'forbidden' };
     if (!(await isOrgMember(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
-    const patch = sanitizePatch(body.patch, SELF_SERVICE_KEYS);
-    if (!patch) return { ok: false, error: 'invalid-patch' };
+    const sanitized = sanitizePatch(body.patch, SELF_SERVICE_KEYS);
+    if (!sanitized) return { ok: false, error: 'invalid-patch' };
+    const checked = await this.validate(orgId, sanitized);
+    if (!checked.ok) return checked;
+    const patch = checked.patch;
 
     const result = await this.basicData.requestChange(userId, patch, callerId);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.request', 'user', userId, { fields: Object.keys(patch) }).catch(() => {});
@@ -210,6 +191,15 @@ export class BasicDataController {
     const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'rejected', callerId, note);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.reject', 'user', userId, { version: Number(versionNr), note: note ?? undefined }).catch(() => {});
     return result;
+  }
+
+  /** Checks the patch against the org's merged basic-data template; returns normalized values. */
+  private async validate(orgId: string, patch: Record<string, unknown>) {
+    const form = await this.fields.resolved(orgId, BASICDATA_FORM.id);
+    if (!form) return { ok: true as const, patch };
+    const { errors, values } = validateFields(form, patch);
+    if (errors.length > 0) return { ok: false as const, error: 'invalid-field', fields: errors };
+    return { ok: true as const, patch: values };
   }
 
   @Get('organizations/:orgId/basicdata/pending')

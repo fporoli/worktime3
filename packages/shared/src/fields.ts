@@ -132,8 +132,8 @@ export const BASICDATA_FORM: FormDef = {
     { key: 'civilStatus', caption: 'home.section.civilStatus', order: 30 },
   ],
   fields: [
-    // users.display_name is NOT NULL, so it can never be hidden.
-    usersColumn('displayName', 'display_name', 10, { optional: false }),
+    // users.display_name is NOT NULL, so it is always required and can never be hidden.
+    usersColumn('displayName', 'display_name', 10, { optional: false, required: true, locked: ['required'] }),
     usersColumn('firstName', 'first_name', 20),
     usersColumn('middleName', 'middle_name', 30),
     usersColumn('lastName', 'last_name', 40),
@@ -169,13 +169,395 @@ export const FORMS: Record<string, FormDef> = {
 };
 
 /** The form's fields, optionally only one group's, in display order. */
-export function formFields(form: FormDef, group?: string): FieldDef[] {
+export function formFields<F extends FieldDef>(form: { fields: F[] }, group?: string): F[] {
   return form.fields.filter((f) => group === undefined || f.group === group).sort((a, b) => a.order - b.order);
 }
 
 /** Keys of the fields in a group that this form writes (everything except read-only fields). */
-export function writableKeys(form: FormDef, group: string): string[] {
+export function writableKeys(form: { fields: FieldDef[] }, group: string): string[] {
   return formFields(form, group)
     .filter((f) => !f.readOnly)
     .map((f) => f.key);
+}
+
+// ---------------------------------------------------------------------------
+// Templates: global and per-org overrides of the code defaults
+// ---------------------------------------------------------------------------
+
+/** Text per language, e.g. `{ en: 'Place of birth', de: 'Geburtsort' }`. */
+export type Texts = Record<string, string>;
+
+/** Named validators; `postcode:CH` is tied to a country, not a language. */
+export const VALIDATORS = ['email', 'phone', 'iban', 'postcode:CH', 'ahv'] as const;
+export type ValidatorName = (typeof VALIDATORS)[number];
+
+/** What one template layer sets for one field: only the properties it changes. */
+export interface FieldOverride {
+  caption?: Texts;
+  tooltip?: Texts;
+  placeholder?: Texts;
+  group?: string;
+  order?: number;
+  newRow?: boolean;
+  width?: Width;
+  height?: number;
+  type?: FieldType;
+  required?: boolean;
+  validator?: string;
+  /** Regular expression the whole (normalized) value must match; needs `patternMessage.en`. */
+  pattern?: string;
+  patternMessage?: Texts;
+  min?: number | string;
+  max?: number | string;
+  hidden?: boolean;
+}
+
+export interface GroupOverride {
+  caption?: Texts;
+  order?: number;
+}
+
+/** `field_config.field_key` of the row holding a layer's group overrides. */
+export const GROUPS_KEY = '$groups';
+
+/** One template layer of a form, as stored in `field_config`. */
+export interface FormLayer {
+  fields: Record<string, FieldOverride>;
+  groups?: Record<string, GroupOverride>;
+}
+
+/** A field after merging the layers. `texts` hold template texts; the i18n keys stay the fallback. */
+export interface ResolvedField extends FieldDef {
+  hidden?: boolean;
+  pattern?: string;
+  texts: { caption?: Texts; tooltip?: Texts; placeholder?: Texts; patternMessage?: Texts };
+}
+
+export interface ResolvedGroup extends GroupDef {
+  texts: { caption?: Texts };
+}
+
+export interface ResolvedForm {
+  id: string;
+  groups: ResolvedGroup[];
+  fields: ResolvedField[];
+}
+
+const TEXT_PROPS = ['caption', 'tooltip', 'placeholder', 'patternMessage'] as const;
+
+/** The code defaults with each layer applied in turn (global, then org). Texts merge per language. */
+export function mergeForm(form: FormDef, ...layers: (FormLayer | undefined)[]): ResolvedForm {
+  const fields = form.fields.map((def) => {
+    const field: ResolvedField = { ...def, texts: {} };
+    for (const layer of layers) {
+      const o = layer?.fields[def.key];
+      if (!o) continue;
+      for (const [prop, value] of Object.entries(o)) {
+        if ((TEXT_PROPS as readonly string[]).includes(prop)) {
+          const p = prop as (typeof TEXT_PROPS)[number];
+          field.texts[p] = { ...field.texts[p], ...(value as Texts) };
+        } else {
+          (field as unknown as Record<string, unknown>)[prop] = value;
+        }
+      }
+    }
+    return field;
+  });
+  const groups = form.groups.map((def) => {
+    const group: ResolvedGroup = { ...def, texts: {} };
+    for (const layer of layers) {
+      const o = layer?.groups?.[def.key];
+      if (!o) continue;
+      if (o.caption) group.texts.caption = { ...group.texts.caption, ...o.caption };
+      if (o.order !== undefined) group.order = o.order;
+    }
+    return group;
+  });
+  return { id: form.id, groups: groups.sort((a, b) => a.order - b.order), fields };
+}
+
+/** The shown text: template text in the language, else the dictionary (via `t`), which falls back to English. */
+export function resolveText(texts: Texts | undefined, key: string | undefined, locale: string, t: (key: string) => string): string {
+  const own = texts?.[locale];
+  if (own) return own;
+  return key ? t(key) : (texts?.en ?? '');
+}
+
+export type OverrideCheck<T> = { ok: true; value: T } | { ok: false; reason: string; property?: string };
+
+const LANG_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Texts with valid language codes and non-empty strings; empty strings are dropped. */
+function checkTexts(v: unknown, maxLength: number): Texts | null {
+  if (!isPlainObject(v)) return null;
+  const out: Texts = {};
+  for (const [lang, text] of Object.entries(v)) {
+    if (!LANG_RE.test(lang) || typeof text !== 'string' || text.length > maxLength) return null;
+    if (text.trim() !== '') out[lang] = text;
+  }
+  return out;
+}
+
+function isValidDate(s: string): boolean {
+  if (!DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
+}
+
+/** A min/max bound of the right kind for the type: a number for `number`, a date for `date`/`datetime`. */
+function isBound(type: FieldType, v: unknown): boolean {
+  if (type === 'number') return typeof v === 'number' && Number.isFinite(v);
+  if (type === 'date' || type === 'datetime') return typeof v === 'string' && isValidDate(v);
+  return false;
+}
+
+/** Compares two bounds of the same kind (numbers, or ISO dates as strings). */
+function compareBound(a: number | string, b: number | string): number {
+  return typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b));
+}
+
+/** Compiles a template regex, or null if it is too long or does not compile. */
+export function compilePattern(pattern: string): RegExp | null {
+  if (pattern.length === 0 || pattern.length > 200) return null;
+  try {
+    return new RegExp(`^(?:${pattern})$`, 'u');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks one layer's override of a code-defined field before it is saved. Locked and "stricter
+ * only" rules are measured against the code registry, so no layer can loosen what the code sets.
+ */
+export function checkFieldOverride(form: FormDef, fieldKey: string, input: unknown): OverrideCheck<FieldOverride> {
+  const def = form.fields.find((f) => f.key === fieldKey);
+  if (!def) return { ok: false, reason: 'unknown-field' };
+  if (!isPlainObject(input)) return { ok: false, reason: 'not-an-object' };
+  const out: FieldOverride = {};
+  const fail = (reason: string, property: string): OverrideCheck<FieldOverride> => ({ ok: false, reason, property });
+  const type = (input.type ?? def.type) as FieldType;
+
+  for (const [prop, v] of Object.entries(input)) {
+    if (v === undefined || v === null) continue;
+    switch (prop) {
+      case 'caption':
+      case 'tooltip':
+      case 'placeholder':
+      case 'patternMessage': {
+        const texts = checkTexts(v, prop === 'tooltip' ? 1000 : 200);
+        if (!texts) return fail('invalid-value', prop);
+        out[prop] = texts;
+        break;
+      }
+      case 'group':
+        if (typeof v !== 'string' || !form.groups.some((g) => g.key === v)) return fail('unknown-group', prop);
+        out.group = v;
+        break;
+      case 'order':
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 100_000) return fail('invalid-value', prop);
+        out.order = v as number;
+        break;
+      case 'newRow':
+      case 'required':
+      case 'hidden':
+        if (typeof v !== 'boolean') return fail('invalid-value', prop);
+        if (prop === 'required' && v === false && def.required) return fail('loosens-code', prop);
+        if (prop === 'hidden' && v === true && !def.optional) return fail('not-hideable', prop);
+        out[prop] = v;
+        break;
+      case 'width':
+        if (!(WIDTHS as readonly unknown[]).includes(v)) return fail('invalid-value', prop);
+        out.width = v as Width;
+        break;
+      case 'height':
+        if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > 6) return fail('invalid-value', prop);
+        if (type !== 'text') return fail('height-needs-text', prop);
+        out.height = v as number;
+        break;
+      case 'type': {
+        const allowed = v === def.type || (!def.locked?.includes('type') && !def.readOnly && (def.allowedTypes ?? []).includes(v as FieldType));
+        if (!allowed) return fail('type-not-allowed', prop);
+        out.type = v as FieldType;
+        break;
+      }
+      case 'validator':
+        if (!(VALIDATORS as readonly unknown[]).includes(v)) return fail('invalid-value', prop);
+        if (def.validator && v !== def.validator) return fail('loosens-code', prop);
+        out.validator = v as string;
+        break;
+      case 'pattern':
+        if (typeof v !== 'string' || !compilePattern(v)) return fail('bad-pattern', prop);
+        out.pattern = v;
+        break;
+      case 'min':
+      case 'max': {
+        if (!isBound(type, v)) return fail('invalid-value', prop);
+        const code = def[prop];
+        if (code !== undefined) {
+          const c = compareBound(v as number | string, code);
+          if ((prop === 'min' && c < 0) || (prop === 'max' && c > 0)) return fail('loosens-code', prop);
+        }
+        out[prop] = v as number | string;
+        break;
+      }
+      default:
+        return fail('unknown-property', prop);
+    }
+  }
+
+  if (def.readOnly && (out.required !== undefined || out.validator || out.pattern || out.min !== undefined || out.max !== undefined)) {
+    return { ok: false, reason: 'read-only' };
+  }
+  if (out.pattern && !out.patternMessage?.en) return { ok: false, reason: 'pattern-message-missing', property: 'patternMessage' };
+  if (out.min !== undefined && out.max !== undefined && compareBound(out.min, out.max) > 0) return { ok: false, reason: 'min-above-max', property: 'min' };
+  return { ok: true, value: out };
+}
+
+/** Checks one layer's group overrides (titles and order of the form's sections). */
+export function checkGroupsOverride(form: FormDef, input: unknown): OverrideCheck<Record<string, GroupOverride>> {
+  if (!isPlainObject(input)) return { ok: false, reason: 'not-an-object' };
+  const out: Record<string, GroupOverride> = {};
+  for (const [key, o] of Object.entries(input)) {
+    if (!form.groups.some((g) => g.key === key)) return { ok: false, reason: 'unknown-group', property: key };
+    if (!isPlainObject(o)) return { ok: false, reason: 'not-an-object', property: key };
+    const g: GroupOverride = {};
+    for (const [prop, v] of Object.entries(o)) {
+      if (prop === 'caption') {
+        const texts = checkTexts(v, 200);
+        if (!texts) return { ok: false, reason: 'invalid-value', property: `${key}.caption` };
+        g.caption = texts;
+      } else if (prop === 'order') {
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 100_000) return { ok: false, reason: 'invalid-value', property: `${key}.order` };
+        g.order = v as number;
+      } else {
+        return { ok: false, reason: 'unknown-property', property: `${key}.${prop}` };
+      }
+    }
+    out[key] = g;
+  }
+  return { ok: true, value: out };
+}
+
+// ---------------------------------------------------------------------------
+// Validating values (same rules in the browser and the API)
+// ---------------------------------------------------------------------------
+
+/** One failed rule: `rule` is `required`, `type`, `min`, `max`, `pattern` or a validator name. */
+export interface FieldError {
+  field: string;
+  rule: string;
+}
+
+/** Validates and normalizes a value with a named validator; `null` if it is invalid. */
+export function applyValidator(name: string, value: string): string | null {
+  switch (name) {
+    case 'email': {
+      const v = value.trim();
+      const at = v.lastIndexOf('@');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return null;
+      return v.slice(0, at) + v.slice(at).toLowerCase();
+    }
+    case 'phone': {
+      const v = value.replace(/[\s\-./()]/g, '');
+      return /^(\+|00)?\d{6,15}$/.test(v) ? v : null;
+    }
+    case 'iban': {
+      const v = value.replace(/\s/g, '').toUpperCase();
+      if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(v)) return null;
+      const digits = (v.slice(4) + v.slice(0, 4)).replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+      let rest = 0;
+      for (const d of digits) rest = (rest * 10 + Number(d)) % 97;
+      return rest === 1 ? v : null;
+    }
+    case 'postcode:CH': {
+      const v = value.trim();
+      return /^[1-9]\d{3}$/.test(v) ? v : null;
+    }
+    case 'ahv': {
+      const v = value.replace(/[\s.]/g, '');
+      if (!/^756\d{10}$/.test(v)) return null;
+      let sum = 0;
+      for (let i = 0; i < 12; i++) sum += Number(v[i]) * (i % 2 === 0 ? 1 : 3);
+      if ((10 - (sum % 10)) % 10 !== Number(v[12])) return null;
+      return `${v.slice(0, 3)}.${v.slice(3, 7)}.${v.slice(7, 11)}.${v.slice(11)}`;
+    }
+    default:
+      return null;
+  }
+}
+
+function isEmptyValue(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+}
+
+/** Validates one value against a resolved field. Returns the normalized value or the failed rule. */
+export function validateValue(field: ResolvedField, value: unknown): { ok: true; value: unknown } | { ok: false; rule: string } {
+  if (isEmptyValue(value)) {
+    if (field.required && !field.hidden) return { ok: false, rule: 'required' };
+    return { ok: true, value };
+  }
+  let v: unknown = value;
+  switch (field.type) {
+    case 'checkbox':
+      if (typeof v !== 'boolean') return { ok: false, rule: 'type' };
+      break;
+    case 'number':
+      if (typeof v !== 'number' || !Number.isFinite(v)) return { ok: false, rule: 'type' };
+      break;
+    case 'date':
+      if (typeof v !== 'string' || !isValidDate(v)) return { ok: false, rule: 'type' };
+      break;
+    case 'datetime': {
+      const d = typeof v === 'string' ? new Date(v) : null;
+      if (!d || Number.isNaN(d.getTime())) return { ok: false, rule: 'type' };
+      v = d.toISOString();
+      break;
+    }
+    default:
+      if (typeof v !== 'string') return { ok: false, rule: 'type' };
+  }
+
+  if (field.min !== undefined || field.max !== undefined) {
+    const comparable = field.type === 'datetime' ? String(v).slice(0, 10) : (v as number | string);
+    if (field.min !== undefined && compareBound(comparable, field.min) < 0) return { ok: false, rule: 'min' };
+    if (field.max !== undefined && compareBound(comparable, field.max) > 0) return { ok: false, rule: 'max' };
+  }
+  if (typeof v === 'string' && field.validator) {
+    const normalized = applyValidator(field.validator, v);
+    if (normalized === null) return { ok: false, rule: field.validator };
+    v = normalized;
+  }
+  if (typeof v === 'string' && field.pattern) {
+    const re = compilePattern(field.pattern);
+    if (re && !re.test(v)) return { ok: false, rule: 'pattern' };
+  }
+  return { ok: true, value: v };
+}
+
+/**
+ * Validates the form's fields present in `patch`. Keys the form does not define (nested lists such
+ * as bankAccounts) pass through unchanged; the caller decides which keys are accepted at all.
+ * A field missing from the patch is not checked, so partial saves work.
+ */
+export function validateFields(form: ResolvedForm, patch: Record<string, unknown>): { errors: FieldError[]; values: Record<string, unknown> } {
+  const errors: FieldError[] = [];
+  const values: Record<string, unknown> = { ...patch };
+  for (const field of form.fields) {
+    if (!(field.key in patch)) continue;
+    const r = validateValue(field, patch[field.key]);
+    if (r.ok) values[field.key] = r.value;
+    else errors.push({ field: field.key, rule: r.rule });
+  }
+  return { errors, values };
+}
+
+/** Keys of the form's writable fields the given editor may change: `self` fields for a change request, all for HR. */
+export function editableKeys(form: FormDef, editor: EditableBy): string[] {
+  return form.fields.filter((f) => !f.readOnly && (editor === 'hr' || f.editableBy === 'self')).map((f) => f.key);
 }

@@ -5,7 +5,8 @@ changing code: caption, tooltip, size, entry type, order, validation and the
 translations of every text. Changes are made in the app itself, in a side
 panel, by two new roles.
 
-Status: design, not built yet.
+Status: steps 1–3 built (registry, rendering, templates and their API); the
+design panel and custom fields are not built yet.
 
 ## Scope of the first version
 
@@ -88,7 +89,8 @@ the normal read access to the record behind it.
 | `height` | 1 to 6 rows (text entry only) | change | change | change |
 | `type` | see Entry types | only to a type the code allows | only to a type the code allows | compatible changes only |
 | `required` | boolean | stricter only | stricter only | change |
-| `validator` | named validator or regex, see Validation | stricter only | stricter only | change |
+| `validator` | named validator, see Validation | stricter only | stricter only | change |
+| `pattern` / `patternMessage` | regex, with its error text per language | add only | add only | change |
 | `min` / `max` | number, or date for date types | narrower only | narrower only | change |
 | `hidden` | boolean | only if the code marks the field optional | only if the code marks the field optional | change |
 | `editableBy` | `self` (via HR approval) or `hr` | fixed by code | fixed by code | change |
@@ -342,12 +344,16 @@ menu. When it is on:
    formatting in `localeFormat.ts`, MUI X date pickers in the app's language.
    The basic-data form's simple fields use it; the nested lists (bank
    accounts, contacts, partner, children) are still hand-written.
-3. Changelog 030, `fields.controller.ts`, the merge and `validateFields`, and
-   enforcement in `basicdata.controller.ts`. The API compiles as CommonJS with
-   `moduleResolution: node`, which does not read the `exports` map of
-   `@worktime3/shared`; it needs `node16` resolution or a build of the shared
-   package first. Tests for merging, locks, type
-   changes and validators in `test/api/`.
+3. Done: changelog `030-field-config.sql` (changesets 063–065),
+   `fields.controller.ts` + `fields.service.ts` (cached merge), `mergeForm`,
+   `checkFieldOverride`, `checkGroupsOverride` and `validateFields` in
+   `packages/shared/src/fields.ts`, and enforcement in `basicdata.controller.ts`
+   (its key lists now come from the registry's `editableBy`). The basic-data
+   form loads the org's template, hides hidden fields, uses template texts and
+   shows validation errors under each field. The API now uses `module: node20`
+   and imports the built shared package. A regex is stored as `pattern` plus
+   `patternMessage` (texts), next to the named `validator`. Demo: admin@acme.com
+   is developer of Acme and superdeveloper. Tests: `test/api/fields.test.ts`.
 4. Design mode and the side panel.
 5. Custom JSON fields for basic data, including the per-org storage section.
 6. Expenses: add `expenses.data JSONB` (`expense_reports.data` already exists)

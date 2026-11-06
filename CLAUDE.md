@@ -26,7 +26,8 @@ npm run db:migrate         # apply Liquibase changelogs to $DATABASE_URL (Docker
 npm run db:introspect      # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
 ```
 
-Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --test ../../test/api/orgs.test.ts`.
+Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --conditions=source --test ../../test/api/orgs.test.ts`
+(`--conditions=source` makes `@worktime3/shared` resolve to its TypeScript sources).
 
 Environments: **dev** (N=1, `.env.dev`, `compose/docker-compose.dev.yml`) runs
 only pg/Keycloak/Mailpit in Docker, with the API and web on the host: pg 5431,
@@ -70,7 +71,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   (`NNN-description.sql`, formatted SQL with `--changeset author:id`
   headers), added to `db.changelog-master.xml`. Never edit an existing
   changeset; Liquibase checksums them.
-- Then run `npm run db:migrate` and `npm run db:introspect`.
+- Then run `npm run db:migrate` and `npm run db:introspect`. (`db:introspect` currently
+  fails: the installed drizzle-kit 0.18 has no `introspect` command. drizzle-kit
+  0.31.x, which matches drizzle-orm 0.45, run from outside the repo works.)
 - `apps/api/src/db/schema.ts` and `relations.ts` are **generated**. Never
   hand-edit them. `scripts/fix-introspected-schema.mjs` patches `citext`
   columns after introspection.
@@ -101,7 +104,8 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
      Never trust a user id from the body or query for the caller.
   3. Gate with `isOrgMember` / `isOrgManagerOrAdmin` / `isOrgAdmin` /
      `isOrgHrOrAdmin` / `isOrgBillingAdmin` / `isManagerOf` /
-     `canManageTeamMembers` / `isOwnerAdminOrManagerOf` as appropriate.
+     `canManageTeamMembers` / `isOwnerAdminOrManagerOf` / `isOrgDeveloper` /
+     `isSuperDeveloper` as appropriate.
   4. Time-entry writes also check `isPeriodLocked` (submitted/approved month).
 - Roles are per organization. A membership can hold several roles
   (`membership_roles`). "Manager of X" means `organization_memberships.manager_user_id`,
@@ -145,6 +149,13 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   entry and display go through `localeFormat.ts`; date pickers are MUI X with
   dayjs, set up once by `DatePickerLocalization` in `main.tsx`. The basic-data
   form uses them; other forms still have hand-written fields.
+- Global and per-org templates (`field_config`, edited by the `developer` role
+  and `users.is_superdeveloper`) override the registry. Merging, override
+  checks (`checkFieldOverride`) and value validation (`validateFields`) live in
+  `fields.ts` so the browser and the API apply the same rules. A form page
+  loads its merged template from `GET organizations/:orgId/forms/:formId`; a
+  controller saving a configured form validates with
+  `FieldsService.resolved()` + `validateFields`, as `basicdata.controller.ts` does.
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one
@@ -154,8 +165,11 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 - `packages/shared`: `index.ts` (role ids, RBAC matrix) mirrors API constants
   and is not imported yet; `fields.ts` (the field registry) is used by the web
-  app. Keep `fields.ts` to erasable TypeScript (no enums) so Node tests can
-  import it.
+  app and the API. Keep `fields.ts` to erasable TypeScript (no enums) so Node
+  tests can import it. Its `exports` map has a `source` condition (the `.ts`
+  sources, used by Vite, the web type check and all tests) and a built `dist/`
+  (used by the API, which is CommonJS and loads it via `require` of ESM). The
+  API's `build` script builds the shared package first.
 - Environments: `compose/docker-compose.{dev,local,vps}.yml`; `local` uses
   `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
   Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`
