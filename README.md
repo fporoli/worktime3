@@ -22,45 +22,57 @@ environments. The VPS stack uses the shared edge Caddy; `dev` accesses its
 host-run API and web app directly.
 ```
 
-- **apps/web** — React 18 + MUI + Vite. One PascalCase file per page,
-  lazy-loaded from `App.tsx` (nav drawer, session, org switcher, role gating):
-  `Login.tsx` (local + Keycloak SSO + invite-accept flows), `Home`,
-  project-time entry in `App.tsx`, `WorkTime` (check-in/out), `Absences`,
-  `Timesheet`, `Approvals`, `Expenses` / `ExpenseReports` /
-  `ExpenseProcessing`, `TeamHours`, `Management` (teams/projects/subprojects),
-  `Invitations`, `Users`, `AdminSettings` (static-data enums),
-  `OrganizationSettings`, `AuditLog`, `Assistant` (AI chat), plus
-  `NotificationBell`. `auth.ts` (Keycloak client + token refresh),
-  `aggregate.ts` (daily/weekly/monthly bucketing), `i18n.tsx` (en/de/fr/it).
-- **apps/api** — NestJS. One controller per resource
-  (`auth`, `users`, `basicdata`, `orgs`, `roles`, `teams`, `projects`
-  [+ subprojects], `project-time`, `work-time`, `absences`, `balances`,
-  `timesheets`, `expenses`, `expense-reports`, `workflows`, `static-data`,
-  `audit`, `assistant`, `notifications` [+ WebSocket gateway]). `access.ts` holds the
-  authorization helpers every controller calls (`isOrgAdmin`,
-  `isOrgManagerOrAdmin`, `callerUserId`, …) — resolved from the caller's
-  validated JWT, never trusted from the request body. `jwt.ts`/`jwt.guard.ts`
-  validate both local HS256 tokens and Keycloak-issued tokens (JWKS) behind
-  one global guard; routes opt out with `@Public()`. `db.service.ts` wraps a
-  single `pg.Pool` and exposes a typed Drizzle client via `getDb()`.
-  `src/db/schema.ts` and `relations.ts` are **generated, not hand-written**
-  (see Database below).
-- **packages/shared** — cross-cutting TS types/constants (role ids, RBAC
-  permission matrix) mirrored — not yet consumed — by both apps.
-- **infra/liquibase** — the database schema's source of truth (see below).
-- **infra/postgres/seeds** — `seed.sql`: demo orgs/users/projects/project
-  times/expenses, run manually, separate from schema migrations.
-- **infra/keycloak** — realm export (`realm-worktime.json`) imported on
-  Keycloak startup.
-- **infra/caddy** — environment-specific Caddyfiles plus the shared VPS edge
-  proxy configuration.
-- **compose/docker-compose.{dev,local,vps}.yml** — environment-specific
-  stacks. `dev` runs Postgres, migrations, Keycloak, and Mailpit in Docker,
-  with API/web on the host. `local` runs the full stack, including Caddy, in
-  Docker. `vps` is one stack per instance (own Postgres, Keycloak, API, web)
-  that joins the server's shared edge proxy network. Azure has no compose file (`infra/azure/provision.sh`).
-- **infra/vps** — `remote.sh`, the script the `vps` workflow runs on the server.
-- **infra/azure** — `provision.sh`, the Azure Container Apps provisioning phases.
+### Components
+
+| Path | What it is |
+| --- | --- |
+| `apps/web` | React 18 + MUI + Vite. One PascalCase file per page, lazy-loaded from `App.tsx` (nav drawer, session, org switcher, role gating). |
+| `apps/api` | NestJS API, one controller per resource. |
+| `packages/shared` | Cross-cutting TS types/constants (role ids, RBAC permission matrix), mirrored but not yet consumed by either app. |
+| `infra/liquibase` | The database schema's source of truth (see below). |
+| `infra/postgres/seeds` | `seed.sql`: demo orgs/users/projects/project times/expenses. Run manually, separate from schema migrations. |
+| `infra/keycloak` | Realm export (`realm-worktime.json`) imported on Keycloak startup. |
+| `infra/caddy` | Environment-specific Caddyfiles plus the shared VPS edge proxy configuration. |
+| `infra/vps` | `remote.sh`, the script the `vps` workflow runs on the server. |
+| `infra/azure` | `provision.sh`, the Azure Container Apps provisioning phases. |
+| `compose/docker-compose.{dev,local,vps}.yml` | Environment-specific stacks (see below). Azure has no compose file. |
+
+**Compose stacks**
+
+| File | What runs in Docker |
+| --- | --- |
+| `dev` | Postgres, migrations, Keycloak and Mailpit. API and web run on the host. |
+| `local` | The full stack, including Caddy. |
+| `vps` | One stack per instance (own Postgres, Keycloak, API, web) that joins the server's shared edge proxy network. |
+
+#### Web (`apps/web/src`)
+
+| Area | Files |
+| --- | --- |
+| Session and shell | `App.tsx` (also holds project-time entry), `Login.tsx` (local + Keycloak SSO + invite-accept), `Home`, `NotificationBell` |
+| Time | `WorkTime` (check-in/out), `Absences`, `Timesheet`, `Approvals`, `TeamHours` |
+| Expenses | `Expenses`, `ExpenseReports`, `ExpenseProcessing` |
+| Organization | `Management` (teams/projects/subprojects), `Invitations`, `Users`, `OrganizationSettings` |
+| Admin | `AdminSettings` (static-data enums), `AuditLog` |
+| AI | `Assistant` (chat) |
+| Support modules | `auth.ts` (Keycloak client + token refresh), `aggregate.ts` (daily/weekly/monthly bucketing), `i18n.tsx` (en/de/fr/it) |
+
+#### API (`apps/api/src`)
+
+| Area | Controllers |
+| --- | --- |
+| Identity | `auth`, `users`, `basicdata`, `orgs`, `roles` |
+| Organization | `teams`, `projects` (+ subprojects) |
+| Time | `project-time`, `work-time`, `absences`, `balances`, `timesheets` |
+| Expenses | `expenses`, `expense-reports` |
+| Cross-cutting | `workflows`, `static-data`, `audit`, `assistant`, `notifications` (+ WebSocket gateway) |
+
+| Module | Role |
+| --- | --- |
+| `access.ts` | Authorization helpers every controller calls (`isOrgAdmin`, `isOrgManagerOrAdmin`, `callerUserId`, …), resolved from the caller's validated JWT, never trusted from the request body. |
+| `jwt.ts` / `jwt.guard.ts` | Validate local HS256 tokens and Keycloak-issued tokens (JWKS) behind one global guard. Routes opt out with `@Public()`. |
+| `db.service.ts` | Wraps a single `pg.Pool` and exposes a typed Drizzle client via `getDb()`. |
+| `db/schema.ts`, `relations.ts` | **Generated, not hand-written** (see Database below). |
 
 ### Request flow
 
@@ -88,9 +100,19 @@ host-run API and web app directly.
   re-resolves the user's role whenever the org switcher changes.
 - Roles are per organization, and a membership can hold several
   (`membership_roles`): `user`, `manager`, `admin`, plus HR and billing
-  variants. Authorization is checked with `isOrgMember`, `isOrgManagerOrAdmin`,
-  `isOrgAdmin`, `isOrgHrOrAdmin`, `isOrgBillingAdmin`, `isManagerOf`,
-  `canManageTeamMembers`, and `isOwnerAdminOrManagerOf`.
+  variants.
+- Authorization helpers in `access.ts`:
+
+  | Helper | Passes for |
+  | --- | --- |
+  | `isOrgMember` | Any member of the org |
+  | `isOrgManagerOrAdmin` | Managers and admins |
+  | `isOrgAdmin` | Admins |
+  | `isOrgHrOrAdmin` | HR and admins |
+  | `isOrgBillingAdmin` | Billing admins |
+  | `isManagerOf` | The specific manager of a member |
+  | `canManageTeamMembers` | Users allowed to change a team's members |
+  | `isOwnerAdminOrManagerOf` | Owner, admin, or the member's manager |
 - "Manager of X" is the specific `organization_memberships.manager_user_id`,
   so approvals route to the member's own manager, not to any manager in the
   org.
@@ -273,27 +295,33 @@ Keycloak realm `worktime` (see `infra/keycloak/realm-worktime.json`).
 
 The API sends mail via [nodemailer](https://nodemailer.com), configured from
 `SMTP_HOST/PORT/FROM/USER/PASSWORD/SECURE` (see `env.example.dev.cfg`). Sends are
-best-effort — a missing/misconfigured server never fails a request.
+best-effort: a missing or misconfigured server never fails a request.
 
-- **`dev` and `local`** (non-prod): each runs its own
-  [Mailpit](https://github.com/axllent/mailpit) catcher — `dev` on
-  `localhost:1025` / inbox UI `:8025`, `local` on `:1026` / `:8026` (offset so
-  both can run at once). The host-run API in `dev` points at it via
-  `.env.dev`; the `api` container in `local` is wired to it in the compose
-  file. No auth, nothing real is sent.
-- **`vps`**: without `SMTP_HOST` the api uses the instance's own Mailpit
-  (`worktime3-<env>-mailpit`), so nothing is sent for real. Set `MAIL_SUB` to
-  publish its inbox at `<MAIL_SUB>.<DOMAIN>` behind basic auth (user `admin`). **`azure`**: `SMTP_HOST` is unset by default (mail silently
-  no-ops). To send through a real relay set `SMTP_HOST/PORT/FROM/USER` as
-  environment variables, `SMTP_PASSWORD` as a secret (+ `SMTP_SECURE=true`
-  for an implicit-TLS relay, typically port 465);
-  nodemailer negotiates STARTTLS/AUTH itself, so any standard relay (SES,
-  SendGrid, Mailgun, etc.) works without code changes.
+| Environment | Where mail goes |
+| --- | --- |
+| `dev` | Own [Mailpit](https://github.com/axllent/mailpit) catcher: SMTP `localhost:1025`, inbox UI `:8025`. The host-run API points at it via `.env.dev`. |
+| `local` | Own Mailpit: SMTP `:1026`, inbox UI `:8026` (offset so both can run at once). The `api` container is wired to it in the compose file. |
+| `vps` | Without `SMTP_HOST`, the instance's own Mailpit (`worktime3-<env>-mailpit`). Set `MAIL_SUB` to publish its inbox at `<MAIL_SUB>.<DOMAIN>` behind basic auth (user `admin`). |
+| `azure` | `SMTP_HOST` is unset by default, so mail silently no-ops. See below to use a real relay. |
 
-Currently sent: welcome mail on `POST /api/v1/auth/register`, org-invite mail
-on `POST /api/v1/organizations/:id/invite`.
-Self-onboarding + password reset: `POST /api/v1/auth/onboard`, `POST /api/v1/auth/reset-password`.
-Azure link/unlink: `POST /api/v1/auth/azure/link`, `DELETE /api/v1/auth/azure/link/:userId`.
+Mailpit has no auth and nothing real is sent.
+
+**Real relay (e.g. on Azure):** set `SMTP_HOST/PORT/FROM/USER` as environment
+variables and `SMTP_PASSWORD` as a secret (plus `SMTP_SECURE=true` for an
+implicit-TLS relay, typically port 465). nodemailer negotiates STARTTLS/AUTH
+itself, so any standard relay (SES, SendGrid, Mailgun, etc.) works without code
+changes.
+
+**Endpoints that trigger mail or account flows**
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/v1/auth/register` | Welcome mail |
+| `POST /api/v1/organizations/:id/invite` | Org-invite mail |
+| `POST /api/v1/auth/onboard` | Self-onboarding |
+| `POST /api/v1/auth/reset-password` | Password reset |
+| `POST /api/v1/auth/azure/link` | Azure link |
+| `DELETE /api/v1/auth/azure/link/:userId` | Azure unlink |
 
 ## CI
 
@@ -303,72 +331,108 @@ fails the build before it reaches any real environment.
 
 ## Deploy
 
-- The `vps` and `azure` workflows are manual (`workflow_dispatch`) and take all their
-  config from GitHub Environments (Settings > Environments), not from files on a
-  server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
-  - **VPS: one GitHub Environment = one instance.** Production is the environment
-    named `prod`; create another (e.g. `preprod`) to get a second instance, on the
-    same server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
-    (`wttest`) can all run on one host. Each environment holds:
-    - Secrets: `VPS_SSH_KEY` (private key, no passphrase), `POSTGRES_PASSWORD` (hex
-      only, it goes into a URL), `KEYCLOAK_ADMIN_PASSWORD`, `API_JWT_SECRET`, optional
-      `SMTP_PASSWORD` and `GHCR_TOKEN` (`read:packages`, only for private images).
-    - Variables: `VPS_HOST`, `VPS_USER`, `PG_PORT` (this instance's Postgres
-      loopback port on the server; unique per server, e.g. 5433/5434/5435), `DOMAIN` (e.g. `turbotapir.com`), the three
-      subdomains `WEB_SUB`, `API_SUB`, `AUTH_SUB` (e.g. `wtpp`, `wtservicepp`,
-      `wtauthpp`), `KEYCLOAK_ADMIN`, and optionally `SHOW_DEMO_ACCOUNTS`
-      (`true`/`false`), `GHCR_USERNAME`, `SMTP_HOST/PORT/FROM/USER/SECURE` and
-      `MAIL_SUB` (publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>`),
-      `PORTAINER_SUB` (Portainer hostname `<PORTAINER_SUB>.<DOMAIN>`, default `portainer`; set it
-      per server when servers share a `DOMAIN`, e.g. `portainerpp`).
+The `vps` and `azure` workflows are manual (`workflow_dispatch`) and take all
+their config from GitHub Environments (Settings > Environments), not from files
+on a server or laptop. `dev` and `local` keep using `.env.dev` / `.env.local`.
 
-    Run the `vps` workflow from `main`, naming the environment and an `image_tag`
-    (prefer a `sha-` tag over `latest`):
-    - `deploy` ships the deploy files over SSH and runs `infra/vps/remote.sh`.
-    - `portainer` (re)deploys Portainer, the Docker UI for the whole server, at
-      `portainer.<DOMAIN>`. It is its own stack in `/opt/edge/portainer`, so instance
-      deploys never touch it; run it once per server, with any environment of that
-      server (it uses that environment's `DOMAIN`). `portainer-remove` takes it down and
-      keeps its data volume.
-    - `destroy` is destructive: it removes the instance (containers, its Postgres and
-      volume, `/opt/worktime3-<env>`, its Caddy site, and its database on a leftover
-      `edge-pg` if there is one). A last dump stays in the deploy user's home. The shared edge
-      stack and other instances stay. Confirmation text: `DESTROY <environment>`.
-    - `reset-seed` is destructive: it backs up and recreates the `public` schema,
-      migrates, loads the demo data and checks a demo login. It needs the
-      confirmation text. A new instance has no users until you run it once.
+### VPS
 
-    `remote.sh` derives everything instance-specific from the environment name:
-    containers (`worktime3-<env>-api`, ...), Compose project, `/opt/worktime3-<env>`,
-    its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
-    Compose project) bound to `127.0.0.1:PG_PORT` on the server, and its own Caddy site at the three
-    hostnames. It also writes `compose/.env` and `/opt/edge/.env`, creates the
-    `edge` network if missing and brings up the edge stack (`infra/caddy/edge`: just the
-    Caddy shared by all instances) before the
-    instance's `pg`, `mailpit`, `migrate`, `api` and Keycloak. A leftover `edge-pg` (the old shared
-    Postgres) is not used any more: remove it with `docker rm -f edge-pg`.
-    The server keeps no git checkout and no hand-edited config. One web image serves
-    every instance: its API and Keycloak URLs are filled in when the container starts.
-    Values must not contain a single quote.
+**One GitHub Environment = one instance.** Production is the environment named
+`prod`; create another (e.g. `preprod`) to get a second instance, on the same
+server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
+(`wttest`) can all run on one host.
 
-    Server prerequisites: Docker with the compose plugin, and `VPS_USER` must be in
-    the `docker` group and own `/opt/edge` and each `/opt/worktime3*` directory (one
-    `sudo chown -R "$USER": /opt/edge /opt/worktime3*` after the first manual setup, or
-    after anything root created them). DNS A records for the three hostnames,
-    `<PORTAINER_SUB>.<DOMAIN>` (default `portainer`) and, if set, each `MAIL_SUB` hostname must point at the
-    server. Each instance's Postgres listens on the server's loopback only, so it is reachable
-    solely through an SSH tunnel to the host:
-    `ssh -N -L 5434:127.0.0.1:<PG_PORT> <VPS_USER>@<VPS_HOST>`, then connect a normal client to
-    `localhost:5434` as role `worktime`, database `worktime`, with that
-    environment's `POSTGRES_PASSWORD`. Create the Portainer admin right after its first start: it locks itself
-    after 5 minutes without one (an existing admin survives the move out of the
-    edge stack, because the data volume is reused).
-  - **`azure`** environment. Same names as `azure.yml` lists
-    (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
-    Environment values override repo-level ones, so existing repo secrets keep
-    working until you move them.
+**Secrets**
 
-To cut a release, push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`).
+| Name | Notes |
+| --- | --- |
+| `VPS_SSH_KEY` | Private key, no passphrase |
+| `POSTGRES_PASSWORD` | Hex only, it goes into a URL |
+| `KEYCLOAK_ADMIN_PASSWORD` | |
+| `API_JWT_SECRET` | |
+| `SMTP_PASSWORD` | Optional |
+| `GHCR_TOKEN` | Optional, `read:packages`, only for private images |
+
+**Variables**
+
+| Name | Notes |
+| --- | --- |
+| `VPS_HOST`, `VPS_USER` | Server and deploy user |
+| `PG_PORT` | This instance's Postgres loopback port; unique per server, e.g. 5433/5434/5435 |
+| `DOMAIN` | e.g. `turbotapir.com` |
+| `WEB_SUB`, `API_SUB`, `AUTH_SUB` | e.g. `wtpp`, `wtservicepp`, `wtauthpp` |
+| `KEYCLOAK_ADMIN` | |
+| `SHOW_DEMO_ACCOUNTS` | Optional, `true`/`false` |
+| `GHCR_USERNAME` | Optional |
+| `SMTP_HOST/PORT/FROM/USER/SECURE` | Optional |
+| `MAIL_SUB` | Optional, publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>` |
+| `PORTAINER_SUB` | Optional, Portainer hostname `<PORTAINER_SUB>.<DOMAIN>`, default `portainer`. Set it per server when servers share a `DOMAIN`, e.g. `portainerpp`. |
+
+**Workflow actions.** Run the `vps` workflow from `main`, naming the
+environment and an `image_tag` (prefer a `sha-` tag over `latest`):
+
+| Action | What it does |
+| --- | --- |
+| `deploy` | Ships the deploy files over SSH and runs `infra/vps/remote.sh`. |
+| `portainer` | (Re)deploys Portainer, the Docker UI for the whole server, at `portainer.<DOMAIN>`. It is its own stack in `/opt/edge/portainer`, so instance deploys never touch it. Run it once per server, with any environment of that server (it uses that environment's `DOMAIN`). |
+| `portainer-remove` | Takes Portainer down and keeps its data volume. |
+| `destroy` | **Destructive.** Removes the instance (containers, its Postgres and volume, `/opt/worktime3-<env>`, its Caddy site, and its database on a leftover `edge-pg` if there is one). A last dump stays in the deploy user's home. The shared edge stack and other instances stay. Confirmation text: `DESTROY <environment>`. |
+| `reset-seed` | **Destructive.** Backs up and recreates the `public` schema, migrates, loads the demo data and checks a demo login. Needs the confirmation text. A new instance has no users until you run it once. |
+
+**What `remote.sh` does.** It derives everything instance-specific from the
+environment name:
+
+- Containers (`worktime3-<env>-api`, ...), Compose project and `/opt/worktime3-<env>`.
+- Its own Postgres (`worktime3-<env>-pg`, role and database `worktime`, volume per
+  Compose project), bound to `127.0.0.1:PG_PORT` on the server.
+- Its own Caddy site at the three hostnames.
+- Writes `compose/.env` and `/opt/edge/.env`, creates the `edge` network if
+  missing and brings up the edge stack (`infra/caddy/edge`: just the Caddy
+  shared by all instances) before the instance's `pg`, `mailpit`, `migrate`,
+  `api` and Keycloak.
+
+Other things to know:
+
+- The server keeps no git checkout and no hand-edited config.
+- One web image serves every instance: its API and Keycloak URLs are filled in
+  when the container starts.
+- Values must not contain a single quote.
+- A leftover `edge-pg` (the old shared Postgres) is not used any more: remove it
+  with `docker rm -f edge-pg`.
+
+**Server prerequisites**
+
+- Docker with the compose plugin.
+- `VPS_USER` is in the `docker` group and owns `/opt/edge` and each
+  `/opt/worktime3*` directory (one `sudo chown -R "$USER": /opt/edge /opt/worktime3*`
+  after the first manual setup, or after anything root created them).
+- DNS A records pointing at the server for the three hostnames,
+  `<PORTAINER_SUB>.<DOMAIN>` (default `portainer`) and, if set, each `MAIL_SUB`
+  hostname.
+- Create the Portainer admin right after its first start: it locks itself after
+  5 minutes without one (an existing admin survives the move out of the edge
+  stack, because the data volume is reused).
+
+**Reaching an instance's Postgres.** It listens on the server's loopback only,
+so use an SSH tunnel:
+
+```sh
+ssh -N -L 5434:127.0.0.1:<PG_PORT> <VPS_USER>@<VPS_HOST>
+```
+
+Then connect a normal client to `localhost:5434` as role `worktime`, database
+`worktime`, with that environment's `POSTGRES_PASSWORD`.
+
+### Azure environment
+
+The `azure` GitHub Environment uses the same names as `azure.yml` lists
+(`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
+Environment values override repo-level ones, so existing repo secrets keep
+working until you move them.
+
+### Releases
+
+Push a `v*` tag to cut a release (`git tag v1.2.0 && git push origin v1.2.0`).
 `build-push` then publishes images tagged `v1.2.0`, without moving `latest`;
 deploy them by passing that as `image_tag`. Every image also records its nearest
 tag (`git describe`, so `v1.2.0-3-g97d21cd` for a later commit on main), commit
