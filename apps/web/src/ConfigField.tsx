@@ -263,7 +263,8 @@ export function useGroupTitle(form: ResolvedForm, group: string): string {
 /** A group's visible fields in their configured order, wrapping like the hand-written forms did. */
 export function ConfigFieldGroup({ form, group, values, editing, onChange, options, errors, readOnlyKeys, disabledKeys }: ConfigFieldGroupProps) {
   const design = useFieldDesign();
-  const fields = formFields(form, group).filter((f) => design || !f.hidden);
+  // While designing, hidden and retired fields stay visible (faded) so they can be selected.
+  const fields = formFields(form, group).filter((f) => design || (!f.hidden && !f.retired));
   return (
     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
       {fields.map((field) => {
@@ -302,7 +303,7 @@ export function ConfigFieldGroup({ form, group, values, editing, onChange, optio
                   borderRadius: 1,
                   outline: design.selected === field.key ? '2px solid' : '1px dashed',
                   outlineColor: design.selected === field.key ? 'primary.main' : 'divider',
-                  opacity: field.hidden ? 0.4 : 1,
+                  opacity: field.hidden || field.retired ? 0.4 : 1,
                   ...(field.width === 'full' ? { flexBasis: '100%' } : {}),
                   '& *': { pointerEvents: 'none' },
                 }}

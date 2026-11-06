@@ -159,6 +159,10 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   In the web app, a page with a configured form uses `useFormTemplate`
   (`designMode.tsx`), wraps the form in `FieldDesignScope` and renders
   `FormDesignPanel` while designing, as `Home.tsx` does.
+- Custom fields (defined by a template, `field_config.is_custom`) are stored in
+  the form's `customStorage` JSON column. Basic data keeps org-defined ones in
+  `users.basicdata.orgs.<orgId>`: read basic data through `scopeToOrg` so one
+  org never sees another's section.
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one

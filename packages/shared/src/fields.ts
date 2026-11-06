@@ -84,6 +84,12 @@ export interface FormDef {
   id: string;
   groups: GroupDef[];
   fields: FieldDef[];
+  /** Where custom fields added by a template are stored (a JSONB column). No custom fields without it. */
+  customStorage?: { table: string; column: string };
+  /** Keys a custom field may not take, e.g. nested lists the form stores next to its fields. */
+  reservedKeys?: string[];
+  /** Fields carry `editableBy` (self-service through HR approval); custom fields may choose it. */
+  selfService?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +132,10 @@ function usersColumn(key: string, column: string, order: number, extras: FieldEx
 
 export const BASICDATA_FORM: FormDef = {
   id: 'basicdata',
+  // Org-defined custom fields go into the org's own section, `basicdata.orgs.<orgId>`.
+  customStorage: { table: 'users', column: 'basicdata' },
+  reservedKeys: ['orgs', 'bankAccounts', 'emergencyContacts', 'partner', 'children'],
+  selfService: true,
   groups: [
     { key: 'personalien', caption: 'home.section.personalien', order: 10 },
     { key: 'address', caption: 'home.section.address', order: 20 },
@@ -186,6 +196,8 @@ function expensesColumn(key: string, column: string, caption: string, group: str
 
 export const EXPENSE_FORM: FormDef = {
   id: 'expense',
+  customStorage: { table: 'expenses', column: 'data' },
+  reservedKeys: ['orgs'],
   groups: [
     { key: 'expense', caption: 'expenses.section.expense', order: 10 },
     // Shown collapsed under "Additional data" until opened.
@@ -219,10 +231,10 @@ export function formFields<F extends FieldDef>(form: { fields: F[] }, group?: st
   return form.fields.filter((f) => group === undefined || f.group === group).sort((a, b) => a.order - b.order);
 }
 
-/** Keys of the fields in a group that this form writes (everything except read-only fields). */
-export function writableKeys(form: { fields: FieldDef[] }, group: string): string[] {
+/** Keys of the fields in a group that this form writes (everything except read-only and retired fields). */
+export function writableKeys(form: { fields: (FieldDef & { retired?: boolean })[] }, group: string): string[] {
   return formFields(form, group)
-    .filter((f) => !f.readOnly)
+    .filter((f) => !f.readOnly && !f.retired)
     .map((f) => f.key);
 }
 
@@ -266,16 +278,35 @@ export interface GroupOverride {
 /** `field_config.field_key` of the row holding a layer's group overrides. */
 export const GROUPS_KEY = '$groups';
 
+/**
+ * A custom field: defined by a template layer instead of the code, stored as a JSON key
+ * (`FormDef.customStorage`). Its row in `field_config` has `is_custom = TRUE`.
+ */
+export interface CustomFieldDef extends FieldOverride {
+  type: EntryType;
+  editableBy?: EditableBy;
+  /** Retired fields are no longer shown or written; stored values stay. Their key stays taken. */
+  retired?: boolean;
+}
+
 /** One template layer of a form, as stored in `field_config`. */
 export interface FormLayer {
   fields: Record<string, FieldOverride>;
   groups?: Record<string, GroupOverride>;
+  /** Custom fields this layer defines. */
+  custom?: Record<string, CustomFieldDef>;
 }
+
+/** The layer that defined a custom field. */
+export type CustomScope = 'global' | 'org';
 
 /** A field after merging the layers. `texts` hold template texts; the i18n keys stay the fallback. */
 export interface ResolvedField extends FieldDef {
   hidden?: boolean;
   pattern?: string;
+  /** Set on custom fields: the layer that defined it. */
+  custom?: CustomScope;
+  retired?: boolean;
   texts: { caption?: Texts; tooltip?: Texts; placeholder?: Texts; patternMessage?: Texts };
 }
 
@@ -291,10 +322,60 @@ export interface ResolvedForm {
 
 const TEXT_PROPS = ['caption', 'tooltip', 'placeholder', 'patternMessage'] as const;
 
+/** A custom key: starts with a lower-case letter, letters and digits only, at most 40 characters. */
+export const CUSTOM_KEY_RE = /^[a-z][a-zA-Z0-9]{0,39}$/;
+
+/** Type changes a custom field may make once saved, so stored values stay readable. */
+export const CUSTOM_TYPE_CHANGES: Record<EntryType, EntryType[]> = {
+  checkbox: ['text'],
+  text: [],
+  number: ['text'],
+  date: ['datetime'],
+  datetime: [],
+};
+
+/** The field definition a custom field stands for; it plays the code default's part for later layers. */
+export function customFieldDef(form: FormDef, key: string, c: CustomFieldDef): FieldDef {
+  const storage = form.customStorage ?? { table: '', column: '' };
+  const def: FieldDef = {
+    key,
+    storage: { kind: 'json', table: storage.table, column: storage.column, key },
+    type: c.type,
+    caption: '',
+    group: c.group ?? form.groups[0]?.key ?? '',
+    order: c.order ?? 1000,
+    width: c.width ?? 'm',
+    optional: true,
+    editableBy: c.editableBy ?? 'hr',
+  };
+  for (const prop of ['newRow', 'height', 'required', 'validator', 'min', 'max'] as const) {
+    if (c[prop] !== undefined) (def as unknown as Record<string, unknown>)[prop] = c[prop];
+  }
+  return def;
+}
+
+/** The form with a layer's custom fields added as definitions: what a later layer's overrides are checked against. */
+export function formWithCustom(form: FormDef, layer?: FormLayer): FormDef {
+  const custom = Object.entries(layer?.custom ?? {}).map(([key, c]) => customFieldDef(form, key, c));
+  return custom.length === 0 ? form : { ...form, fields: [...form.fields, ...custom] };
+}
+
 /** The code defaults with each layer applied in turn (global, then org). Texts merge per language. */
 export function mergeForm(form: FormDef, ...layers: (FormLayer | undefined)[]): ResolvedForm {
-  const fields = form.fields.map((def) => {
-    const field: ResolvedField = { ...def, texts: {} };
+  const defs: ResolvedField[] = form.fields.map((def) => ({ ...def, texts: {} }));
+  layers.forEach((layer, i) => {
+    for (const [key, c] of Object.entries(layer?.custom ?? {})) {
+      if (defs.some((d) => d.key === key)) continue;
+      const field: ResolvedField = { ...customFieldDef(form, key, c), custom: i === 0 ? 'global' : 'org', texts: {} };
+      for (const prop of TEXT_PROPS) if (c[prop]) field.texts[prop] = { ...c[prop] };
+      if (c.pattern) field.pattern = c.pattern;
+      if (c.hidden) field.hidden = true;
+      if (c.retired) field.retired = true;
+      defs.push(field);
+    }
+  });
+  const fields = defs.map((def) => {
+    const field: ResolvedField = { ...def, texts: { ...def.texts } };
     for (const layer of layers) {
       const o = layer?.fields[def.key];
       if (!o) continue;
@@ -490,6 +571,49 @@ export function checkGroupsOverride(form: FormDef, input: unknown): OverrideChec
   return { ok: true, value: out };
 }
 
+/**
+ * Checks a new custom key against the form: the key format, the code's fields and reserved keys,
+ * and the custom fields already known (`taken`, including retired ones, whose keys are never reused).
+ */
+export function checkCustomKey(form: FormDef, key: string, taken: Iterable<string>): { ok: true } | { ok: false; reason: string } {
+  if (!form.customStorage) return { ok: false, reason: 'no-custom-fields' };
+  if (!CUSTOM_KEY_RE.test(key)) return { ok: false, reason: 'bad-key' };
+  if (form.fields.some((f) => f.key === key) || (form.reservedKeys ?? []).includes(key) || [...taken].includes(key)) {
+    return { ok: false, reason: 'key-taken' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Checks a custom field's definition before it is saved. `previous` is the saved definition, if
+ * any: a saved field may only change its type along `CUSTOM_TYPE_CHANGES`. The key itself is
+ * checked separately (`checkCustomKey`) when the field is created.
+ */
+export function checkCustomField(form: FormDef, key: string, input: unknown, previous?: CustomFieldDef): OverrideCheck<CustomFieldDef> {
+  if (!form.customStorage) return { ok: false, reason: 'no-custom-fields' };
+  if (!isPlainObject(input)) return { ok: false, reason: 'not-an-object' };
+  const { type, editableBy, retired, ...rest } = input;
+  if (!(ENTRY_TYPES as readonly unknown[]).includes(type)) return { ok: false, reason: 'invalid-value', property: 'type' };
+  if (previous && type !== previous.type && !CUSTOM_TYPE_CHANGES[previous.type].includes(type as EntryType)) {
+    return { ok: false, reason: 'type-not-allowed', property: 'type' };
+  }
+  if (editableBy !== undefined && editableBy !== 'self' && editableBy !== 'hr') return { ok: false, reason: 'invalid-value', property: 'editableBy' };
+  if (editableBy === 'self' && !form.selfService) return { ok: false, reason: 'invalid-value', property: 'editableBy' };
+  if (retired !== undefined && typeof retired !== 'boolean') return { ok: false, reason: 'invalid-value', property: 'retired' };
+
+  // Every other property follows the override rules, measured against an unconstrained field of this type.
+  const blank: FieldDef = { key, storage: { kind: 'json', table: '', column: '', key }, type: type as EntryType, caption: '', group: '', order: 0, width: 'm', optional: true, editableBy: 'hr' };
+  const r = checkFieldOverride({ ...form, fields: [blank] }, key, { ...rest, type });
+  if (!r.ok) return r;
+  if (!r.value.caption?.en) return { ok: false, reason: 'caption-missing', property: 'caption' };
+  if (!r.value.group) return { ok: false, reason: 'unknown-group', property: 'group' };
+
+  const out: CustomFieldDef = { ...r.value, type: type as EntryType };
+  if (form.selfService) out.editableBy = (editableBy as EditableBy | undefined) ?? 'hr';
+  if (retired) out.retired = true;
+  return { ok: true, value: out };
+}
+
 // ---------------------------------------------------------------------------
 // Validating values (same rules in the browser and the API)
 // ---------------------------------------------------------------------------
@@ -600,7 +724,7 @@ export function validateFields(form: ResolvedForm, patch: Record<string, unknown
   const errors: FieldError[] = [];
   const values: Record<string, unknown> = { ...patch };
   for (const field of form.fields) {
-    if (!(field.key in patch)) continue;
+    if (!(field.key in patch) || field.retired) continue;
     const r = validateValue(field, patch[field.key]);
     if (r.ok) values[field.key] = r.value;
     else errors.push({ field: field.key, rule: r.rule });
@@ -608,7 +732,15 @@ export function validateFields(form: ResolvedForm, patch: Record<string, unknown
   return { errors, values };
 }
 
-/** Keys of the form's writable fields the given editor may change: `self` fields for a change request, all for HR. */
-export function editableKeys(form: FormDef, editor: EditableBy): string[] {
-  return form.fields.filter((f) => !f.readOnly && (editor === 'hr' || f.editableBy === 'self')).map((f) => f.key);
+/**
+ * Keys of the form's writable fields the given editor may change: `self` fields for a change
+ * request, all for HR. Retired custom fields are never written.
+ */
+export function editableKeys(form: { fields: (FieldDef & { retired?: boolean })[] }, editor: EditableBy): string[] {
+  return form.fields.filter((f) => !f.readOnly && !f.retired && (editor === 'hr' || f.editableBy === 'self')).map((f) => f.key);
+}
+
+/** Keys of the custom fields an org template defines (stored in that org's own section). */
+export function orgCustomKeys(form: ResolvedForm): string[] {
+  return form.fields.filter((f) => f.custom === 'org').map((f) => f.key);
 }

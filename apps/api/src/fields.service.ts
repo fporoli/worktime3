@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
-import { FORMS, GROUPS_KEY, mergeForm, type FormLayer, type GroupOverride, type FieldOverride, type ResolvedForm } from '@worktime3/shared/fields';
+import { FORMS, GROUPS_KEY, mergeForm, type CustomFieldDef, type FormLayer, type GroupOverride, type FieldOverride, type ResolvedForm } from '@worktime3/shared/fields';
 import { DbService, type Db } from './db.service';
 import type { Executor } from './access';
 
@@ -11,13 +11,13 @@ export interface FormLayers {
 }
 
 function emptyLayer(): FormLayer {
-  return { fields: {}, groups: {} };
+  return { fields: {}, groups: {}, custom: {} };
 }
 
 /** Reads the global and the org layer of a form from `field_config`. */
 export async function loadLayers(db: Executor, organizationId: string | null, formId: string): Promise<FormLayers> {
   const rows = await db.execute(
-    sql`SELECT organization_id, field_key, config FROM field_config
+    sql`SELECT organization_id, field_key, is_custom, config FROM field_config
         WHERE form_id = ${formId} AND (organization_id IS NULL OR organization_id = ${organizationId})`,
   );
   const layers: FormLayers = { global: emptyLayer(), org: emptyLayer() };
@@ -25,6 +25,7 @@ export async function loadLayers(db: Executor, organizationId: string | null, fo
     const layer = row.organization_id ? layers.org : layers.global;
     const key = row.field_key as string;
     if (key === GROUPS_KEY) layer.groups = ((row.config as { groups?: Record<string, GroupOverride> }).groups ?? {});
+    else if (row.is_custom) layer.custom![key] = row.config as CustomFieldDef;
     else layer.fields[key] = row.config as FieldOverride;
   }
   return layers;
@@ -55,14 +56,17 @@ export class FieldsService {
     return merged;
   }
 
-  /** Inserts or replaces one layer's config for a field (or `$groups`). Returns the row id. */
-  async saveOverride(db: Db, organizationId: string | null, formId: string, fieldKey: string, config: unknown): Promise<string> {
+  /**
+   * Inserts or replaces one layer's config for a field (or `$groups`). `isCustom` marks the row as
+   * a custom field's definition rather than an override. Returns the row id.
+   */
+  async saveOverride(db: Db, organizationId: string | null, formId: string, fieldKey: string, config: unknown, isCustom = false): Promise<string> {
     const json = JSON.stringify(config);
     const rows = await db.execute(
-      sql`INSERT INTO field_config (organization_id, form_id, field_key, config)
-          VALUES (${organizationId}, ${formId}, ${fieldKey}, ${json}::jsonb)
+      sql`INSERT INTO field_config (organization_id, form_id, field_key, is_custom, config)
+          VALUES (${organizationId}, ${formId}, ${fieldKey}, ${isCustom}, ${json}::jsonb)
           ON CONFLICT ((COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid)), form_id, field_key)
-          DO UPDATE SET config = EXCLUDED.config
+          DO UPDATE SET config = EXCLUDED.config, is_custom = EXCLUDED.is_custom
           RETURNING id`,
     );
     this.invalidate(organizationId, formId);
@@ -80,6 +84,16 @@ export class FieldsService {
     );
     this.invalidate(organizationId, formId);
     return (rows.rows[0]?.id as string) ?? null;
+  }
+
+  /** True if any organization's template defines a custom field with this key (global keys must not collide). */
+  async orgCustomKeyExists(db: Executor, formId: string, fieldKey: string): Promise<boolean> {
+    const rows = await db.execute(
+      sql`SELECT 1 FROM field_config
+          WHERE organization_id IS NOT NULL AND form_id = ${formId} AND field_key = ${fieldKey} AND is_custom
+          LIMIT 1`,
+    );
+    return rows.rows.length > 0;
   }
 
   /** Drops cached merges: one org's for an org write, every org's for a global write. */

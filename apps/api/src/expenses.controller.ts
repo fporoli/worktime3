@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { and, asc, eq, getTableColumns, gte, lt, type SQL } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, gte, lt, sql, type SQL } from 'drizzle-orm';
 import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Response } from 'express';
@@ -11,7 +11,7 @@ import type { AuthenticatedRequest } from './jwt.guard';
 import { expenses, expense_report_items, expense_reports, projects, subprojects } from './db/schema';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
 import { FieldsService } from './fields.service';
-import { EXPENSE_FORM, validateFields } from '@worktime3/shared/fields';
+import { EXPENSE_FORM, mergeForm, validateFields, type ResolvedForm } from '@worktime3/shared/fields';
 
 type ExpenseColumns = Partial<typeof expenses.$inferInsert>;
 
@@ -30,10 +30,25 @@ export function expenseColumns(values: Record<string, unknown>): ExpenseColumns 
   return out as ExpenseColumns;
 }
 
-/** The registry fields present in the body (all of them when `all`, so a create checks required ones). */
-function pickFields(body: Record<string, unknown>, all: boolean): Record<string, unknown> {
+/** Values of the template's custom fields, for `expenses.data`; empty values become null. */
+export function expenseCustomData(form: ResolvedForm, values: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const field of EXPENSE_FORM.fields) {
+  for (const field of form.fields) {
+    if (!field.custom || field.retired || !(field.key in values)) continue;
+    const v = values[field.key];
+    out[field.key] = v === undefined || (typeof v === 'string' && v.trim() === '') ? null : v;
+  }
+  return out;
+}
+
+/**
+ * The form's fields present in the body (all of them when `all`, so a create checks required
+ * ones). Retired custom fields are left out, so they are never written.
+ */
+function pickFields(form: ResolvedForm, body: Record<string, unknown>, all: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of form.fields) {
+    if (field.retired) continue;
     if (all || field.key in body) out[field.key] = body[field.key];
   }
   return out;
@@ -48,13 +63,15 @@ export class ExpensesController {
     private readonly fields: FieldsService,
   ) {}
 
-  /** Checks values against the org's merged expense template; returns them normalized. */
-  private async validate(orgId: string, patch: Record<string, unknown>) {
-    const form = await this.fields.resolved(orgId, EXPENSE_FORM.id);
-    if (!form) return { ok: true as const, values: patch };
-    const { errors, values } = validateFields(form, patch);
+  /**
+   * Checks the body against the org's merged expense template (code fields and custom fields);
+   * returns the columns to write and the custom values for `expenses.data`.
+   */
+  private async validate(orgId: string, body: Record<string, unknown>, all: boolean) {
+    const form = (await this.fields.resolved(orgId, EXPENSE_FORM.id)) ?? mergeForm(EXPENSE_FORM);
+    const { errors, values } = validateFields(form, pickFields(form, body, all));
     if (errors.length > 0) return { ok: false as const, error: 'invalid-field', fields: errors };
-    return { ok: true as const, values };
+    return { ok: true as const, columns: expenseColumns(values), data: expenseCustomData(form, values) };
   }
 
   @Post('organizations/:orgId/expenses')
@@ -83,10 +100,11 @@ export class ExpensesController {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
-    const checked = await this.validate(orgId, pickFields(body ?? {}, true));
+    const checked = await this.validate(orgId, body ?? {}, true);
     if (!checked.ok) return checked;
     const values = {
-      ...expenseColumns(checked.values),
+      ...checked.columns,
+      data: checked.data,
       user_id: userId,
       organization_id: orgId,
       billing_type: body.billingType ?? null,
@@ -170,13 +188,16 @@ export class ExpensesController {
     const owned = await this.assertEditableExpense(db, id, req);
     if ('error' in owned) return owned;
 
-    const checked = await this.validate(owned.entry.organization_id as string, pickFields(body ?? {}, false));
+    const checked = await this.validate(owned.entry.organization_id as string, body ?? {}, false);
     if (!checked.ok) return checked;
-    const patch = expenseColumns(checked.values);
-    if (body.billingType !== undefined) patch.billing_type = body.billingType;
-    if (Object.keys(patch).length === 0) return { ok: true };
-    await db.update(expenses).set(patch).where(eq(expenses.id, id));
-    void this.versions.record('expenses', id, 'update_delta', owned.userId, patch).catch(() => {});
+    const delta: Record<string, unknown> = { ...checked.columns };
+    if (body.billingType !== undefined) delta.billing_type = body.billingType;
+    const hasData = Object.keys(checked.data).length > 0;
+    if (Object.keys(delta).length === 0 && !hasData) return { ok: true };
+    // Custom values merge into `data` key by key; the history records only what changed.
+    const set = hasData ? { ...delta, data: sql`${expenses.data} || ${JSON.stringify(checked.data)}::jsonb` } : delta;
+    await db.update(expenses).set(set).where(eq(expenses.id, id));
+    void this.versions.record('expenses', id, 'update_delta', owned.userId, hasData ? { ...delta, data: checked.data } : delta).catch(() => {});
     return { ok: true };
   }
 

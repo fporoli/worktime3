@@ -5,10 +5,10 @@ import { callerUserId, isOrgHrOrAdmin, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
-import { BasicDataService } from './basicdata.service';
+import { BasicDataService, nestOrgKeys, scopeToOrg } from './basicdata.service';
 import { users } from './db/schema';
 import { FieldsService } from './fields.service';
-import { BASICDATA_FORM, editableKeys, validateFields } from '@worktime3/shared/fields';
+import { BASICDATA_FORM, editableKeys, mergeForm, orgCustomKeys, validateFields, type ResolvedForm } from '@worktime3/shared/fields';
 
 /**
  * Nested objects and lists the field registry does not describe yet (docs/FIELD_CONFIG.md, "Basic
@@ -16,11 +16,19 @@ import { BASICDATA_FORM, editableKeys, validateFields } from '@worktime3/shared/
  */
 const NESTED_KEYS = ['bankAccounts', 'emergencyContacts', 'partner', 'children'] as const;
 
-/** Every key an HR/admin direct edit may set: the registry's writable fields plus the nested ones. */
+/**
+ * Every key an HR/admin direct edit may set: the code's writable fields plus the nested ones. An
+ * org's template adds its custom fields to these (see `allowedKeys`).
+ */
 const ALL_KEYS = [...editableKeys(BASICDATA_FORM, 'hr'), ...NESTED_KEYS];
 
 /** Keys an employee may change about themselves through a change request (`editableBy: 'self'`). */
 const SELF_SERVICE_KEYS = [...editableKeys(BASICDATA_FORM, 'self'), ...NESTED_KEYS];
+
+/** The keys an editor may write under an org's merged template: its non-retired fields plus the nested lists. */
+export function allowedKeys(form: ResolvedForm, editor: 'hr' | 'self'): string[] {
+  return [...editableKeys(form, editor), ...NESTED_KEYS];
+}
 
 /**
  * Registry fields stored in real `users` columns rather than the basicdata jsonb: `update()` routes
@@ -75,13 +83,13 @@ export class BasicDataController {
         .where(eq(users.id, userId)),
     ]);
     const merged = {
-      ...basicdata,
+      ...scopeToOrg(basicdata, orgId),
       displayName: account?.display_name ?? '',
       firstName: account?.first_name ?? '',
       middleName: account?.middle_name ?? '',
       lastName: account?.last_name ?? '',
     };
-    return { ok: true, basicdata: merged, pending, canEditDirectly: isReviewer, companyEmail: account?.email ?? null };
+    return { ok: true, basicdata: merged, pending: pending && { ...pending, data: scopeToOrg(pending.data, orgId) }, canEditDirectly: isReviewer, companyEmail: account?.email ?? null };
   }
 
   @Get('organizations/:orgId/users/:userId/basicdata/versions')
@@ -91,7 +99,8 @@ export class BasicDataController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
     if (callerId !== userId && !(await isOrgHrOrAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
-    return { ok: true, history: await this.basicData.history(userId) };
+    const history = await this.basicData.history(userId);
+    return { ok: true, history: history.map((e) => ({ ...e, data: scopeToOrg(e.data, orgId) })) };
   }
 
   @Put('organizations/:orgId/users/:userId/basicdata')
@@ -106,11 +115,12 @@ export class BasicDataController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgHrOrAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
-    const sanitized = sanitizePatch(body.patch, ALL_KEYS);
+    const form = await this.form(orgId);
+    const sanitized = sanitizePatch(body.patch, allowedKeys(form, 'hr'));
     if (!sanitized) return { ok: false, error: 'invalid-patch' };
-    const checked = await this.validate(orgId, sanitized);
+    const checked = this.validate(form, sanitized);
     if (!checked.ok) return checked;
-    const patch = checked.patch;
+    const patch = nestOrgKeys(checked.patch, orgCustomKeys(form), orgId);
 
     const userColumnPatch: Partial<typeof users.$inferInsert> = {};
     const basicdataPatch: Record<string, unknown> = {};
@@ -144,11 +154,12 @@ export class BasicDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (callerId !== userId) return { ok: false, error: 'forbidden' };
     if (!(await isOrgMember(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
-    const sanitized = sanitizePatch(body.patch, SELF_SERVICE_KEYS);
+    const form = await this.form(orgId);
+    const sanitized = sanitizePatch(body.patch, allowedKeys(form, 'self'));
     if (!sanitized) return { ok: false, error: 'invalid-patch' };
-    const checked = await this.validate(orgId, sanitized);
+    const checked = this.validate(form, sanitized);
     if (!checked.ok) return checked;
-    const patch = checked.patch;
+    const patch = nestOrgKeys(checked.patch, orgCustomKeys(form), orgId);
 
     const result = await this.basicData.requestChange(userId, patch, callerId);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.request', 'user', userId, { fields: Object.keys(patch) }).catch(() => {});
@@ -168,7 +179,7 @@ export class BasicDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await isOrgHrOrAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
 
-    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'approved', callerId, null);
+    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'approved', callerId, null, orgId);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.approve', 'user', userId, { version: Number(versionNr) }).catch(() => {});
     return result;
   }
@@ -188,15 +199,18 @@ export class BasicDataController {
     if (!(await isOrgHrOrAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
 
     const note = (body.note ?? '').trim() || null;
-    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'rejected', callerId, note);
+    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'rejected', callerId, note, orgId);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.reject', 'user', userId, { version: Number(versionNr), note: note ?? undefined }).catch(() => {});
     return result;
   }
 
+  /** The org's merged basic-data template (code defaults when it cannot be read). */
+  private async form(orgId: string): Promise<ResolvedForm> {
+    return (await this.fields.resolved(orgId, BASICDATA_FORM.id)) ?? mergeForm(BASICDATA_FORM);
+  }
+
   /** Checks the patch against the org's merged basic-data template; returns normalized values. */
-  private async validate(orgId: string, patch: Record<string, unknown>) {
-    const form = await this.fields.resolved(orgId, BASICDATA_FORM.id);
-    if (!form) return { ok: true as const, patch };
+  private validate(form: ResolvedForm, patch: Record<string, unknown>) {
     const { errors, values } = validateFields(form, patch);
     if (errors.length > 0) return { ok: false as const, error: 'invalid-field', fields: errors };
     return { ok: true as const, patch: values };
@@ -208,6 +222,7 @@ export class BasicDataController {
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgHrOrAdmin(db, orgId, callerId))) return [];
-    return this.basicData.pendingForOrg(orgId);
+    const rows = await this.basicData.pendingForOrg(orgId);
+    return rows.map((r) => ({ ...r, entry: { ...r.entry, data: scopeToOrg(r.entry.data, orgId) } }));
   }
 }

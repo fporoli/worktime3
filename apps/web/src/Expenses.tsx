@@ -72,6 +72,8 @@ export interface ExpenseRow {
   expense_report_id: string | null;
   expense_report_status: string | null;
   document_id: string | null;
+  /** Values of custom fields (field templates), by key. */
+  data?: Record<string, unknown> | null;
 }
 
 /**
@@ -104,6 +106,7 @@ function toNumber(v: string | null): number | null {
 
 function formFromRow(row: ExpenseRow): ExpenseValues {
   return {
+    ...(row.data ?? {}),
     expenseDate: row.expense_date.slice(0, 10),
     category: row.category,
     subCategory: row.sub_category ?? '',

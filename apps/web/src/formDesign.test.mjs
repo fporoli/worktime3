@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BASICDATA_FORM, ENTRY_TYPES, GROUPS_KEY, VALIDATORS, WIDTHS, formFields, mergeForm } from '@worktime3/shared/fields';
+import { BASICDATA_FORM, EXPENSE_FORM, ENTRY_TYPES, GROUPS_KEY, VALIDATORS, WIDTHS, formFields, mergeForm } from '@worktime3/shared/fields';
 import {
+  addCustomField,
   changedKeys,
+  checkLayers,
   configFor,
+  designDef,
   emptyLayer,
   moveField,
   nudgeField,
@@ -13,6 +16,7 @@ import {
   setFieldProp,
   setFieldText,
   setGroupText,
+  removeCustomField,
 } from './formDesign.ts';
 import { DICTIONARIES } from './dictionaries.ts';
 
@@ -79,11 +83,55 @@ test('every text key the design panel builds exists in the dictionary', () => {
     ...WIDTHS.map((w) => `design.width.${w}`),
     ...['code', 'global', 'org'].map((s) => `design.source.${s}`),
     ...['global', 'org'].map((s) => `design.scope.${s}`),
-    ...['group', 'newRow', 'width', 'height', 'type', 'required', 'hidden', 'validator', 'pattern', 'min', 'max', 'order', 'caption', 'tooltip', 'placeholder', 'patternMessage'].map((p) => `design.prop.${p}`),
+    ...['global', 'org'].map((s) => `design.addFieldScope.${s}`),
+    ...['hr', 'self'].map((e) => `design.editableBy.${e}`),
+    ...['group', 'newRow', 'width', 'height', 'type', 'required', 'hidden', 'validator', 'pattern', 'min', 'max', 'order', 'caption', 'tooltip', 'placeholder', 'patternMessage', 'editableBy', 'key'].map((p) => `design.prop.${p}`),
     ...[...reasons, 'forbidden', 'unknown-form', 'offline', 'unknown'].map((r) => `design.reason.${r}`),
     ...VALIDATORS.map((v) => `validation.${v}`),
   ];
   assert.ok(reasons.length >= 10, 'found the reason codes');
   const missing = [...new Set([...literal, ...dynamic])].filter((k) => !(k in DICTIONARIES.en));
   assert.deepEqual(missing, []);
+});
+
+test('custom fields: added at the end of a section, edited in their definition, removable until saved', () => {
+  let org = addCustomField(form, emptyLayer(), 'placeOfBirth', 'text', 'personalien', 'Place of birth');
+  assert.deepEqual(org.custom.placeOfBirth, { type: 'text', group: 'personalien', order: 140, caption: { en: 'Place of birth' } });
+  org = setFieldText(setFieldProp(org, 'placeOfBirth', 'width', 'l'), 'placeOfBirth', 'caption', 'de', 'Geburtsort');
+  assert.deepEqual(org.custom.placeOfBirth.caption, { en: 'Place of birth', de: 'Geburtsort' });
+  assert.equal(org.custom.placeOfBirth.width, 'l');
+  assert.deepEqual(org.fields, {}, 'a custom field is edited in its definition, not as an override');
+  const merged = mergeForm(BASICDATA_FORM, undefined, org);
+  assert.equal(keysOf(merged, 'personalien').at(-1), 'placeOfBirth');
+  assert.deepEqual(changedKeys(emptyLayer(), org), ['placeOfBirth']);
+  assert.deepEqual(configFor(org, 'placeOfBirth'), org.custom.placeOfBirth);
+  assert.deepEqual(changedKeys(emptyLayer(), removeCustomField(org, 'placeOfBirth')), []);
+});
+
+test('checkLayers: custom keys must be free, captions present, saved types change only compatibly', () => {
+  const saved = { global: emptyLayer(), org: emptyLayer() };
+  const ok = { global: emptyLayer(), org: addCustomField(form, emptyLayer(), 'placeOfBirth', 'text', 'personalien', 'Place of birth') };
+  assert.deepEqual(checkLayers(BASICDATA_FORM, saved, ok), []);
+  const taken = { global: addCustomField(form, emptyLayer(), 'placeOfBirth', 'date', 'personalien', 'Born at'), org: ok.org };
+  assert.deepEqual(checkLayers(BASICDATA_FORM, saved, taken).map((e) => `${e.scope}:${e.reason}`), ['global:key-taken', 'org:key-taken']);
+  const noCaption = { global: emptyLayer(), org: setFieldText(ok.org, 'placeOfBirth', 'caption', 'en', '') };
+  assert.deepEqual(checkLayers(BASICDATA_FORM, saved, noCaption).map((e) => e.reason), ['caption-missing']);
+  const codeKey = { global: emptyLayer(), org: addCustomField(form, emptyLayer(), 'street', 'text', 'address', 'Street 2') };
+  assert.deepEqual(checkLayers(BASICDATA_FORM, saved, codeKey).map((e) => e.reason), ['key-taken']);
+
+  const savedCustom = { global: emptyLayer(), org: ok.org };
+  const def = designDef(BASICDATA_FORM, savedCustom, savedCustom, 'org', 'placeOfBirth');
+  assert.deepEqual(def.allowedTypes, [], 'a saved text field keeps its type');
+  const toNumber = { global: emptyLayer(), org: setFieldProp(ok.org, 'placeOfBirth', 'type', 'number') };
+  assert.deepEqual(checkLayers(BASICDATA_FORM, savedCustom, toNumber).map((e) => e.reason), ['type-not-allowed']);
+  assert.deepEqual(designDef(BASICDATA_FORM, saved, ok, 'org', 'placeOfBirth').allowedTypes, [...ENTRY_TYPES], 'a new one may take any type');
+});
+
+test('designDef: in the org scope, a global custom field plays the code default', () => {
+  const global = addCustomField(form, emptyLayer(), 'costCenter', 'text', 'expense', 'Cost centre');
+  const layers = { global: setFieldProp(global, 'costCenter', 'required', true), org: emptyLayer() };
+  const def = designDef(EXPENSE_FORM, layers, layers, 'org', 'costCenter');
+  assert.equal(def.required, true);
+  const loosened = { global: layers.global, org: setFieldProp(emptyLayer(), 'costCenter', 'required', false) };
+  assert.deepEqual(checkLayers(EXPENSE_FORM, layers, loosened).map((e) => e.reason), ['loosens-code']);
 });

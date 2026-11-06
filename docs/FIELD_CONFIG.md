@@ -5,8 +5,8 @@ changing code: caption, tooltip, size, entry type, order, validation and the
 translations of every text. Changes are made in the app itself, in a side
 panel, by two new roles.
 
-Status: steps 1–5 built (registry, rendering, templates and their API, design
-mode, the expense form); custom fields are not built yet.
+Status: steps 1–6 built (registry, rendering, templates and their API, design
+mode, the expense form, custom fields).
 
 ## Scope of the first version
 
@@ -219,6 +219,15 @@ Retiring a custom field hides it from forms and makes the API stop accepting
 writes to it. Stored values stay, so history and the HR change-request records
 still show them.
 
+Expense rows belong to one organization, so expense custom fields are stored
+flat in `expenses.data.<key>`. A global custom key is refused while any org
+template defines a custom field with that key, so the two never collide.
+
+Basic-data reads (`get`, `versions`, the pending request, the HR review queue)
+go through `scopeToOrg`, which flattens the caller's org section in and drops
+the others. Change requests store org fields already nested; when HR approves
+one, only that org's section is applied (`keepOrgSection`).
+
 ## Data model
 
 New changelog, e.g. `030-field-config.sql`:
@@ -374,5 +383,15 @@ menu. When it is on:
    value, currency) are required and cannot be hidden. New validator
    `currency` (three letters, upper-cased). `ConfigFieldGroup` takes
    `disabledKeys` for sub-choices whose parent is empty.
-6. Custom JSON fields for basic data (per-org storage section) and expenses
-   (adds `expenses.data JSONB`).
+6. Done: custom fields. A template layer defines them in `field_config` rows
+   with `is_custom = TRUE`, whose config is the whole definition
+   (`CustomFieldDef`: type, texts, section, rules, `editableBy`, `retired`);
+   `FormLayer.custom` holds them and `mergeForm` adds them as fields marked
+   `custom: 'global' | 'org'`. `checkCustomKey` and `checkCustomField` (shared)
+   check new keys and definitions; an org overrides a global custom field like
+   a code field (`formWithCustom`). `PUT …/fields/:key` takes `{ config,
+   custom: true }` to create one; `DELETE` retires it. Each form names its
+   JSON column in `FormDef.customStorage` (changelog `031-expense-data.sql`
+   adds `expenses.data`). The panel has *Add field* (caption, key, type,
+   section), *Changed by* for basic data, and Remove (unsaved) / Retire /
+   Restore.

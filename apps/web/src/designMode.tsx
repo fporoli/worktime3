@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { checkFieldOverride, checkGroupsOverride, GROUPS_KEY, mergeForm, type FormDef, type ResolvedForm } from '@worktime3/shared/fields';
+import { GROUPS_KEY, mergeForm, type FormDef, type ResolvedForm } from '@worktime3/shared/fields';
 import { Alert, Button } from '@mui/material';
-import { changedKeys, cloneLayers, configFor, emptyLayer, type Layers, type Scope } from './formDesign';
+import { changedKeys, checkLayers, cloneLayers, configFor, emptyLayer, isCustomIn, type DesignError, type Layers, type Scope } from './formDesign';
 import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -116,13 +116,7 @@ export function useDesignAccess(orgId: string | null, authHeaders: () => Promise
 // One form's template, and its draft while designing
 // ---------------------------------------------------------------------------
 
-/** A failed save or check for one `field_config` key. */
-export interface DesignError {
-  scope: Scope;
-  key: string;
-  reason: string;
-  property?: string;
-}
+export type { DesignError } from './formDesign';
 
 export interface FormDesigner {
   formDef: FormDef;
@@ -130,6 +124,8 @@ export interface FormDesigner {
   preview: ResolvedForm;
   /** Draft layers being edited (both scopes; only `scope` is changed by the panel). */
   draft: Layers;
+  /** The layers as saved, to tell new custom fields from saved ones. */
+  saved: Layers;
   scope: Scope;
   setScope: (s: Scope) => void;
   /** Selected field key, or `group:<key>` for a section. */
@@ -159,19 +155,6 @@ export interface FormTemplate {
   savedForm: ResolvedForm;
   /** Present while design mode is on. */
   designer: FormDesigner | null;
-}
-
-/** Problems with the draft layers, by the same checks the API runs on save. */
-function checkLayers(formDef: FormDef, saved: Layers, draft: Layers): DesignError[] {
-  const out: DesignError[] = [];
-  for (const scope of ['global', 'org'] as Scope[]) {
-    for (const key of changedKeys(saved[scope], draft[scope])) {
-      const config = configFor(draft[scope], key);
-      const r = key === GROUPS_KEY ? checkGroupsOverride(formDef, config) : checkFieldOverride(formDef, key, config);
-      if (!r.ok) out.push({ scope, key, reason: r.reason, property: r.property });
-    }
-  }
-  return out;
 }
 
 /**
@@ -207,8 +190,8 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
       const body = await res.json();
       if (!body.ok) return null;
       const layers: Layers = {
-        global: { fields: body.global?.fields ?? {}, groups: body.global?.groups ?? {} },
-        org: { fields: body.org?.fields ?? {}, groups: body.org?.groups ?? {} },
+        global: { fields: body.global?.fields ?? {}, groups: body.global?.groups ?? {}, custom: body.global?.custom ?? {} },
+        org: { fields: body.org?.fields ?? {}, groups: body.org?.groups ?? {}, custom: body.org?.custom ?? {} },
       };
       setSaved(layers);
       return layers;
@@ -234,7 +217,16 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
       setDraft(null);
       return;
     }
-    loadLayers().then((layers) => setDraft(layers ? cloneLayers(layers) : { global: emptyLayer(), org: emptyLayer() }));
+    loadLayers().then((layers) => {
+      if (layers) {
+        setDraft(cloneLayers(layers));
+        return;
+      }
+      // Layers unreadable (offline): start from empty ones, so the panel still opens.
+      const empty = { global: emptyLayer(), org: emptyLayer() };
+      setSaved(empty);
+      setDraft(cloneLayers(empty));
+    });
   }, [mode.enabled, loadLayers]);
 
   const preview = useMemo(() => (draft ? mergeForm(formDef, draft.global, draft.org) : savedForm), [draft, formDef, savedForm]);
@@ -252,7 +244,8 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
         const base = s === 'global' ? `${API}/forms/${formDef.id}` : `${API}/organizations/${orgId}/forms/${formDef.id}`;
         for (const key of changedKeys(saved[s], draft[s])) {
           try {
-            const res = await fetch(`${base}/fields/${encodeURIComponent(key)}`, { method: 'PUT', headers, body: JSON.stringify({ config: configFor(draft[s], key) }) });
+            const custom = key !== GROUPS_KEY && isCustomIn(draft[s], key);
+            const res = await fetch(`${base}/fields/${encodeURIComponent(key)}`, { method: 'PUT', headers, body: JSON.stringify({ config: configFor(draft[s], key), custom }) });
             const body = await res.json();
             if (!body.ok) errors.push({ scope: s, key, reason: body.reason ?? body.error ?? 'unknown', property: body.property });
           } catch {
@@ -267,6 +260,7 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
         const next = cloneLayers(layers);
         for (const e of errors) {
           if (e.key === GROUPS_KEY) next[e.scope].groups = draft[e.scope].groups;
+          else if (draft[e.scope].custom?.[e.key]) next[e.scope].custom = { ...next[e.scope].custom, [e.key]: draft[e.scope].custom![e.key] };
           else if (draft[e.scope].fields[e.key]) next[e.scope].fields[e.key] = draft[e.scope].fields[e.key];
         }
         setDraft(next);
@@ -284,11 +278,12 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
   }
 
   const designer: FormDesigner | null =
-    mode.enabled && draft
+    mode.enabled && draft && saved
       ? {
           formDef,
           preview,
           draft,
+          saved,
           scope,
           setScope,
           selected,

@@ -134,3 +134,19 @@ test('ExpensesController.create applies the org template (a project made require
   const result = await controller.create('org-1', validBody as any, memberReq);
   assert.deepEqual(result, { ok: false, error: 'invalid-field', fields: [{ field: 'projectId', rule: 'required' }] });
 });
+
+test('ExpensesController.create stores custom fields in data and checks them', async () => {
+  const org: FormLayer = {
+    fields: {},
+    custom: {
+      costCenter: { type: 'text', group: 'expense', caption: { en: 'Cost centre' }, required: true, pattern: '\\d{4}', patternMessage: { en: 'Four digits' } },
+      oldField: { type: 'text', group: 'additional', caption: { en: 'Old' }, retired: true },
+    },
+  };
+  const { inserted, service } = createInsertDb();
+  const controller = new ExpensesController(service, mockVersionsService, mockDocumentsService, mockFields(org));
+  assert.deepEqual(await controller.create('org-1', validBody as any, memberReq), { ok: false, error: 'invalid-field', fields: [{ field: 'costCenter', rule: 'required' }] });
+  assert.deepEqual(await controller.create('org-1', { ...validBody, costCenter: 'abc' } as any, memberReq), { ok: false, error: 'invalid-field', fields: [{ field: 'costCenter', rule: 'pattern' }] });
+  await controller.create('org-1', { ...validBody, costCenter: '4711', oldField: 'ignored' } as any, memberReq);
+  assert.deepEqual(inserted[0].data, { costCenter: '4711' }, 'retired fields are not written');
+});
