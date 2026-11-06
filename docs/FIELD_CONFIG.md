@@ -5,8 +5,8 @@ changing code: caption, tooltip, size, entry type, order, validation and the
 translations of every text. Changes are made in the app itself, in a side
 panel, by two new roles.
 
-Status: steps 1–4 built (registry, rendering, templates and their API, design
-mode); custom fields are not built yet.
+Status: steps 1–5 built (registry, rendering, templates and their API, design
+mode, the expense form); custom fields are not built yet.
 
 ## Scope of the first version
 
@@ -365,6 +365,14 @@ menu. When it is on:
    hidden fields show faded. The draft logic is in `formDesign.ts`, tested
    by `formDesign.test.mjs`. Save sends one request per changed field; what
    fails stays in the draft with its reason.
-5. Custom JSON fields for basic data, including the per-org storage section.
-6. Expenses: add `expenses.data JSONB` (`expense_reports.data` already exists)
-   and move the expense form onto `<ConfigForm>`.
+5. Done: the expense form (`EXPENSE_FORM`, form id `expense`, sections
+   `expense` and `additional`) renders through `ConfigFieldGroup` on the
+   Expenses page, with design mode. Its field keys match the API body;
+   `expenses.controller.ts` validates create (all fields, so required ones are
+   checked) and update (the fields sent) against the org's template and maps
+   values to columns with `expenseColumns`. NOT NULL columns (date, category,
+   value, currency) are required and cannot be hidden. New validator
+   `currency` (three letters, upper-cased). `ConfigFieldGroup` takes
+   `disabledKeys` for sub-choices whose parent is empty.
+6. Custom JSON fields for basic data (per-org storage section) and expenses
+   (adds `expenses.data JSONB`).

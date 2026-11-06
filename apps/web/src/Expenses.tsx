@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
@@ -13,10 +13,14 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TextField,
   Typography,
 } from '@mui/material';
+import dayjs from 'dayjs';
+import { EXPENSE_FORM, validateFields } from '@worktime3/shared/fields';
 import { useI18n } from './i18n';
+import { ConfigFieldGroup, useGroupTitle, type FieldOption } from './ConfigField';
+import { FieldDesignScope, useFormTemplate } from './designMode';
+import { DESIGN_PANEL_WIDTH, FormDesignPanel } from './FormDesigner';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -70,50 +74,47 @@ export interface ExpenseRow {
   document_id: string | null;
 }
 
-/** The form fields shared by "add new" and "edit existing" — kept as strings, matching what the TextFields hold. */
-interface ExpenseForm {
-  expenseDate: string;
-  category: string;
-  subCategory: string;
-  originalValue: string;
-  originalCurrency: string;
-  currency: string;
-  value: string;
-  quantity: string;
-  comment: string;
-  projectId: string;
-  subprojectId: string;
-}
+/**
+ * The form's values, keyed like the `expense` form in the field registry (and the API body):
+ * strings for text, dates and choices, numbers (or null) for the amounts.
+ */
+type ExpenseValues = Record<string, unknown>;
 
-function emptyForm(defaultCurrency: string): ExpenseForm {
+function emptyForm(defaultCurrency: string): ExpenseValues {
   return {
-    expenseDate: new Date().toISOString().slice(0, 10),
+    expenseDate: dayjs().format('YYYY-MM-DD'),
     category: '',
     subCategory: '',
-    originalValue: '',
-    originalCurrency: defaultCurrency,
-    currency: defaultCurrency,
-    value: '0',
-    quantity: '',
-    comment: '',
     projectId: '',
     subprojectId: '',
+    value: 0,
+    currency: defaultCurrency,
+    comment: '',
+    originalValue: null,
+    originalCurrency: defaultCurrency,
+    quantity: null,
   };
 }
 
-function formFromRow(row: ExpenseRow): ExpenseForm {
+function toNumber(v: string | null): number | null {
+  if (v === null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formFromRow(row: ExpenseRow): ExpenseValues {
   return {
     expenseDate: row.expense_date.slice(0, 10),
     category: row.category,
     subCategory: row.sub_category ?? '',
-    originalValue: row.original_value ?? '',
-    originalCurrency: row.original_currency ?? '',
-    currency: row.currency,
-    value: row.value,
-    quantity: row.quantity ?? '',
-    comment: row.comment ?? '',
     projectId: row.project_id ?? '',
     subprojectId: row.subproject_id ?? '',
+    value: toNumber(row.value) ?? 0,
+    currency: row.currency,
+    comment: row.comment ?? '',
+    originalValue: toNumber(row.original_value),
+    originalCurrency: row.original_currency ?? '',
+    quantity: toNumber(row.quantity),
   };
 }
 
@@ -137,7 +138,12 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   const [subCategories, setSubCategories] = useState<Record<string, string>>({});
   const [categoryTranslations, setCategoryTranslations] = useState<Record<string, Record<string, string>>>({});
   const [subCategoryTranslations, setSubCategoryTranslations] = useState<Record<string, Record<string, string>>>({});
-  const [form, setForm] = useState<ExpenseForm>(emptyForm(''));
+  const [values, setValues] = useState<ExpenseValues>(emptyForm(''));
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  // `form` renders (the draft preview while designing); saves are checked against the saved template.
+  const { form, savedForm, designer } = useFormTemplate(orgId, EXPENSE_FORM, authHeaders);
+  const additionalTitle = useGroupTitle(form, 'additional');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -181,13 +187,13 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   }
 
   /** The org's default currency — pre-fills a new expense's `originalCurrency`, which in turn
-   * defaults `currency` to match (see `updateForm`) until the user diverges them themselves. */
+   * defaults `currency` to match (see `updateField`) until the user diverges them themselves. */
   async function loadDefaultCurrency() {
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, { headers: await authHeaders() });
       const data = await res.json();
       const currency = typeof data?.default_currency === 'string' ? data.default_currency : '';
-      if (currency) setForm((prev) => (prev.originalCurrency ? prev : { ...prev, originalCurrency: currency, currency }));
+      if (currency) setValues((prev) => (prev.originalCurrency ? prev : { ...prev, originalCurrency: currency, currency }));
     } catch { /* offline fallback */ }
   }
 
@@ -222,85 +228,67 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
-  function updateForm(patch: Partial<ExpenseForm>) {
-    setForm((prev) => {
-      const next = { ...prev, ...patch };
-      // `currency` defaults to whatever `originalCurrency` is, until the user gives it its
-      // own value — at which point they've diverged and this stops following.
-      if (patch.originalCurrency !== undefined && prev.currency === prev.originalCurrency) {
-        next.currency = patch.originalCurrency;
-      }
+  function updateField(key: string, value: unknown) {
+    setValues((prev) => {
+      const next = { ...prev, [key]: value };
+      // A sub-choice belongs to its parent: reset it when the parent changes.
+      if (key === 'category') next.subCategory = '';
+      if (key === 'projectId') next.subprojectId = '';
+      // `currency` follows `originalCurrency` until the user gives it its own value.
+      if (key === 'originalCurrency' && prev.currency === prev.originalCurrency) next.currency = value;
       return next;
     });
-    if (patch.projectId) loadSubprojects(patch.projectId);
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _, ...rest } = prev;
+      return rest;
+    });
+    if (key === 'projectId' && typeof value === 'string' && value) loadSubprojects(value);
   }
 
-  function payloadFrom(f: ExpenseForm) {
-    return {
-      expenseDate: f.expenseDate,
-      category: f.category,
-      subCategory: f.subCategory || undefined,
-      originalValue: f.originalValue ? Number(f.originalValue) : undefined,
-      originalCurrency: f.originalCurrency ? f.originalCurrency.toUpperCase() : undefined,
-      currency: f.currency.toUpperCase(),
-      value: f.value ? Number(f.value) : 0,
-      quantity: f.quantity ? Number(f.quantity) : undefined,
-      comment: f.comment || undefined,
-      projectId: f.projectId || undefined,
-      subprojectId: f.subprojectId || undefined,
-    };
+  function showFieldErrors(list: { field: string; rule: string }[]) {
+    setFieldErrors(Object.fromEntries(list.map((e) => [e.field, e.rule])));
+    // Open "Additional data" when one of its fields needs fixing.
+    if (list.some((e) => form.fields.find((f) => f.key === e.field)?.group === 'additional')) setShowAdditional(true);
+    setError(t('home.fixFieldErrors'));
   }
 
-  // Amount and receipt currency live in the collapsed "Additional data" section — both are
-  // optional, but if given at all, amount must be positive and currency a 3-letter code.
-  const additionalDataValid =
-    (form.originalValue === '' || Number(form.originalValue) > 0) &&
-    (form.originalCurrency === '' || /^[A-Za-z]{3}$/.test(form.originalCurrency));
-  const formValid = !!form.expenseDate && !!form.category && additionalDataValid && /^[A-Za-z]{3}$/.test(form.currency);
+  function resetForm() {
+    setEditingId(null);
+    setValues(emptyForm(String(values.currency ?? '')));
+    setFieldErrors({});
+    setShowAdditional(false);
+  }
 
-  async function add() {
+  /** Validates against the org's template, then creates (no `editingId`) or updates the expense. */
+  async function save() {
     setError(null);
     setSuccess(null);
-    try {
-      const res = await fetch(`${API}/organizations/${orgId}/expenses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify(payloadFrom(form)),
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
-        return;
-      }
-      setForm(emptyForm(form.currency));
-      setShowAdditional(false);
-      await reload();
-    } catch {
-      setError(t('expenses.saveFailedOffline'));
+    const checked = validateFields(savedForm, values);
+    if (checked.errors.length > 0) {
+      showFieldErrors(checked.errors);
+      return;
     }
-  }
-
-  async function saveEdit() {
-    if (!editingId) return;
-    setError(null);
-    setSuccess(null);
+    setFieldErrors({});
+    setSaving(true);
     try {
-      const res = await fetch(`${API}/expenses/${editingId}`, {
-        method: 'PATCH',
+      const res = await fetch(editingId ? `${API}/expenses/${editingId}` : `${API}/organizations/${orgId}/expenses`, {
+        method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify(payloadFrom(form)),
+        body: JSON.stringify(checked.values),
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
+        if (data.error === 'invalid-field' && Array.isArray(data.fields)) showFieldErrors(data.fields);
+        else setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
         return;
       }
-      setEditingId(null);
-      setForm(emptyForm(form.currency));
-      setShowAdditional(false);
+      resetForm();
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -355,90 +343,40 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
 
   function startEdit(row: ExpenseRow) {
     setEditingId(row.id);
-    setForm(formFromRow(row));
+    setValues(formFromRow(row));
+    setFieldErrors({});
     setShowAdditional(true);
     if (row.project_id) loadSubprojects(row.project_id);
   }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setForm(emptyForm(form.currency));
-    setShowAdditional(false);
-  }
-
-  const subprojects = subprojectsByProject[form.projectId] ?? [];
+  const category = String(values.category ?? '');
+  const projectId = String(values.projectId ?? '');
+  const subprojects = subprojectsByProject[projectId] ?? [];
+  const options = useMemo<Record<string, FieldOption[]>>(
+    () => ({
+      categories: Object.keys(categories).map((key) => ({ value: key, label: categoryLabel(key) })),
+      subCategories: subCategoryOptions(subCategories, category).map(({ key }) => ({ value: key, label: translatedSubCategoryLabel(category, key) ?? key })),
+      projects: projects.map((p) => ({ value: p.id, label: p.name })),
+      subprojects: subprojects.map((sp) => ({ value: sp.id, label: sp.name })),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categories, subCategories, categoryTranslations, subCategoryTranslations, projects, subprojects, category, locale],
+  );
+  const disabledKeys = [...(category ? [] : ['subCategory']), ...(projectId && subprojects.length > 0 ? [] : ['subprojectId'])];
+  const groupProps = { form, values, editing: true, onChange: updateField, options, errors: fieldErrors, disabledKeys };
 
   return (
-    <Paper sx={{ p: 2 }}>
+    <FieldDesignScope designer={designer}>
+    {designer && <FormDesignPanel designer={designer} />}
+    <Paper sx={{ p: 2, mr: designer ? { md: `${DESIGN_PANEL_WIDTH}px` } : 0 }}>
       <Typography variant="h6">{t('expenses.title')}</Typography>
       {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
       {loading && <LinearProgress sx={{ mt: 1 }} />}
 
       <Typography variant="subtitle1" sx={{ mt: 2 }}>{editingId ? t('expenses.editExpense') : t('expenses.logExpense')}</Typography>
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-        <TextField label={t('time.date')} type="date" value={form.expenseDate} onChange={(e) => e.target.value && updateForm({ expenseDate: e.target.value })} size="small" />
-        <TextField select label={t('expenses.category')} value={form.category} onChange={(e) => updateForm({ category: e.target.value, subCategory: '' })} size="small" sx={{ minWidth: 160 }}>
-          {Object.keys(categories).map((key) => (<MenuItem key={key} value={key}>{categoryLabel(key)}</MenuItem>))}
-        </TextField>
-        <TextField
-          select
-          label={t('expenses.subCategory')}
-          value={form.subCategory}
-          onChange={(e) => updateForm({ subCategory: e.target.value })}
-          size="small"
-          sx={{ minWidth: 160 }}
-          disabled={!form.category}
-        >
-          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
-          {subCategoryOptions(subCategories, form.category).map(({ key }) => (<MenuItem key={key} value={key}>{translatedSubCategoryLabel(form.category, key)}</MenuItem>))}
-        </TextField>
-        <TextField
-          select
-          label={t('time.project')}
-          value={form.projectId}
-          onChange={(e) => updateForm({ projectId: e.target.value, subprojectId: '' })}
-          size="small"
-          sx={{ minWidth: 160 }}
-        >
-          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
-          {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
-        </TextField>
-        <TextField
-          select
-          label={t('time.subproject')}
-          value={form.subprojectId}
-          onChange={(e) => updateForm({ subprojectId: e.target.value })}
-          size="small"
-          sx={{ minWidth: 160 }}
-          disabled={!form.projectId || subprojects.length === 0}
-        >
-          <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
-          {subprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
-        </TextField>
-      </Box>
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-        <TextField
-          label={t('expenses.value')}
-          type="number"
-          value={form.value}
-          onChange={(e) => updateForm({ value: e.target.value })}
-          size="small"
-          slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
-          sx={{ maxWidth: 140 }}
-        />
-        <TextField label={t('expenses.currency')} value={form.currency} onChange={(e) => updateForm({ currency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
-      </Box>
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1, alignItems: 'flex-start' }}>
-        <TextField
-          label={t('time.comment')}
-          value={form.comment}
-          onChange={(e) => updateForm({ comment: e.target.value })}
-          size="small"
-          multiline
-          minRows={2}
-          sx={{ flex: 1, minWidth: 260, '& textarea': { resize: 'vertical' } }}
-        />
+      <Box sx={{ mt: 1.5 }}>
+        <ConfigFieldGroup group="expense" {...groupProps} />
       </Box>
 
       <Typography
@@ -449,40 +387,17 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         color="primary"
         sx={{ mt: 1.5, background: 'none', border: 'none', p: 0, cursor: 'pointer', fontWeight: 600 }}
       >
-        {showAdditional ? '▾' : '▸'} {t('expenses.additionalData')}
+        {showAdditional || designer ? '▾' : '▸'} {additionalTitle}
       </Typography>
-      <Collapse in={showAdditional}>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-          <TextField
-            label={t('expenses.originalValue')}
-            type="number"
-            value={form.originalValue}
-            onChange={(e) => updateForm({ originalValue: e.target.value })}
-            size="small"
-            slotProps={{ htmlInput: { step: 0.01, min: 0.01 } }}
-            sx={{ maxWidth: 140 }}
-          />
-          <TextField label={t('expenses.originalCurrency')} value={form.originalCurrency} onChange={(e) => updateForm({ originalCurrency: e.target.value.toUpperCase() })} size="small" slotProps={{ htmlInput: { maxLength: 3 } }} sx={{ maxWidth: 100 }} />
-          <TextField
-            label={t('expenses.quantity')}
-            type="number"
-            value={form.quantity}
-            onChange={(e) => updateForm({ quantity: e.target.value })}
-            size="small"
-            slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
-            sx={{ maxWidth: 120 }}
-          />
+      {/* Open while designing, so every field can be selected. */}
+      <Collapse in={showAdditional || !!designer}>
+        <Box sx={{ mt: 1.5 }}>
+          <ConfigFieldGroup group="additional" {...groupProps} />
         </Box>
       </Collapse>
       <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
-        {editingId ? (
-          <>
-            <Button variant="contained" onClick={saveEdit} disabled={!formValid}>{t('expenses.save')}</Button>
-            <Button onClick={cancelEdit}>{t('expenses.cancel')}</Button>
-          </>
-        ) : (
-          <Button variant="contained" onClick={add} disabled={!formValid}>{t('time.add')}</Button>
-        )}
+        <Button variant="contained" onClick={save} disabled={saving}>{editingId ? t('expenses.save') : t('time.add')}</Button>
+        {editingId && <Button onClick={resetForm} disabled={saving}>{t('expenses.cancel')}</Button>}
       </Box>
 
       <Typography variant="subtitle1" sx={{ mt: 3 }}>{t('expenses.entries')}</Typography>
@@ -533,5 +448,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         </TableBody>
       </Table>
     </Paper>
+    </FieldDesignScope>
   );
 }

@@ -10,6 +10,34 @@ import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isOwnerAdminOrManag
 import type { AuthenticatedRequest } from './jwt.guard';
 import { expenses, expense_report_items, expense_reports, projects, subprojects } from './db/schema';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
+import { FieldsService } from './fields.service';
+import { EXPENSE_FORM, validateFields } from '@worktime3/shared/fields';
+
+type ExpenseColumns = Partial<typeof expenses.$inferInsert>;
+
+/**
+ * Maps validated form values (keyed like the registry, which matches the request body) to
+ * `expenses` columns. Only keys present in `values` are mapped; empty values become NULL.
+ */
+export function expenseColumns(values: Record<string, unknown>): ExpenseColumns {
+  const out: Record<string, unknown> = {};
+  for (const field of EXPENSE_FORM.fields) {
+    if (field.storage.kind !== 'column' || !(field.key in values)) continue;
+    const v = values[field.key];
+    const empty = v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+    out[field.storage.column] = empty ? null : field.type === 'number' ? String(v) : v;
+  }
+  return out as ExpenseColumns;
+}
+
+/** The registry fields present in the body (all of them when `all`, so a create checks required ones). */
+function pickFields(body: Record<string, unknown>, all: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of EXPENSE_FORM.fields) {
+    if (all || field.key in body) out[field.key] = body[field.key];
+  }
+  return out;
+}
 
 @Controller()
 export class ExpensesController {
@@ -17,7 +45,17 @@ export class ExpensesController {
     private readonly db: DbService,
     private readonly versions: VersionsService,
     private readonly documents: DocumentsService,
+    private readonly fields: FieldsService,
   ) {}
+
+  /** Checks values against the org's merged expense template; returns them normalized. */
+  private async validate(orgId: string, patch: Record<string, unknown>) {
+    const form = await this.fields.resolved(orgId, EXPENSE_FORM.id);
+    if (!form) return { ok: true as const, values: patch };
+    const { errors, values } = validateFields(form, patch);
+    if (errors.length > 0) return { ok: false as const, error: 'invalid-field', fields: errors };
+    return { ok: true as const, values };
+  }
 
   @Post('organizations/:orgId/expenses')
   async create(
@@ -45,22 +83,14 @@ export class ExpensesController {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
+    const checked = await this.validate(orgId, pickFields(body ?? {}, true));
+    if (!checked.ok) return checked;
     const values = {
+      ...expenseColumns(checked.values),
       user_id: userId,
       organization_id: orgId,
-      project_id: body.projectId ?? null,
-      subproject_id: body.subprojectId ?? null,
-      expense_date: body.expenseDate,
-      category: body.category,
-      sub_category: body.subCategory ?? null,
       billing_type: body.billingType ?? null,
-      original_value: body.originalValue !== undefined ? String(body.originalValue) : null,
-      original_currency: body.originalCurrency ?? null,
-      currency: body.currency,
-      value: body.value !== undefined ? String(body.value) : undefined,
-      quantity: body.quantity !== undefined ? String(body.quantity) : null,
-      comment: body.comment ?? null,
-    };
+    } as typeof expenses.$inferInsert;
     const [row] = await db.insert(expenses).values(values).returning({ id: expenses.id });
     void this.versions.record('expenses', row.id, 'insert', userId, { id: row.id, ...values }).catch(() => {});
     return { ok: true, id: row.id };
@@ -140,19 +170,10 @@ export class ExpensesController {
     const owned = await this.assertEditableExpense(db, id, req);
     if ('error' in owned) return owned;
 
-    const patch: Partial<typeof expenses.$inferInsert> = {};
-    if (body.projectId !== undefined) patch.project_id = body.projectId || null;
-    if (body.subprojectId !== undefined) patch.subproject_id = body.subprojectId || null;
-    if (body.expenseDate !== undefined) patch.expense_date = body.expenseDate;
-    if (body.category !== undefined) patch.category = body.category;
-    if (body.subCategory !== undefined) patch.sub_category = body.subCategory;
+    const checked = await this.validate(owned.entry.organization_id as string, pickFields(body ?? {}, false));
+    if (!checked.ok) return checked;
+    const patch = expenseColumns(checked.values);
     if (body.billingType !== undefined) patch.billing_type = body.billingType;
-    if (body.originalValue !== undefined) patch.original_value = body.originalValue === null ? null : String(body.originalValue);
-    if (body.originalCurrency !== undefined) patch.original_currency = body.originalCurrency;
-    if (body.currency !== undefined) patch.currency = body.currency;
-    if (body.value !== undefined) patch.value = String(body.value);
-    if (body.quantity !== undefined) patch.quantity = body.quantity === null ? null : String(body.quantity);
-    if (body.comment !== undefined) patch.comment = body.comment;
     if (Object.keys(patch).length === 0) return { ok: true };
     await db.update(expenses).set(patch).where(eq(expenses.id, id));
     void this.versions.record('expenses', id, 'update_delta', owned.userId, patch).catch(() => {});

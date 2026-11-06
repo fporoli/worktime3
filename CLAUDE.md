@@ -148,7 +148,7 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   are rendered by `ConfigField` / `ConfigFieldGroup` (`ConfigField.tsx`). Number
   entry and display go through `localeFormat.ts`; date pickers are MUI X with
   dayjs, set up once by `DatePickerLocalization` in `main.tsx`. The basic-data
-  form uses them; other forms still have hand-written fields.
+  and expense forms use them; other forms still have hand-written fields.
 - Global and per-org templates (`field_config`, edited by the `developer` role
   and `users.is_superdeveloper`) override the registry. Merging, override
   checks (`checkFieldOverride`) and value validation (`validateFields`) live in

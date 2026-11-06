@@ -164,8 +164,54 @@ export const BASICDATA_FORM: FormDef = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// Expenses (the Expenses page's log/edit form)
+// ---------------------------------------------------------------------------
+
+/** A field stored in a real column of `expenses`. Field keys match the API's request body. */
+function expensesColumn(key: string, column: string, caption: string, group: string, order: number, extras: FieldExtras = {}): FieldDef {
+  return {
+    key,
+    storage: { kind: 'column', table: 'expenses', column },
+    type: 'text',
+    caption,
+    group,
+    order,
+    width: 'm',
+    optional: true,
+    editableBy: 'self',
+    ...extras,
+  };
+}
+
+export const EXPENSE_FORM: FormDef = {
+  id: 'expense',
+  groups: [
+    { key: 'expense', caption: 'expenses.section.expense', order: 10 },
+    // Shown collapsed under "Additional data" until opened.
+    { key: 'additional', caption: 'expenses.additionalData', order: 20 },
+  ],
+  fields: [
+    // NOT NULL columns: always required, never hidden.
+    expensesColumn('expenseDate', 'expense_date', 'time.date', 'expense', 10, { type: 'date', optional: false, required: true, locked: ['type', 'required'] }),
+    expensesColumn('category', 'category', 'expenses.category', 'expense', 20, { type: 'select', options: 'categories', optional: false, required: true, locked: ['required'] }),
+    expensesColumn('subCategory', 'sub_category', 'expenses.subCategory', 'expense', 30, { type: 'select', options: 'subCategories' }),
+    expensesColumn('projectId', 'project_id', 'time.project', 'expense', 40, { type: 'select', options: 'projects' }),
+    expensesColumn('subprojectId', 'subproject_id', 'time.subproject', 'expense', 50, { type: 'select', options: 'subprojects' }),
+    expensesColumn('value', 'value', 'expenses.value', 'expense', 60, { type: 'number', width: 's', newRow: true, optional: false, required: true, min: 0, locked: ['type', 'required', 'min'] }),
+    expensesColumn('currency', 'currency', 'expenses.currency', 'expense', 70, { width: 's', optional: false, required: true, validator: 'currency', locked: ['required', 'validator'] }),
+    expensesColumn('comment', 'comment', 'time.comment', 'expense', 80, { width: 'full', height: 2, newRow: true }),
+
+    // The receipt's own amount and currency: optional, but valid when given (DB checks value > 0).
+    expensesColumn('originalValue', 'original_value', 'expenses.originalValue', 'additional', 10, { type: 'number', width: 's', min: 0.01, locked: ['type', 'min'] }),
+    expensesColumn('originalCurrency', 'original_currency', 'expenses.originalCurrency', 'additional', 20, { width: 's', validator: 'currency', locked: ['validator'] }),
+    expensesColumn('quantity', 'quantity', 'expenses.quantity', 'additional', 30, { type: 'number', width: 's', min: 0, locked: ['type', 'min'] }),
+  ],
+};
+
 export const FORMS: Record<string, FormDef> = {
   [BASICDATA_FORM.id]: BASICDATA_FORM,
+  [EXPENSE_FORM.id]: EXPENSE_FORM,
 };
 
 /** The form's fields, optionally only one group's, in display order. */
@@ -188,7 +234,7 @@ export function writableKeys(form: { fields: FieldDef[] }, group: string): strin
 export type Texts = Record<string, string>;
 
 /** Named validators; `postcode:CH` is tied to a country, not a language. */
-export const VALIDATORS = ['email', 'phone', 'iban', 'postcode:CH', 'ahv'] as const;
+export const VALIDATORS = ['email', 'phone', 'iban', 'postcode:CH', 'ahv', 'currency'] as const;
 export type ValidatorName = (typeof VALIDATORS)[number];
 
 /** What one template layer sets for one field: only the properties it changes. */
@@ -486,6 +532,11 @@ export function applyValidator(name: string, value: string): string | null {
       for (let i = 0; i < 12; i++) sum += Number(v[i]) * (i % 2 === 0 ? 1 : 3);
       if ((10 - (sum % 10)) % 10 !== Number(v[12])) return null;
       return `${v.slice(0, 3)}.${v.slice(3, 7)}.${v.slice(7, 11)}.${v.slice(11)}`;
+    }
+    case 'currency': {
+      // ISO 4217 shape only (three letters); the list of real codes is not checked.
+      const v = value.trim().toUpperCase();
+      return /^[A-Z]{3}$/.test(v) ? v : null;
     }
     default:
       return null;

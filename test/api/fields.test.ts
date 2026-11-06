@@ -133,6 +133,8 @@ test('named validators check and normalize', () => {
   assert.equal(applyValidator('postcode:CH', '0800'), null);
   assert.equal(applyValidator('ahv', '7569217076985'), '756.9217.0769.85');
   assert.equal(applyValidator('ahv', '756.9217.0769.86'), null);
+  assert.equal(applyValidator('currency', ' chf '), 'CHF');
+  assert.equal(applyValidator('currency', 'EURO'), null);
 });
 
 test('validateFields: required, types, bounds, validators, patterns', () => {

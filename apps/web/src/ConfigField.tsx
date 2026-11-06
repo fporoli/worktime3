@@ -73,13 +73,14 @@ export function fieldErrorText(field: ResolvedField, rule: string, locale: strin
  * A number entry that accepts the user's way of writing numbers (`12,50`, `1'234.50`) and hands
  * back a JS number, `null` when emptied. Shows the formatted value while not focused.
  */
-function NumberEntry({ field, label, value, onChange, placeholder, error }: {
+function NumberEntry({ field, label, value, onChange, placeholder, error, disabled }: {
   field: FieldDef;
   label: string;
   value: unknown;
   onChange: (v: number | null) => void;
   placeholder?: string;
   error?: string;
+  disabled?: boolean;
 }) {
   const { t, locale } = useI18n();
   const formatted = typeof value === 'number' ? formatLocaleNumber(value, locale) : '';
@@ -98,6 +99,7 @@ function NumberEntry({ field, label, value, onChange, placeholder, error }: {
       label={label}
       placeholder={placeholder}
       required={field.required}
+      disabled={disabled}
       value={focused ? text : formatted}
       onFocus={() => {
         setText(formatted);
@@ -126,10 +128,12 @@ export interface ConfigFieldProps {
   options?: FieldOption[];
   /** Failed validation rule, shown under the entry. */
   error?: string;
+  /** Shown as an entry but not changeable right now (e.g. a sub-choice before its parent). */
+  disabled?: boolean;
 }
 
 /** One configurable field: read-only text when not editing, the right entry for its type when editing. */
-export function ConfigField({ field, value, editing, onChange, options, error }: ConfigFieldProps) {
+export function ConfigField({ field, value, editing, onChange, options, error, disabled }: ConfigFieldProps) {
   const { t, locale } = useI18n();
   const label = resolveText(field.texts.caption, field.caption, locale, t);
   const placeholderText = resolveText(field.texts.placeholder, field.placeholder, locale, t);
@@ -152,7 +156,7 @@ export function ConfigField({ field, value, editing, onChange, options, error }:
         content = (
           <FormControl error={!!errorText} sx={widthSx(field)}>
             <FormControlLabel
-              control={<Checkbox size="small" checked={value === true} onChange={(e) => onChange(e.target.checked)} />}
+              control={<Checkbox size="small" checked={value === true} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />}
               label={label}
             />
             {errorText && <FormHelperText>{errorText}</FormHelperText>}
@@ -160,12 +164,13 @@ export function ConfigField({ field, value, editing, onChange, options, error }:
         );
         break;
       case 'number':
-        content = <NumberEntry field={field} label={label} value={value} onChange={onChange} placeholder={placeholder} error={errorText} />;
+        content = <NumberEntry field={field} label={label} value={value} onChange={onChange} placeholder={placeholder} error={errorText} disabled={disabled} />;
         break;
       case 'date':
         content = (
           <DatePicker
             label={label}
+            disabled={disabled}
             value={isEmpty(value) ? null : dayjs(String(value))}
             onChange={(d: Dayjs | null) => onChange(d && d.isValid() ? d.format('YYYY-MM-DD') : '')}
             slotProps={{ textField: { size: 'small', required: field.required, error: !!errorText, helperText: errorText, sx: widthSx(field) } }}
@@ -176,6 +181,7 @@ export function ConfigField({ field, value, editing, onChange, options, error }:
         content = (
           <DateTimePicker
             label={label}
+            disabled={disabled}
             value={isEmpty(value) ? null : dayjs(String(value))}
             onChange={(d: Dayjs | null) => onChange(d && d.isValid() ? d.toISOString() : '')}
             slotProps={{ textField: { size: 'small', required: field.required, error: !!errorText, helperText: errorText, sx: widthSx(field) } }}
@@ -189,6 +195,7 @@ export function ConfigField({ field, value, editing, onChange, options, error }:
             size="small"
             label={label}
             required={field.required}
+            disabled={disabled}
             value={isEmpty(value) ? '' : String(value)}
             onChange={(e) => onChange(e.target.value)}
             error={!!errorText}
@@ -208,6 +215,7 @@ export function ConfigField({ field, value, editing, onChange, options, error }:
             label={label}
             placeholder={placeholder}
             required={field.required}
+            disabled={disabled}
             value={isEmpty(value) ? '' : String(value)}
             onChange={(e) => onChange(e.target.value)}
             multiline={rows > 1}
@@ -241,6 +249,8 @@ export interface ConfigFieldGroupProps {
   errors?: Record<string, string>;
   /** Fields shown read-only even while editing (e.g. HR-only fields in a change request). */
   readOnlyKeys?: readonly string[];
+  /** Fields shown as disabled entries while editing. */
+  disabledKeys?: readonly string[];
 }
 
 /** The group's title from the template, else the dictionary. */
@@ -251,7 +261,7 @@ export function useGroupTitle(form: ResolvedForm, group: string): string {
 }
 
 /** A group's visible fields in their configured order, wrapping like the hand-written forms did. */
-export function ConfigFieldGroup({ form, group, values, editing, onChange, options, errors, readOnlyKeys }: ConfigFieldGroupProps) {
+export function ConfigFieldGroup({ form, group, values, editing, onChange, options, errors, readOnlyKeys, disabledKeys }: ConfigFieldGroupProps) {
   const design = useFieldDesign();
   const fields = formFields(form, group).filter((f) => design || !f.hidden);
   return (
@@ -265,6 +275,7 @@ export function ConfigFieldGroup({ form, group, values, editing, onChange, optio
             onChange={(v) => onChange(field.key, v)}
             options={field.options ? options?.[field.options] : undefined}
             error={errors?.[field.key]}
+            disabled={disabledKeys?.includes(field.key)}
           />
         );
         return (
