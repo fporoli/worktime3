@@ -284,11 +284,11 @@ fetches it again after an org switch or after a save in design mode.
 
 ## Web app
 
-**Rendering.** A `<ConfigForm formId="basicdata" values={...} onChange={...} />`
-component renders fields from the merged template: order, groups, new rows,
-widths, captions and tooltips in the current language, and inline validation
-messages. Pages that need special layout can instead use
-`<ConfigField formId="basicdata" field="middleName" .../>` one at a time.
+**Rendering.** `<ConfigFieldGroup form={...} group="personalien" values={...} onChange={...} />`
+renders one group's fields from the template: order, new rows, widths,
+captions and tooltips in the current language. Pages that need special layout
+use `<ConfigField field={...} .../>` one at a time. Inline validation messages
+come with step 3.
 
 **Design mode.** Users with either role get a *Design mode* switch in the user
 menu. When it is on:
@@ -337,11 +337,16 @@ menu. When it is on:
    in the app's language, project-time dialogs translated, and
    `dictionaries.test.mjs` checks keys and placeholders. Still open: about 100
    hard-coded English captions on other pages.
-2. Code registry in `packages/shared`, `<ConfigForm>`/`<ConfigField>`, and the
-   locale-aware number, date and datetime inputs. Move the basic-data form onto
-   it with no visible change.
+2. Done: registry in `packages/shared/src/fields.ts`, `ConfigField` /
+   `ConfigFieldGroup` in `apps/web/src/ConfigField.tsx`, number parsing and
+   formatting in `localeFormat.ts`, MUI X date pickers in the app's language.
+   The basic-data form's simple fields use it; the nested lists (bank
+   accounts, contacts, partner, children) are still hand-written.
 3. Changelog 030, `fields.controller.ts`, the merge and `validateFields`, and
-   enforcement in `basicdata.controller.ts`. Tests for merging, locks, type
+   enforcement in `basicdata.controller.ts`. The API compiles as CommonJS with
+   `moduleResolution: node`, which does not read the `exports` map of
+   `@worktime3/shared`; it needs `node16` resolution or a build of the shared
+   package first. Tests for merging, locks, type
    changes and validators in `test/api/`.
 4. Design mode and the side panel.
 5. Custom JSON fields for basic data, including the per-org storage section.

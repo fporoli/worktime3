@@ -672,6 +672,10 @@ export const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'orgSettings.domainSaved': 'Domain "{{domain}}" saved.',
     'orgSettings.ssoSaved': 'SSO configuration saved.',
     'teamHours.hide': 'Hide',
+    'common.yes': 'Yes',
+    'common.no': 'No',
+    'common.notSet': 'Not set',
+    'fields.invalidNumber': 'Not a valid number',
   },
   de: {
     'appbar.title': 'Worktime',
@@ -1338,6 +1342,10 @@ export const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'orgSettings.domainSaved': 'Domain «{{domain}}» gespeichert.',
     'orgSettings.ssoSaved': 'SSO-Konfiguration gespeichert.',
     'teamHours.hide': 'Ausblenden',
+    'common.yes': 'Ja',
+    'common.no': 'Nein',
+    'common.notSet': 'Nicht erfasst',
+    'fields.invalidNumber': 'Keine gültige Zahl',
   },
   fr: {
     'appbar.title': 'Worktime',
@@ -2004,6 +2012,10 @@ export const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'orgSettings.domainSaved': 'Domaine « {{domain}} » enregistré.',
     'orgSettings.ssoSaved': 'Configuration SSO enregistrée.',
     'teamHours.hide': 'Masquer',
+    'common.yes': 'Oui',
+    'common.no': 'Non',
+    'common.notSet': 'Non renseigné',
+    'fields.invalidNumber': 'Nombre non valide',
   },
   it: {
     'appbar.title': 'Worktime',
@@ -2670,5 +2682,9 @@ export const DICTIONARIES: Record<Locale, Record<string, string>> = {
     'orgSettings.domainSaved': 'Dominio «{{domain}}» salvato.',
     'orgSettings.ssoSaved': 'Configurazione SSO salvata.',
     'teamHours.hide': 'Nascondi',
+    'common.yes': 'Sì',
+    'common.no': 'No',
+    'common.notSet': 'Non indicato',
+    'fields.invalidNumber': 'Numero non valido',
   },
 };

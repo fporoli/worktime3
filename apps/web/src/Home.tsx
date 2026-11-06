@@ -5,7 +5,6 @@ import {
   Button,
   IconButton,
   LinearProgress,
-  MenuItem,
   Paper,
   Table,
   TableBody,
@@ -17,7 +16,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { BASICDATA_FORM, writableKeys } from '@worktime3/shared/fields';
 import { useI18n } from './i18n';
+import { ConfigFieldGroup } from './ConfigField';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -78,11 +79,15 @@ interface StaticDataRow {
   translation: Record<string, Record<string, string>> | null;
 }
 
-/** "Personalien" — identity fields only admin/HR may ever touch (mirrors the API's ADMIN_ONLY_KEYS). */
-const PERSONALIEN_KEYS = ['displayName', 'firstName', 'middleName', 'lastName', 'personnelNumber', 'gender', 'birthDate', 'socialSecurityNumber', 'languageCode', 'placeOfOrigin', 'nationality', 'residencePermitCode'] as const;
-/** Address/bank/emergency contacts — anyone may self-request a change (mirrors the API's SELF_SERVICE_KEYS). */
-const ADDRESS_KEYS = ['salutation', 'street', 'postalCode', 'city', 'country', 'canton', 'phone1', 'phone2', 'mobile', 'email', 'bankAccounts', 'emergencyContacts'] as const;
-const FAMILY_KEYS = ['civilStatus', 'civilStatusSince', 'partner', 'children'] as const;
+/**
+ * The keys each section saves. Simple fields come from the field registry; the nested lists
+ * (bank accounts, contacts, partner, children) are still laid out by hand below.
+ * "Personalien" are identity fields only admin/HR may touch (mirrors the API's ADMIN_ONLY_KEYS).
+ */
+const PERSONALIEN_KEYS = writableKeys(BASICDATA_FORM, 'personalien');
+/** Address, bank and emergency contacts: anyone may request a change (mirrors the API's SELF_SERVICE_KEYS). */
+const ADDRESS_KEYS = [...writableKeys(BASICDATA_FORM, 'address'), 'bankAccounts', 'emergencyContacts'];
+const FAMILY_KEYS = [...writableKeys(BASICDATA_FORM, 'civilStatus'), 'partner', 'children'];
 
 /** Pick a patch containing only the given keys' current values from `data` — used to submit one section's fields at a time. */
 function pick(data: BasicData, keys: readonly string[]): Record<string, unknown> {
@@ -371,61 +376,22 @@ function Field({ t, label, value, editing, onChange, type }: { t: T; label: stri
   return <TextField size="small" type={type ?? 'text'} label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 200 }} slotProps={type === 'date' ? { inputLabel: { shrink: true } } : undefined} />;
 }
 
-/** A read-only field that never becomes editable — for values (like the account/company email) this form doesn't own. */
-function StaticField({ label, value, t }: { label: string; value: string; t: T }) {
-  return (
-    <Box sx={{ minWidth: 200 }}>
-      <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-      <Typography variant="body2">{value || t('home.noneSet')}</Typography>
-    </Box>
-  );
-}
-
-function SelectField({ t, label, value, options, editing, onChange }: { t: T; label: string; value: string; options: Option[]; editing: boolean; onChange: (v: string) => void }) {
-  if (!editing) {
-    const found = options.find((o) => o.value === value)?.label ?? value;
-    return (
-      <Box sx={{ minWidth: 200 }}>
-        <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-        <Typography variant="body2">{found || t('home.noneSet')}</Typography>
-      </Box>
-    );
-  }
-  return (
-    <TextField select size="small" label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 200 }}>
-      <MenuItem value=""><em>{t('home.noneSet')}</em></MenuItem>
-      {options.map((o) => (<MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>))}
-    </TextField>
-  );
-}
-
 function PersonalienSection({
   t, data, editing, onChange, companyEmail, localeOptions, nationOptions,
 }: {
   t: T; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; companyEmail: string | null; localeOptions: Option[]; nationOptions: Option[];
 }) {
-  function set<K extends keyof BasicData>(key: K, value: BasicData[K]) {
-    onChange({ ...data, [key]: value });
-  }
-
   return (
     <Box>
       <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.personalien')}</Typography>
-      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <Field t={t} label={t('home.field.displayName')} value={data.displayName ?? ''} editing={editing} onChange={(v) => set('displayName', v)} />
-        <Field t={t} label={t('home.field.firstName')} value={data.firstName ?? ''} editing={editing} onChange={(v) => set('firstName', v)} />
-        <Field t={t} label={t('home.field.middleName')} value={data.middleName ?? ''} editing={editing} onChange={(v) => set('middleName', v)} />
-        <Field t={t} label={t('home.field.lastName')} value={data.lastName ?? ''} editing={editing} onChange={(v) => set('lastName', v)} />
-        <Field t={t} label={t('home.field.personnelNumber')} value={data.personnelNumber ?? ''} editing={editing} onChange={(v) => set('personnelNumber', v)} />
-        <Field t={t} label={t('home.field.gender')} value={data.gender ?? ''} editing={editing} onChange={(v) => set('gender', v)} />
-        <Field t={t} type="date" label={t('home.field.birthDate')} value={data.birthDate ?? ''} editing={editing} onChange={(v) => set('birthDate', v)} />
-        <Field t={t} label={t('home.field.socialSecurityNumber')} value={data.socialSecurityNumber ?? ''} editing={editing} onChange={(v) => set('socialSecurityNumber', v)} />
-        <SelectField t={t} label={t('home.field.languageCode')} value={data.languageCode ?? ''} options={localeOptions} editing={editing} onChange={(v) => set('languageCode', v)} />
-        <Field t={t} label={t('home.field.placeOfOrigin')} value={data.placeOfOrigin ?? ''} editing={editing} onChange={(v) => set('placeOfOrigin', v)} />
-        <SelectField t={t} label={t('home.field.nationality')} value={data.nationality ?? ''} options={nationOptions} editing={editing} onChange={(v) => set('nationality', v)} />
-        <Field t={t} label={t('home.field.residencePermitCode')} value={data.residencePermitCode ?? ''} editing={editing} onChange={(v) => set('residencePermitCode', v)} />
-        <StaticField t={t} label={t('home.field.companyEmail')} value={companyEmail ?? ''} />
-      </Box>
+      <ConfigFieldGroup
+        form={BASICDATA_FORM}
+        group="personalien"
+        values={{ ...data, companyEmail: companyEmail ?? '' }}
+        editing={editing}
+        onChange={(key, value) => onChange({ ...data, [key]: value })}
+        options={{ locales: localeOptions, nations: nationOptions }}
+      />
     </Box>
   );
 }
@@ -446,18 +412,14 @@ function AddressSection({
     <Box sx={{ display: 'grid', gap: 3 }}>
       <Box>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.address')}</Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Field t={t} label={t('home.field.salutation')} value={data.salutation ?? ''} editing={editing} onChange={(v) => set('salutation', v)} />
-          <Field t={t} label={t('home.field.street')} value={data.street ?? ''} editing={editing} onChange={(v) => set('street', v)} />
-          <Field t={t} label={t('home.field.postalCode')} value={data.postalCode ?? ''} editing={editing} onChange={(v) => set('postalCode', v)} />
-          <Field t={t} label={t('home.field.city')} value={data.city ?? ''} editing={editing} onChange={(v) => set('city', v)} />
-          <SelectField t={t} label={t('home.field.country')} value={data.country ?? ''} options={countryOptions} editing={editing} onChange={(v) => set('country', v)} />
-          <SelectField t={t} label={t('home.field.canton')} value={data.canton ?? ''} options={cantonOptions} editing={editing} onChange={(v) => set('canton', v)} />
-          <Field t={t} label={t('home.field.phone1')} value={data.phone1 ?? ''} editing={editing} onChange={(v) => set('phone1', v)} />
-          <Field t={t} label={t('home.field.phone2')} value={data.phone2 ?? ''} editing={editing} onChange={(v) => set('phone2', v)} />
-          <Field t={t} label={t('home.field.mobile')} value={data.mobile ?? ''} editing={editing} onChange={(v) => set('mobile', v)} />
-          <Field t={t} label={t('home.field.email')} value={data.email ?? ''} editing={editing} onChange={(v) => set('email', v)} />
-        </Box>
+        <ConfigFieldGroup
+          form={BASICDATA_FORM}
+          group="address"
+          values={data as Record<string, unknown>}
+          editing={editing}
+          onChange={(key, value) => onChange({ ...data, [key]: value })}
+          options={{ countries: countryOptions, cantons: cantonOptions }}
+        />
       </Box>
 
       <Box>
@@ -516,10 +478,13 @@ function FamilySection({ t, data, editing, onChange }: { t: T; data: BasicData; 
     <Box sx={{ display: 'grid', gap: 3 }}>
       <Box>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.civilStatus')}</Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Field t={t} label={t('home.field.civilStatus')} value={data.civilStatus ?? ''} editing={editing} onChange={(v) => set('civilStatus', v)} />
-          <Field t={t} label={t('home.field.civilStatusSince')} value={data.civilStatusSince ?? ''} editing={editing} onChange={(v) => set('civilStatusSince', v)} />
-        </Box>
+        <ConfigFieldGroup
+          form={BASICDATA_FORM}
+          group="civilStatus"
+          values={data as Record<string, unknown>}
+          editing={editing}
+          onChange={(key, value) => onChange({ ...data, [key]: value })}
+        />
       </Box>
 
       <Box>

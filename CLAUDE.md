@@ -58,9 +58,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 - Several tests do `import type { AuthenticatedRequest } from '../../apps/api/src/types'`,
   which does not exist (the type lives in `jwt.guard.ts`). It works only
   because tsx strips type-only imports; use `jwt.guard` in new tests.
-- `apps/web` tests are `src/*.test.mjs` run by `node --test`; they can import
-  plain `.ts` files (Node strips types) but not `.tsx`. `packages/shared` has a
-  `test` script but no test files yet.
+- `apps/web` and `packages/shared` tests are `src/*.test.mjs` run by
+  `node --test`; they can import plain `.ts` files (Node strips types) but not
+  `.tsx`.
 - CI (`.github/workflows/ci.yml`) builds, tests, then runs `db:migrate` and
   `db:seed` against a fresh Postgres 16, so a broken changelog or seed fails CI.
 
@@ -139,6 +139,12 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   `dictionaries.test.mjs` fails on missing keys or mismatched `{{placeholders}}`.
 - Format dates, times and numbers with the app's `locale` from `useI18n()`,
   never the browser default (`toLocaleDateString()` with no argument).
+- Configurable form fields (docs/FIELD_CONFIG.md): field definitions live in
+  `packages/shared/src/fields.ts` (imported as `@worktime3/shared/fields`) and
+  are rendered by `ConfigField` / `ConfigFieldGroup` (`ConfigField.tsx`). Number
+  entry and display go through `localeFormat.ts`; date pickers are MUI X with
+  dayjs, set up once by `DatePickerLocalization` in `main.tsx`. The basic-data
+  form uses them; other forms still have hand-written fields.
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one
@@ -146,8 +152,10 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 ## Other
 
-- `packages/shared` (role ids, RBAC matrix) mirrors API constants but is not
-  imported by either app yet.
+- `packages/shared`: `index.ts` (role ids, RBAC matrix) mirrors API constants
+  and is not imported yet; `fields.ts` (the field registry) is used by the web
+  app. Keep `fields.ts` to erasable TypeScript (no enums) so Node tests can
+  import it.
 - Environments: `compose/docker-compose.{dev,local,vps}.yml`; `local` uses
   `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
   Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`
