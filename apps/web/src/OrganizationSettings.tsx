@@ -17,6 +17,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -50,6 +51,7 @@ interface OrganizationSettingsProps {
 }
 
 export default function OrganizationSettings({ orgId, authHeaders }: OrganizationSettingsProps) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,13 +124,13 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'forbidden' ? 'Only admins can edit organization settings.' : 'Failed to save organization.');
+        setError(data.error === 'forbidden' ? t('orgSettings.forbiddenProfile') : t('orgSettings.saveFailed'));
         return;
       }
-      setSuccess('Organization settings saved.');
+      setSuccess(t('orgSettings.saved'));
       await reloadOrg();
     } catch {
-      setError('Failed to save organization.');
+      setError(t('orgSettings.saveFailed'));
     }
   }
 
@@ -144,15 +146,15 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'forbidden' ? 'Only admins can manage domains.' : 'Failed to add domain.');
+        setError(data.error === 'forbidden' ? t('orgSettings.forbiddenDomains') : t('orgSettings.addDomainFailed'));
         return;
       }
       setNewDomain('');
       setNewDomainAutoJoin(false);
-      setSuccess(`Domain "${domain}" saved.`);
+      setSuccess(t('orgSettings.domainSaved', { domain }));
       await reloadDomains();
     } catch {
-      setError('Failed to add domain.');
+      setError(t('orgSettings.addDomainFailed'));
     }
   }
 
@@ -167,24 +169,24 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'forbidden' ? 'Only admins can configure SSO.' : 'Failed to save SSO configuration.');
+        setError(data.error === 'forbidden' ? t('orgSettings.forbiddenSso') : t('orgSettings.ssoSaveFailed'));
         return;
       }
-      setSuccess('SSO configuration saved.');
+      setSuccess(t('orgSettings.ssoSaved'));
       await reloadSso();
     } catch {
-      setError('Failed to save SSO configuration.');
+      setError(t('orgSettings.ssoSaveFailed'));
     }
   }
 
   return (
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="h6">Organization Settings</Typography>
-        <Chip label="Admin Access" color="secondary" size="small" variant="outlined" />
+        <Typography variant="h6">{t('orgSettings.title')}</Typography>
+        <Chip label={t('staticdata.adminAccess')} color="secondary" size="small" variant="outlined" />
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Profile, verified domains, and SSO for this organization.
+        {t('orgSettings.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -193,78 +195,78 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
 
       <Box sx={{ display: 'grid', gap: 3 }}>
         <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Organization Profile</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('orgSettings.profile')}</Typography>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-            <TextField label="Organization Name" value={orgName} onChange={(e) => setOrgName(e.target.value)} size="small" sx={{ minWidth: 220 }} />
-            <TextField label="Logo URL" value={orgLogoUrl} onChange={(e) => setOrgLogoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} placeholder="https://…" />
+            <TextField label={t('orgSettings.name')} value={orgName} onChange={(e) => setOrgName(e.target.value)} size="small" sx={{ minWidth: 220 }} />
+            <TextField label={t('orgSettings.logoUrl')} value={orgLogoUrl} onChange={(e) => setOrgLogoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} placeholder="https://…" />
             <TextField
-              label="Default currency"
+              label={t('orgSettings.defaultCurrency')}
               value={defaultCurrency}
               onChange={(e) => setDefaultCurrency(e.target.value.toUpperCase())}
               size="small"
               slotProps={{ htmlInput: { maxLength: 3 } }}
               sx={{ maxWidth: 130 }}
-              helperText="Pre-fills new expenses' reporting currency"
+              helperText={t('orgSettings.defaultCurrencyHelper')}
             />
             <TextField
-              label="Max hours per day"
+              label={t('orgSettings.maxHoursPerDay')}
               type="number"
               value={maxHoursPerDay}
               onChange={(e) => setMaxHoursPerDay(e.target.value)}
               size="small"
               slotProps={{ htmlInput: { min: 0, max: 24, step: 0.5 } }}
               sx={{ maxWidth: 160 }}
-              helperText="Vacation hours booked for a full day off (half for a half day)"
+              helperText={t('orgSettings.maxHoursPerDayHelper')}
             />
-            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid}>Save</Button>
+            <Button variant="contained" onClick={handleSaveOrg} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid}>{t('common.save')}</Button>
             {org && <Chip label={`slug: ${org.slug}`} size="small" variant="outlined" />}
           </Box>
         </Box>
 
         <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Verified Domains</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('orgSettings.domains')}</Typography>
           <Table size="small" sx={{ mb: 1 }}>
             <TableHead>
               <TableRow>
-                <TableCell>Domain</TableCell>
-                <TableCell>Verified</TableCell>
-                <TableCell>Auto-join</TableCell>
+                <TableCell>{t('orgSettings.domain')}</TableCell>
+                <TableCell>{t('orgSettings.verified')}</TableCell>
+                <TableCell>{t('orgSettings.autoJoin')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {domains.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell>{d.domain}</TableCell>
-                  <TableCell>{d.verified_at ? 'Yes' : 'Pending'}</TableCell>
-                  <TableCell>{d.auto_join_enabled ? 'Enabled' : 'Disabled'}</TableCell>
+                  <TableCell>{d.verified_at ? t('orgSettings.yes') : t('orgSettings.pending')}</TableCell>
+                  <TableCell>{d.auto_join_enabled ? t('orgSettings.enabled') : t('orgSettings.disabled')}</TableCell>
                 </TableRow>
               ))}
               {domains.length === 0 && (
-                <TableRow><TableCell colSpan={3}>No domains configured yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={3}>{t('orgSettings.noDomains')}</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-            <TextField label="Add Domain" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} size="small" placeholder="example.com" />
+            <TextField label={t('orgSettings.addDomain')} value={newDomain} onChange={(e) => setNewDomain(e.target.value)} size="small" placeholder="example.com" />
             <FormControlLabel
               control={<Checkbox checked={newDomainAutoJoin} onChange={(e) => setNewDomainAutoJoin(e.target.checked)} size="small" />}
-              label="Auto-join"
+              label={t('orgSettings.autoJoin')}
             />
-            <Button variant="outlined" size="small" onClick={handleAddDomain} disabled={!newDomain.trim()}>Add</Button>
+            <Button variant="outlined" size="small" onClick={handleAddDomain} disabled={!newDomain.trim()}>{t('common.add')}</Button>
           </Box>
         </Box>
 
         <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>SSO Configuration</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('orgSettings.sso')}</Typography>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-            <TextField select label="Protocol" value={ssoProtocol} onChange={(e) => setSsoProtocol(e.target.value as 'saml2' | 'oidc')} size="small" sx={{ minWidth: 120 }}>
+            <TextField select label={t('orgSettings.protocol')} value={ssoProtocol} onChange={(e) => setSsoProtocol(e.target.value as 'saml2' | 'oidc')} size="small" sx={{ minWidth: 120 }}>
               <MenuItem value="saml2">SAML 2.0</MenuItem>
               <MenuItem value="oidc">OIDC</MenuItem>
             </TextField>
-            <TextField label="IdP Entity ID" value={ssoEntityId} onChange={(e) => setSsoEntityId(e.target.value)} size="small" sx={{ minWidth: 220 }} />
-            <TextField label="IdP SSO URL" value={ssoUrl} onChange={(e) => setSsoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} />
-            <Button variant="outlined" size="small" onClick={handleSaveSso} disabled={!ssoEntityId.trim() || !ssoUrl.trim()}>Save</Button>
-            {sso && <Chip label={sso.is_active ? 'Active' : 'Inactive'} size="small" color={sso.is_active ? 'success' : 'default'} />}
+            <TextField label={t('orgSettings.idpEntityId')} value={ssoEntityId} onChange={(e) => setSsoEntityId(e.target.value)} size="small" sx={{ minWidth: 220 }} />
+            <TextField label={t('orgSettings.idpSsoUrl')} value={ssoUrl} onChange={(e) => setSsoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} />
+            <Button variant="outlined" size="small" onClick={handleSaveSso} disabled={!ssoEntityId.trim() || !ssoUrl.trim()}>{t('common.save')}</Button>
+            {sso && <Chip label={sso.is_active ? t('orgSettings.active') : t('orgSettings.inactive')} size="small" color={sso.is_active ? 'success' : 'default'} />}
           </Box>
         </Box>
       </Box>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, LinearProgress, MenuItem, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import { BasicDataPanel } from './Home';
+import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -37,6 +38,7 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
 };
 
 export default function Users({ orgId, role, authHeaders }: UsersProps) {
+  const t = useT();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [addRoleFor, setAddRoleFor] = useState<Record<string, string>>({});
@@ -81,13 +83,13 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(`Could not add the role (${data.error ?? 'unknown error'}).`);
+        setError(t('users.addRoleFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       setAddRoleFor((p) => ({ ...p, [membershipId]: '' }));
       await reloadMembers();
     } catch {
-      setError('Could not reach the API.');
+      setError(t('common.cannotReachApi'));
     }
   }
 
@@ -103,14 +105,14 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
       if (!data.ok) {
         const message =
           data.error === 'cannot-be-own-manager'
-            ? "A member can't be their own manager."
-            : `Could not set the manager (${data.error ?? 'unknown error'}).`;
+            ? t('users.cannotBeOwnManager')
+            : t('users.setManagerFailed', { error: data.error ?? t('common.unknownError') });
         setError(message);
         return;
       }
       await reloadMembers();
     } catch {
-      setError('Could not reach the API.');
+      setError(t('common.cannotReachApi'));
     }
   }
 
@@ -123,22 +125,20 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'last-role' ? 'A member must keep at least one role.' : `Could not remove the role (${data.error ?? 'unknown error'}).`);
+        setError(data.error === 'last-role' ? t('users.lastRole') : t('users.removeRoleFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       await reloadMembers();
     } catch {
-      setError('Could not reach the API.');
+      setError(t('common.cannotReachApi'));
     }
   }
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Users</Typography>
+      <Typography variant="h6">{t('users.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Everyone in this organization, with their status, roles, and default approval manager — leave a
-        member's manager blank if they're the top of their chain and don't need their timesheets approved.
-        Add or remove roles inline — to invite someone new, use the Invitations page.
+        {t('users.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -147,12 +147,12 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>Name</TableCell>
-            <TableCell>Email</TableCell>
-            <TableCell>Status</TableCell>
-            <TableCell>Manager</TableCell>
-            <TableCell>Roles</TableCell>
-            <TableCell>Add role</TableCell>
+            <TableCell>{t('common.name')}</TableCell>
+            <TableCell>{t('common.email')}</TableCell>
+            <TableCell>{t('common.status')}</TableCell>
+            <TableCell>{t('users.col.manager')}</TableCell>
+            <TableCell>{t('users.col.roles')}</TableCell>
+            <TableCell>{t('users.col.addRole')}</TableCell>
             <TableCell />
           </TableRow>
         </TableHead>
@@ -175,7 +175,7 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
                       onChange={(e) => setManager(m.id, e.target.value)}
                       sx={{ minWidth: 160 }}
                     >
-                      <MenuItem value=""><em>None (top of chain)</em></MenuItem>
+                      <MenuItem value=""><em>{t('users.noManager')}</em></MenuItem>
                       {members.filter((o) => o.id !== m.id).map((o) => (
                         <MenuItem key={o.user_id} value={o.user_id}>{o.display_name}</MenuItem>
                       ))}
@@ -206,20 +206,20 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
                       sx={{ minWidth: 140 }}
                       disabled={availableRoles.length === 0}
                     >
-                      <MenuItem value=""><em>Select…</em></MenuItem>
+                      <MenuItem value=""><em>{t('common.select')}</em></MenuItem>
                       {availableRoles.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
                     </TextField>
-                    <Button size="small" onClick={() => grantRole(m.id)} disabled={!addRoleFor[m.id]}>Add</Button>
+                    <Button size="small" onClick={() => grantRole(m.id)} disabled={!addRoleFor[m.id]}>{t('common.add')}</Button>
                   </Box>
                 </TableCell>
                 <TableCell align="right">
-                  <Button size="small" onClick={() => setBasicDataFor(m)}>Basic data</Button>
+                  <Button size="small" onClick={() => setBasicDataFor(m)}>{t('users.basicData')}</Button>
                 </TableCell>
               </TableRow>
             );
           })}
           {members.length === 0 && !loading && (
-            <TableRow><TableCell colSpan={7}>No members yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={7}>{t('users.empty')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
@@ -227,7 +227,7 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
       <Dialog open={!!basicDataFor} onClose={() => setBasicDataFor(null)} fullWidth maxWidth="md">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           {basicDataFor?.display_name}
-          <IconButton size="small" aria-label="Close" onClick={() => setBasicDataFor(null)}>✕</IconButton>
+          <IconButton size="small" aria-label={t('common.close')} onClick={() => setBasicDataFor(null)}>✕</IconButton>
         </DialogTitle>
         <DialogContent sx={{ pb: 3 }}>
           {basicDataFor && (

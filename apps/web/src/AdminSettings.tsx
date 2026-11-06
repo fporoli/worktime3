@@ -150,7 +150,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({ enumName: enumName.trim(), values, translation: enumTranslations }),
         });
-        setSuccess(`Enum "${enumName}" updated.`);
+        setSuccess(t('staticdata.updated', { name: enumName }));
       } else {
         const res = await fetch(`${API}/organizations/${orgId}/static-data`, {
           method: 'POST',
@@ -159,15 +159,15 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
         });
         const data = await res.json();
         if (!data.ok) {
-          setError(data.error === 'forbidden' ? 'Only admins can manage static data.' : 'Failed to create enum.');
+          setError(data.error === 'forbidden' ? t('staticdata.forbidden') : t('staticdata.createFailed'));
           return;
         }
-        setSuccess(`Enum "${enumName}" created.`);
+        setSuccess(t('staticdata.created', { name: enumName }));
       }
       setEnumDialogOpen(false);
       await reloadEnums();
     } catch {
-      setError('Failed to save enum.');
+      setError(t('staticdata.saveFailed'));
     }
   }
 
@@ -176,9 +176,9 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
     try {
       await fetch(`${API}/organizations/${orgId}/static-data/${row.id}`, { method: 'DELETE', headers: await authHeaders() });
       setEnums((prev) => prev.filter((e) => e.id !== row.id));
-      setSuccess('Enum deleted.');
+      setSuccess(t('staticdata.deleted'));
     } catch {
-      setError('Failed to delete enum.');
+      setError(t('staticdata.deleteFailed'));
     }
   }
 
@@ -186,7 +186,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h6">{t('staticdata.title')}</Typography>
-        <Chip label="Admin Access" color="secondary" size="small" variant="outlined" />
+        <Chip label={t('staticdata.adminAccess')} color="secondary" size="small" variant="outlined" />
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {t('staticdata.description', { count: enums.length })}
@@ -259,7 +259,7 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
             required
             autoFocus
             disabled={!!editingEnum}
-            placeholder="e.g. projects"
+            placeholder={t('staticdata.entityPlaceholder')}
             helperText={t('staticdata.entityHelper')}
             sx={{ mt: 1 }}
           />
@@ -269,14 +269,14 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
             onChange={(e) => setEnumName(e.target.value)}
             size="small"
             required
-            placeholder="e.g. project_type"
+            placeholder={t('staticdata.enumNamePlaceholder')}
           />
           <Typography variant="subtitle2">{t('staticdata.values')}</Typography>
           {enumKvList.map((kv, i) => (
             <Box key={i} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
               <TextField label={t('staticdata.key')} value={kv.key} onChange={(e) => updateKv(i, 'key', e.target.value)} size="small" sx={{ flex: 1 }} />
               <TextField label={t('staticdata.label')} value={kv.label} onChange={(e) => updateKv(i, 'label', e.target.value)} size="small" sx={{ flex: 1 }} />
-              <IconButton size="small" color="error" onClick={() => removeKvRow(i)} disabled={enumKvList.length === 1} aria-label="Remove value">
+              <IconButton size="small" color="error" onClick={() => removeKvRow(i)} disabled={enumKvList.length === 1} aria-label={t('staticdata.removeValue')}>
                 ✕
               </IconButton>
             </Box>
@@ -324,10 +324,10 @@ export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps
       </Dialog>
 
       <Dialog open={!!deletingEnum} onClose={() => setDeletingEnum(null)}>
-        <DialogTitle>Delete enum</DialogTitle>
+        <DialogTitle>{t('staticdata.deleteTitle')}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            {deletingEnum ? `Delete enum "${deletingEnum.enum_name}" (${deletingEnum.entity})?` : ''}
+            {deletingEnum ? t('staticdata.deleteConfirm', { name: deletingEnum.enum_name, entity: deletingEnum.entity }) : ''}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

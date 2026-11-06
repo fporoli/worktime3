@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { useI18n, type TFunction } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -7,13 +8,10 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const PIPELINE = ['approved', 'submitted_processing', 'processing_finished', 'request_payment', 'finished'] as const;
 type PipelineStatus = (typeof PIPELINE)[number];
 
-const STAGE_LABEL: Record<PipelineStatus, string> = {
-  approved: 'Approved',
-  submitted_processing: 'Processing',
-  processing_finished: 'Processing finished',
-  request_payment: 'Payment requested',
-  finished: 'Finished',
-};
+/** Translated stage name; an unknown status is shown as-is. */
+function stageLabel(status: string, t: TFunction): string {
+  return (PIPELINE as readonly string[]).includes(status) ? t(`expenseProcessing.stage.${status}`) : status;
+}
 
 function nextStage(status: string): PipelineStatus | null {
   const idx = PIPELINE.indexOf(status as PipelineStatus);
@@ -39,6 +37,7 @@ interface ExpenseProcessingProps {
 const QUEUE_STATUSES: PipelineStatus[] = ['approved', 'submitted_processing', 'processing_finished', 'request_payment'];
 
 export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcessingProps) {
+  const { t, locale } = useI18n();
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -78,22 +77,22 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'forbidden' ? 'Only a billing admin or org admin may advance a report.' : `Failed to advance (${data.error ?? 'unknown error'}).`);
+        setError(data.error === 'forbidden' ? t('expenseProcessing.forbidden') : t('expenseProcessing.advanceFailedWith', { error: data.error ?? t('common.unknownError') }));
         return;
       }
-      setSuccess(`Advanced to "${STAGE_LABEL[data.status as PipelineStatus] ?? data.status}".`);
+      setSuccess(t('expenseProcessing.advanced', { stage: stageLabel(data.status, t) }));
       setNotes((prev) => ({ ...prev, [id]: '' }));
       await reload();
     } catch {
-      setError('Failed to advance.');
+      setError(t('expenseProcessing.advanceFailed'));
     }
   }
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Expense Processing</Typography>
+      <Typography variant="h6">{t('expenseProcessing.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Approved expense reports moving through the finance pipeline — advance each one stage at a time.
+        {t('expenseProcessing.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -103,11 +102,11 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>Member</TableCell>
-            <TableCell>Stage</TableCell>
-            <TableCell>Submitted</TableCell>
-            <TableCell>Note (optional)</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            <TableCell>{t('teamHours.member')}</TableCell>
+            <TableCell>{t('expenseProcessing.stage')}</TableCell>
+            <TableCell>{t('expenseProcessing.submitted')}</TableCell>
+            <TableCell>{t('approvals.note')}</TableCell>
+            <TableCell align="right">{t('common.actions')}</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -119,8 +118,8 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>{row.user_display_name}</Typography>
                   <Typography variant="caption" color="text.secondary">{row.user_email}</Typography>
                 </TableCell>
-                <TableCell><Chip label={STAGE_LABEL[row.status]} size="small" /></TableCell>
-                <TableCell>{row.date_submitted ? row.date_submitted.slice(0, 10) : '—'}</TableCell>
+                <TableCell><Chip label={stageLabel(row.status, t)} size="small" /></TableCell>
+                <TableCell>{row.date_submitted ? new Date(`${row.date_submitted.slice(0, 10)}T00:00:00`).toLocaleDateString(locale) : '—'}</TableCell>
                 <TableCell>
                   <TextField
                     size="small"
@@ -132,7 +131,7 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
                 <TableCell align="right">
                   {next && (
                     <Button size="small" variant="contained" onClick={() => advance(row.id)}>
-                      Advance to "{STAGE_LABEL[next]}"
+                      {t('expenseProcessing.advanceTo', { stage: stageLabel(next, t) })}
                     </Button>
                   )}
                 </TableCell>
@@ -140,7 +139,7 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
             );
           })}
           {rows.length === 0 && (
-            <TableRow><TableCell colSpan={5}>Nothing to process.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5}>{t('expenseProcessing.empty')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

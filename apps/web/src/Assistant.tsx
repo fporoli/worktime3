@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Alert, Box, Button, Chip, Paper, TextField, Typography } from '@mui/material';
+import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -14,6 +15,7 @@ interface AssistantProps {
 }
 
 export default function Assistant({ orgId, authHeaders }: AssistantProps) {
+  const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -37,17 +39,17 @@ export default function Assistant({ orgId, authHeaders }: AssistantProps) {
       if (!data.ok) {
         const message =
           data.error === 'assistant-not-configured'
-            ? 'The assistant is not configured yet (no GEMINI_API_KEY/OPENAI_API_KEY set on the server).'
+            ? t('assistant.notConfigured')
             : data.error === 'forbidden'
-              ? 'You do not have access to this organization.'
-              : `Assistant request failed${data.detail ? `: ${data.detail}` : ''}.`;
+              ? t('assistant.forbidden')
+              : t('assistant.failed', { detail: data.detail ? `: ${data.detail}` : '' });
         setError(message);
         return;
       }
       const actionsNote = Array.isArray(data.actions) && data.actions.length > 0 ? `\n\n(${data.actions.join(' ')})` : '';
-      setMessages([...nextMessages, { role: 'assistant', content: (data.reply || '(no reply)') + actionsNote }]);
+      setMessages([...nextMessages, { role: 'assistant', content: (data.reply || t('assistant.noReply')) + actionsNote }]);
     } catch {
-      setError('Failed to reach the assistant. Is the API running?');
+      setError(t('assistant.unreachable'));
     } finally {
       setSending(false);
     }
@@ -55,7 +57,7 @@ export default function Assistant({ orgId, authHeaders }: AssistantProps) {
 
   return (
     <Paper square elevation={0} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%', borderLeft: 1, borderColor: 'divider' }}>
-      <Typography variant="h6">Assistant</Typography>
+      <Typography variant="h6">{t('assistant.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Ask to log hours ("log 9-5 on Website Relaunch yesterday"), or ask for a report — managers and
         admins can additionally ask for team-hours or project-cost reports.
@@ -65,7 +67,7 @@ export default function Assistant({ orgId, authHeaders }: AssistantProps) {
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5, mb: 2 }}>
         {messages.length === 0 && (
-          <Typography variant="body2" color="text.secondary">No messages yet — say hello.</Typography>
+          <Typography variant="body2" color="text.secondary">{t('assistant.empty')}</Typography>
         )}
         {messages.map((m, i) => (
           <Box
@@ -84,20 +86,20 @@ export default function Assistant({ orgId, authHeaders }: AssistantProps) {
             <Typography variant="body2">{m.content}</Typography>
           </Box>
         ))}
-        {sending && <Chip label="Thinking…" size="small" sx={{ alignSelf: 'flex-start' }} />}
+        {sending && <Chip label={t('assistant.thinking')} size="small" sx={{ alignSelf: 'flex-start' }} />}
       </Box>
 
       <Box sx={{ display: 'flex', gap: 1 }}>
         <TextField
           fullWidth
           size="small"
-          placeholder="Type a message…"
+          placeholder={t('assistant.placeholder')}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           disabled={sending}
         />
-        <Button variant="contained" onClick={send} disabled={sending || !input.trim()}>Send</Button>
+        <Button variant="contained" onClick={send} disabled={sending || !input.trim()}>{t('assistant.send')}</Button>
       </Box>
     </Paper>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Container, Divider, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { ensureSsoInit, keycloak, startSsoLogin } from './auth';
+import { LOCALES, useI18n } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const SHOW_DEMO_ACCOUNTS = import.meta.env.VITE_SHOW_DEMO_ACCOUNTS !== 'false';
@@ -65,25 +66,26 @@ export function clearSession() {
 }
 
 const DEMO_ACCOUNTS = [
-  { email: 'admin@acme.com', label: 'Admin (Acme)' },
-  { email: 'marta@acme.com', label: 'Manager (Acme)' },
-  { email: 'ulla@acme.com', label: 'User (Acme)' },
+  { email: 'admin@acme.com', labelKey: 'login.demo.admin' },
+  { email: 'marta@acme.com', labelKey: 'login.demo.manager' },
+  { email: 'ulla@acme.com', labelKey: 'login.demo.user' },
 ];
 const DEMO_PASSWORD = 'dev1234';
 const DEMO_INVITE_TOKEN = 'dev-invite-0001';
 
-const ERROR_TEXT: Record<string, string> = {
-  'invalid-credentials': 'Wrong email or password.',
-  'account-inactive': 'This account is not active.',
-  'invalid-email': 'Please enter a valid email address.',
-  'display-name-required': 'Please enter a display name.',
-  'password-too-short': 'Password needs at least 8 characters.',
-  'email-taken': 'This email is already registered. Try logging in.',
-  'token-required': 'Please enter an invitation token.',
-  'invalid-token': 'Unknown invitation token.',
-  'invitation-not-pending': 'This invitation was already used.',
-  'invitation-expired': 'This invitation has expired.',
-};
+/** API error codes with their own message; the text is `login.error.<code>` in the dictionaries. */
+const KNOWN_ERRORS = new Set([
+  'invalid-credentials',
+  'account-inactive',
+  'invalid-email',
+  'display-name-required',
+  'password-too-short',
+  'email-taken',
+  'token-required',
+  'invalid-token',
+  'invitation-not-pending',
+  'invitation-expired',
+]);
 
 type Mode = 'login' | 'register' | 'reset' | 'invite';
 
@@ -98,6 +100,7 @@ async function post(path: string, body: unknown) {
 }
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void }) {
+  const { t, locale, setLocale } = useI18n();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -166,7 +169,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error && e.message in ERROR_TEXT ? ERROR_TEXT[e.message] : 'Something went wrong. Is the API running?');
+      setError(e instanceof Error && KNOWN_ERRORS.has(e.message) ? t(`login.error.${e.message}`) : t('login.error.generic'));
     } finally {
       setBusy(false);
     }
@@ -220,10 +223,10 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
       <Container maxWidth="xs" disableGutters>
       <Paper elevation={2} sx={{ p: 4, borderRadius: 3 }}>
         <Tabs value={mode} onChange={(_, v) => setMode(v)} variant="fullWidth" sx={{ mb: 3 }}>
-          <Tab value="login" label="Login" onClick={() => setMode('login')} />
-          <Tab value="register" label="Register" onClick={() => setMode('register')} />
-          <Tab value="invite" label="Invited" onClick={() => setMode('invite')} />
-          <Tab value="reset" label="Reset" onClick={() => setMode('reset')} />
+          <Tab value="login" label={t('login.tab.login')} onClick={() => setMode('login')} />
+          <Tab value="register" label={t('login.tab.register')} onClick={() => setMode('register')} />
+          <Tab value="invite" label={t('login.tab.invite')} onClick={() => setMode('invite')} />
+          <Tab value="reset" label={t('login.tab.reset')} onClick={() => setMode('reset')} />
         </Tabs>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {notice && <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert>}
@@ -231,22 +234,22 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         {mode === 'login' && (
           <Box sx={{ display: 'grid', gap: 2 }}>
             <Button variant="outlined" disabled={busy || ssoChecking} onClick={() => startSsoLogin()}>
-              {ssoChecking ? 'Checking single sign-on…' : 'Login with Keycloak (SSO)'}
+              {ssoChecking ? t('login.ssoChecking') : t('login.ssoButton')}
             </Button>
             <Divider sx={{ '&::before, &::after': { borderColor: 'divider' } }}>
-              <Typography variant="caption" color="text.secondary">OR LOCAL ACCOUNT</Typography>
+              <Typography variant="caption" color="text.secondary">{t('login.orLocal')}</Typography>
             </Divider>
-            <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
-            <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
-            <Button variant="contained" disabled={busy} onClick={() => submitLogin(email, password)}>Login</Button>
+            <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
+            <TextField label={t('login.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
+            <Button variant="contained" disabled={busy} onClick={() => submitLogin(email, password)}>{t('login.submit')}</Button>
             {SHOW_DEMO_ACCOUNTS && (
               <>
                 <Divider />
-                <Typography variant="caption" color="text.secondary">DEMO ACCOUNTS (password: {DEMO_PASSWORD})</Typography>
+                <Typography variant="caption" color="text.secondary">{t('login.demoAccounts', { password: DEMO_PASSWORD })}</Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   {DEMO_ACCOUNTS.map((a) => (
                     <Button key={a.email} variant="outlined" size="small" disabled={busy} onClick={() => submitLogin(a.email, DEMO_PASSWORD)}>
-                      {a.label}
+                      {t(a.labelKey)}
                     </Button>
                   ))}
                 </Box>
@@ -258,11 +261,11 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         {mode === 'register' && (
           <Box sx={{ display: 'grid', gap: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Creates your account plus a personal workspace where you are the admin.
+              {t('login.registerHint')}
             </Typography>
-            <TextField label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
-            <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
-            <TextField label="Password (min 8 characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
+            <TextField label={t('login.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
+            <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
+            <TextField label={t('login.newPasswordMin')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
             <Button
               variant="contained"
               disabled={busy}
@@ -274,7 +277,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
                 onLoggedIn(session);
               })}
             >
-              Register as admin
+              {t('login.registerSubmit')}
             </Button>
           </Box>
         )}
@@ -282,11 +285,12 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         {mode === 'invite' && (
           <Box sx={{ display: 'grid', gap: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Accept an organization invitation. Demo token <code>{DEMO_INVITE_TOKEN}</code> joins Acme as <code>invited@acme.com</code>.
+              {t('login.inviteHint')}
+              {SHOW_DEMO_ACCOUNTS && <> {t('login.inviteDemo', { token: DEMO_INVITE_TOKEN, email: 'invited@acme.com' })}</>}
             </Typography>
-            <TextField label="Invitation token" value={token} onChange={(e) => setToken(e.target.value)} size="small" />
-            <TextField label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
-            <TextField label="Password (min 8 characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
+            <TextField label={t('login.inviteToken')} value={token} onChange={(e) => setToken(e.target.value)} size="small" />
+            <TextField label={t('login.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
+            <TextField label={t('login.newPasswordMin')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
             <Button
               variant="contained"
               disabled={busy}
@@ -298,28 +302,35 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
                 onLoggedIn(session);
               })}
             >
-              Accept invitation & login
+              {t('login.inviteSubmit')}
             </Button>
           </Box>
         )}
 
         {mode === 'reset' && (
           <Box sx={{ display: 'grid', gap: 2 }}>
-            <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
-            <TextField label="New password (min 8 characters)" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} size="small" autoComplete="new-password" />
+            <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
+            <TextField label={t('login.resetPasswordMin')} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} size="small" autoComplete="new-password" />
             <Button
               variant="contained"
               disabled={busy}
               onClick={() => run(async () => {
                 await post('/auth/reset', { email, newPassword });
-                setNotice('If the account exists, the password was updated. You can log in now.');
+                setNotice(t('login.resetDone'));
               })}
             >
-              Reset password
+              {t('login.resetSubmit')}
             </Button>
           </Box>
         )}
       </Paper>
+      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 2 }}>
+        {LOCALES.map((l) => (
+          <Button key={l.code} size="small" disabled={l.code === locale} onClick={() => setLocale(l.code)} sx={{ textTransform: 'none' }}>
+            {l.label}
+          </Button>
+        ))}
+      </Box>
       </Container>
     </Box>
   );

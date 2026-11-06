@@ -47,7 +47,7 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 ## Tests
 
-- All real tests are API tests in `test/api/*.test.ts`, using `node:test` +
+- Most tests are API tests in `test/api/*.test.ts`, using `node:test` +
   `node:assert`, run through `tsx` from the `apps/api` workspace. No Nest boot,
   no database: controllers are constructed directly with hand-rolled mock
   `DbService`/service objects (see `project-time-auth.test.ts`), and pure
@@ -58,7 +58,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 - Several tests do `import type { AuthenticatedRequest } from '../../apps/api/src/types'`,
   which does not exist (the type lives in `jwt.guard.ts`). It works only
   because tsx strips type-only imports; use `jwt.guard` in new tests.
-- `apps/web` and `packages/shared` have `test` scripts but no test files yet.
+- `apps/web` tests are `src/*.test.mjs` run by `node --test`; they can import
+  plain `.ts` files (Node strips types) but not `.tsx`. `packages/shared` has a
+  `test` script but no test files yet.
 - CI (`.github/workflows/ci.yml`) builds, tests, then runs `db:migrate` and
   `db:seed` against a fresh Postgres 16, so a broken changelog or seed fails CI.
 
@@ -133,7 +135,10 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   `const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1'`
   is declared per file.
 - All UI strings go through i18n: `const t = useT()` from `i18n.tsx`. When you
-  add a key, add it to all four dictionaries in `DICTIONARIES` (en/de/fr/it).
+  add a key, add it to all four dictionaries in `dictionaries.ts` (en/de/fr/it);
+  `dictionaries.test.mjs` fails on missing keys or mismatched `{{placeholders}}`.
+- Format dates, times and numbers with the app's `locale` from `useI18n()`,
+  never the browser default (`toLocaleDateString()` with no argument).
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one

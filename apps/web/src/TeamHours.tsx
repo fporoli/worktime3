@@ -18,6 +18,7 @@ import {
   Typography,
 } from '@mui/material';
 import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type Entry, type PeriodType, type View } from './aggregate';
+import { useI18n } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -48,6 +49,7 @@ interface TeamHoursProps {
 }
 
 export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
+  const { t, locale } = useI18n();
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [teamId, setTeamId] = useState('');
   const [view, setView] = useState<View>('weekly');
@@ -85,7 +87,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
       setMembers(Array.isArray(data.members) ? data.members : []);
       setEntries(Array.isArray(data.entries) ? data.entries : []);
     } catch {
-      setError('Failed to load team hours. Is the API running?');
+      setError(t('teamHours.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -111,30 +113,30 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Team Hours</Typography>
+      <Typography variant="h6">{t('teamHours.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Booked hours for each member of a team.
+        {t('teamHours.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
-        <TextField select label="Team" value={teamId} onChange={(e) => setTeamId(e.target.value)} size="small" sx={{ minWidth: 200 }}>
-          {teams.map((t) => (<MenuItem key={t.id} value={t.id}>{t.name}</MenuItem>))}
+        <TextField select label={t('teamHours.team')} value={teamId} onChange={(e) => setTeamId(e.target.value)} size="small" sx={{ minWidth: 200 }}>
+          {teams.map((team) => (<MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>))}
         </TextField>
         <ToggleButtonGroup value={view} exclusive onChange={(_, v) => v && setView(v)} size="small">
-          <ToggleButton value="daily">Daily</ToggleButton>
-          <ToggleButton value="weekly">Weekly</ToggleButton>
-          <ToggleButton value="monthly">Monthly</ToggleButton>
+          <ToggleButton value="daily">{t('time.day')}</ToggleButton>
+          <ToggleButton value="weekly">{t('time.week')}</ToggleButton>
+          <ToggleButton value="monthly">{t('time.month')}</ToggleButton>
         </ToggleButtonGroup>
       </Box>
 
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
         <Typography variant="subtitle2" sx={{ mr: 1, minWidth: 160 }}>
-          {periodLabel(periodType, anchor)}
+          {periodLabel(periodType, anchor, locale)}
         </Typography>
-        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, -1))}>Prev</Button>
+        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, -1))}>{t('time.prev')}</Button>
         <TextField
           type={periodType === 'month' ? 'month' : 'date'}
           size="small"
@@ -144,21 +146,21 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
             setAnchor(periodType === 'month' ? `${e.target.value}-01` : e.target.value);
           }}
         />
-        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, 1))}>Next</Button>
+        <Button size="small" onClick={() => setAnchor((a) => shiftPeriod(periodType, a, 1))}>{t('time.next')}</Button>
         {anchor !== todayDate() && (
-          <Button size="small" onClick={() => setAnchor(todayDate())}>Today</Button>
+          <Button size="small" onClick={() => setAnchor(todayDate())}>{t('time.today')}</Button>
         )}
       </Box>
 
-      {teams.length === 0 && <Typography variant="body2" color="text.secondary">No teams yet — create one in the Teams tab first.</Typography>}
+      {teams.length === 0 && <Typography variant="body2" color="text.secondary">{t('teamHours.noTeams')}</Typography>}
 
       {teams.length > 0 && (
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Member</TableCell>
-              <TableCell align="right">Total booked</TableCell>
-              <TableCell align="right">Entries</TableCell>
+              <TableCell>{t('teamHours.member')}</TableCell>
+              <TableCell align="right">{t('teamHours.totalBooked')}</TableCell>
+              <TableCell align="right">{t('time.entries')}</TableCell>
               <TableCell align="right" />
             </TableRow>
           </TableHead>
@@ -185,7 +187,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                         disabled={memberEntries.length === 0}
                         onClick={() => setExpandedUserId(isExpanded ? null : m.user_id)}
                       >
-                        {isExpanded ? 'Hide' : 'Details'}
+                        {isExpanded ? t('teamHours.hide') : t('audit.col.details')}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -194,28 +196,28 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
                       <TableCell colSpan={4} sx={{ bgcolor: 'action.hover', py: 2 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1 }}>{view} breakdown</Typography>
                         <Table size="small" sx={{ mb: 2, bgcolor: 'background.paper' }}>
-                          <TableHead><TableRow><TableCell>Period</TableCell><TableCell align="right">Minutes</TableCell></TableRow></TableHead>
+                          <TableHead><TableRow><TableCell>{t('time.period')}</TableCell><TableCell align="right">{t('common.minutes')}</TableCell></TableRow></TableHead>
                           <TableBody>
                             {bucket(memberEntries, view).map((r) => (
                               <TableRow key={r.label}><TableCell>{r.label}</TableCell><TableCell align="right">{Math.round(r.minutes)}</TableCell></TableRow>
                             ))}
                           </TableBody>
                         </Table>
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>Entries</Typography>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('time.entries')}</Typography>
                         <Table size="small" sx={{ bgcolor: 'background.paper' }}>
                           <TableHead>
                             <TableRow>
-                              <TableCell>Date</TableCell>
-                              <TableCell align="right">Minutes</TableCell>
-                              <TableCell>Project</TableCell>
-                              <TableCell>Subproject</TableCell>
-                              <TableCell>Comment</TableCell>
+                              <TableCell>{t('common.date')}</TableCell>
+                              <TableCell align="right">{t('common.minutes')}</TableCell>
+                              <TableCell>{t('common.project')}</TableCell>
+                              <TableCell>{t('common.subproject')}</TableCell>
+                              <TableCell>{t('common.comment')}</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
                             {memberEntries.map((e) => (
                               <TableRow key={e.id}>
-                                <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
+                                <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
                                 <TableCell align="right">{Math.round(minutes(e))}</TableCell>
                                 <TableCell>{e.project_name ?? '—'}</TableCell>
                                 <TableCell>{e.subproject_name ?? '—'}</TableCell>
@@ -231,7 +233,7 @@ export default function TeamHours({ orgId, authHeaders }: TeamHoursProps) {
               );
             })}
             {members.length === 0 && (
-              <TableRow><TableCell colSpan={4}>This team has no members yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={4}>{t('teamHours.noMembers')}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
