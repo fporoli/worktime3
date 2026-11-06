@@ -16,7 +16,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { BASICDATA_FORM, mergeForm, validateFields, writableKeys, type ResolvedForm } from '@worktime3/shared/fields';
+import { BASICDATA_FORM, validateFields, writableKeys, type ResolvedForm } from '@worktime3/shared/fields';
+import { FieldDesignScope, useFormTemplate } from './designMode';
+import { DESIGN_PANEL_WIDTH, FormDesignPanel } from './FormDesigner';
 import { useI18n } from './i18n';
 import { ConfigFieldGroup, useGroupTitle } from './ConfigField';
 
@@ -89,9 +91,6 @@ const SECTION_NESTED_KEYS: Record<string, string[]> = {
   address: ['bankAccounts', 'emergencyContacts'],
   civilStatus: ['partner', 'children'],
 };
-
-/** The code defaults, used until the org's template has loaded (and when offline). */
-const DEFAULT_FORM = mergeForm(BASICDATA_FORM);
 
 /** Keys a section may save: all its writable fields for HR, only `self` ones for a change request. */
 export function sectionKeys(form: ResolvedForm, group: string, direct: boolean): string[] {
@@ -255,7 +254,8 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const [staticRows, setStaticRows] = useState<StaticDataRow[]>([]);
   const [rejectNote, setRejectNote] = useState('');
   const [resolving, setResolving] = useState(false);
-  const [form, setForm] = useState<ResolvedForm>(DEFAULT_FORM);
+  // `form` is what renders (the draft preview while designing); saves use the saved template.
+  const { form, savedForm, designer } = useFormTemplate(orgId, BASICDATA_FORM, authHeaders);
 
   async function reload() {
     setLoading(true);
@@ -286,21 +286,9 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
     } catch { /* offline demo: dropdowns just show no options */ }
   }
 
-  /** The org's template for this form; the code defaults stay in place if it cannot be loaded. */
-  async function loadForm() {
-    try {
-      const res = await fetch(`${API}/organizations/${orgId}/forms/${BASICDATA_FORM.id}`, { headers: await authHeaders() });
-      const body = await res.json();
-      setForm(body.ok && body.form ? body.form : DEFAULT_FORM);
-    } catch {
-      setForm(DEFAULT_FORM);
-    }
-  }
-
   useEffect(() => {
     reload();
     loadStaticData();
-    loadForm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
@@ -309,7 +297,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const countryOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'countries'), locale), [staticRows, locale]);
   const cantonOptions = useMemo(() => SWISS_CANTONS.map((c) => ({ value: c, label: c })), []);
 
-  const groupParams = { orgId, userId, form, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice };
+  const groupParams = { orgId, userId, form: savedForm, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice };
   const personalien = useEditableGroup({ ...groupParams, group: 'personalien' });
   const address = useEditableGroup({ ...groupParams, group: 'address' });
   const family = useEditableGroup({ ...groupParams, group: 'civilStatus' });
@@ -345,7 +333,9 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const pendingIsMine = pending?.requested_by_user_id === userId;
 
   return (
-    <Paper sx={{ p: 2 }}>
+    <FieldDesignScope designer={designer}>
+    {designer && <FormDesignPanel designer={designer} />}
+    <Paper sx={{ p: 2, mr: designer ? { md: `${DESIGN_PANEL_WIDTH}px` } : 0 }}>
       <Typography variant="h6">{t('home.title')}</Typography>
       {error && <Alert severity="error" sx={{ my: 1 }} onClose={() => setError(null)}>{error}</Alert>}
       {notice && <Alert severity="info" sx={{ my: 1 }} onClose={() => setNotice(null)}>{notice}</Alert>}
@@ -412,6 +402,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
         </Box>
       )}
     </Paper>
+    </FieldDesignScope>
   );
 }
 

@@ -265,3 +265,12 @@ test('FieldsService caches per org and clears on writes', async () => {
   fields.invalidate(null, 'basicdata');
   assert.notEqual(await fields.resolved('org-1', 'basicdata'), first, 'a global write clears every org');
 });
+
+test('FieldsController.designAccess', async () => {
+  const dev = setup({ roles: ['member', 'developer'] });
+  assert.deepEqual(await dev.controller.designAccess('org-1', dev.req), { ok: true, canDesign: true, canEditGlobal: false });
+  const superDev = setup({ roles: [], superdeveloper: true });
+  assert.deepEqual(await superDev.controller.designAccess('org-1', superDev.req), { ok: true, canDesign: true, canEditGlobal: true });
+  const member = setup({ roles: ['admin'] });
+  assert.deepEqual(await member.controller.designAccess('org-1', member.req), { ok: true, canDesign: false, canEditGlobal: false });
+});

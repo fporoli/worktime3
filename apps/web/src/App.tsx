@@ -40,6 +40,7 @@ import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import UserMenu from './UserMenu';
+import { DesignModeProvider, useDesignAccess } from './designMode';
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 
@@ -199,6 +200,8 @@ export default function App() {
   const rows = useMemo(() => bucket(entries, 'daily'), [entries]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
   const orgId = currentOrgId;
+  // Design mode for configurable forms: access is re-checked on every org switch.
+  const designAccess = useDesignAccess(orgId, authHeaders);
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
@@ -640,8 +643,10 @@ export default function App() {
   const assistantReservedWidth = !isMobile && orgId ? (assistantOpen ? ASSISTANT_TAB_WIDTH + ASSISTANT_PANEL_WIDTH : ASSISTANT_TAB_WIDTH) : 0;
   const assistantReservedHeight =
     isMobile && orgId ? (assistantOpen ? `calc(${ASSISTANT_TAB_HEIGHT}px + ${ASSISTANT_PANEL_HEIGHT_MOBILE})` : `${ASSISTANT_TAB_HEIGHT}px`) : '0px';
+  const designMode = { ...designAccess, panelTop: appBarHeight, panelRight: assistantReservedWidth };
 
   return (
+    <DesignModeProvider value={designMode}>
     <Box sx={{ display: 'flex' }}>
       <AppBar ref={setAppBarNode} position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
         <Toolbar sx={{ gap: 1.5, flexWrap: 'wrap', py: 1 }}>
@@ -704,6 +709,9 @@ export default function App() {
             authHeaders={authHeaders}
             currentOrgId={currentOrgId}
             canSwitchUser={role === 'admin' && !adminSession}
+            canDesign={designAccess.canDesign}
+            designMode={designAccess.enabled}
+            onDesignModeChange={designAccess.setEnabled}
             adminSession={adminSession}
             onSwitchSession={switchUserSession}
             onReturnToAdmin={returnToAdmin}
@@ -1219,5 +1227,6 @@ export default function App() {
         </DialogActions>
       </Dialog>
     </Box>
+    </DesignModeProvider>
   );
 }

@@ -12,6 +12,7 @@ import {
   Divider,
   FormControlLabel,
   Menu,
+  ListItemIcon,
   MenuItem,
   TextField,
   Typography,
@@ -27,6 +28,10 @@ interface UserMenuProps {
   authHeaders: () => Promise<Record<string, string>>;
   currentOrgId: string | null;
   canSwitchUser: boolean;
+  /** The user may switch on design mode for configurable forms in the current org. */
+  canDesign: boolean;
+  designMode: boolean;
+  onDesignModeChange: (on: boolean) => void;
   adminSession: Session | null;
   onSwitchSession: (session: Session, organizationId: string) => void;
   onReturnToAdmin: () => void;
@@ -44,7 +49,7 @@ interface SearchUser {
   status: string;
 }
 
-export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
+export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, canDesign, designMode, onDesignModeChange, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
   const t = useT();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -171,6 +176,12 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
         <Divider />
         <MenuItem onClick={openSettings}>{t('usermenu.settings')}</MenuItem>
         <MenuItem onClick={() => { setAnchorEl(null); setAboutOpen(true); }}>{t('usermenu.information')}</MenuItem>
+        {canDesign && (
+          <MenuItem onClick={() => { setAnchorEl(null); onDesignModeChange(!designMode); }}>
+            <ListItemIcon sx={{ minWidth: 28 }}>{designMode ? '✓' : ''}</ListItemIcon>
+            {t('design.menu')}
+          </MenuItem>
+        )}
         {canSwitchUser && <MenuItem onClick={openSwitchUser}>{t('usermenu.switchUser')}…</MenuItem>}
         {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>{t('usermenu.returnToAccount')}</MenuItem>}
         <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>{t('usermenu.logout')}</MenuItem>

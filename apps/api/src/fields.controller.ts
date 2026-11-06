@@ -22,6 +22,17 @@ export class FieldsController {
     private readonly versionsService: VersionsService,
   ) {}
 
+  /** Whether the caller may use design mode in this org, and whether they may edit the global template. */
+  @Get('organizations/:orgId/form-design-access')
+  async designAccess(@Param('orgId') orgId: string, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, canDesign: false, canEditGlobal: false };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: true, canDesign: false, canEditGlobal: false };
+    const [canDesign, canEditGlobal] = await Promise.all([isOrgDeveloper(db, orgId, callerId), isSuperDeveloper(db, callerId)]);
+    return { ok: true, canDesign, canEditGlobal };
+  }
+
   @Get('organizations/:orgId/forms/:formId')
   async get(@Param('orgId') orgId: string, @Param('formId') formId: string, @Req() req: AuthenticatedRequest) {
     const form = FORMS[formId];

@@ -5,8 +5,8 @@ changing code: caption, tooltip, size, entry type, order, validation and the
 translations of every text. Changes are made in the app itself, in a side
 panel, by two new roles.
 
-Status: steps 1–3 built (registry, rendering, templates and their API); the
-design panel and custom fields are not built yet.
+Status: steps 1–4 built (registry, rendering, templates and their API, design
+mode); custom fields are not built yet.
 
 ## Scope of the first version
 
@@ -354,7 +354,17 @@ menu. When it is on:
    and imports the built shared package. A regex is stored as `pattern` plus
    `patternMessage` (texts), next to the named `validator`. Demo: admin@acme.com
    is developer of Acme and superdeveloper. Tests: `test/api/fields.test.ts`.
-4. Design mode and the side panel.
+4. Done: *Design mode* in the user menu for developers and superdevelopers
+   (`GET organizations/:orgId/form-design-access`, checked again on every org
+   switch). `useFormTemplate` (`designMode.tsx`) loads a form's template and,
+   in design mode, its layers and an editable draft that the form previews;
+   `FormDesignPanel` (`FormDesigner.tsx`) has the scope switch, sections and
+   fields with drag and drop plus up/down buttons, the selected field's
+   properties with their source and a reset button, the texts per language,
+   and Save/Discard. Fields in the form get a frame and select on click;
+   hidden fields show faded. The draft logic is in `formDesign.ts`, tested
+   by `formDesign.test.mjs`. Save sends one request per changed field; what
+   fails stays in the draft with its reason.
 5. Custom JSON fields for basic data, including the per-org storage section.
 6. Expenses: add `expenses.data JSONB` (`expense_reports.data` already exists)
    and move the expense form onto `<ConfigForm>`.

@@ -156,6 +156,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   loads its merged template from `GET organizations/:orgId/forms/:formId`; a
   controller saving a configured form validates with
   `FieldsService.resolved()` + `validateFields`, as `basicdata.controller.ts` does.
+  In the web app, a page with a configured form uses `useFormTemplate`
+  (`designMode.tsx`), wraps the form in `FieldDesignScope` and renders
+  `FormDesignPanel` while designing, as `Home.tsx` does.
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one
