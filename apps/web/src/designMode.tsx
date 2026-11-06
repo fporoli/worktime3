@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { checkFieldOverride, checkGroupsOverride, GROUPS_KEY, mergeForm, type FormDef, type ResolvedForm } from '@worktime3/shared/fields';
+import { Alert, Button } from '@mui/material';
 import { changedKeys, cloneLayers, configFor, emptyLayer, type Layers, type Scope } from './formDesign';
+import { useT } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -18,9 +20,22 @@ export interface DesignModeState {
   /** Where the side panel goes: below the app bar, left of anything pinned to the right edge. */
   panelTop: number;
   panelRight: number;
+  /** Number of configurable forms on screen; a page with none shows a notice while designing. */
+  formCount: number;
+  /** Called by useFormTemplate while design mode is on; returns the unregister function. */
+  registerForm: () => () => void;
 }
 
-const DesignModeContext = createContext<DesignModeState>({ canDesign: false, canEditGlobal: false, enabled: false, setEnabled: () => {}, panelTop: 64, panelRight: 0 });
+const DesignModeContext = createContext<DesignModeState>({
+  canDesign: false,
+  canEditGlobal: false,
+  enabled: false,
+  setEnabled: () => {},
+  panelTop: 64,
+  panelRight: 0,
+  formCount: 0,
+  registerForm: () => () => {},
+});
 
 export function DesignModeProvider({ value, children }: { value: DesignModeState; children: ReactNode }) {
   return <DesignModeContext.Provider value={value}>{children}</DesignModeContext.Provider>;
@@ -31,12 +46,50 @@ export function useDesignMode(): DesignModeState {
 }
 
 /**
+ * While design mode is on and the page shows no configurable form, says so, so the switch never
+ * seems to do nothing. Waits a moment so a lazily loaded page can register its form first.
+ */
+export function DesignModeNotice() {
+  const t = useT();
+  const { enabled, formCount, setEnabled, panelRight } = useDesignMode();
+  const empty = enabled && formCount === 0;
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!empty) {
+      setShow(false);
+      return;
+    }
+    const timer = setTimeout(() => setShow(true), 600);
+    return () => clearTimeout(timer);
+  }, [empty]);
+  if (!show) return null;
+  return (
+    <Alert
+      severity="info"
+      sx={{ position: 'fixed', bottom: 16, right: panelRight + 16, zIndex: (th) => th.zIndex.snackbar, maxWidth: 420, boxShadow: 3 }}
+      action={
+        <Button color="inherit" size="small" onClick={() => setEnabled(false)}>
+          {t('design.close')}
+        </Button>
+      }
+    >
+      {t('design.noFormOnPage')}
+    </Alert>
+  );
+}
+
+/**
  * Asks the API whether the caller may design forms in `orgId`. Fetched again on every org switch,
  * since the developer role is per organization. Design mode turns off when access is lost.
  */
 export function useDesignAccess(orgId: string | null, authHeaders: () => Promise<Record<string, string>>): Omit<DesignModeState, 'panelTop' | 'panelRight'> {
   const [access, setAccess] = useState({ canDesign: false, canEditGlobal: false });
   const [enabled, setEnabled] = useState(false);
+  const [formCount, setFormCount] = useState(0);
+  const registerForm = useCallback(() => {
+    setFormCount((n) => n + 1);
+    return () => setFormCount((n) => n - 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +109,7 @@ export function useDesignAccess(orgId: string | null, authHeaders: () => Promise
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  return { ...access, enabled: enabled && access.canDesign, setEnabled };
+  return { ...access, enabled: enabled && access.canDesign, setEnabled, formCount, registerForm };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +221,9 @@ export function useFormTemplate(orgId: string, formDef: FormDef, authHeaders: ()
   useEffect(() => {
     loadForm();
   }, [loadForm]);
+
+  const { enabled: designing, registerForm } = mode;
+  useEffect(() => (designing ? registerForm() : undefined), [designing, registerForm]);
 
   useEffect(() => {
     setSaveErrors([]);

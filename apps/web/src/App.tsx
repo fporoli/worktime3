@@ -40,7 +40,7 @@ import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import UserMenu from './UserMenu';
-import { DesignModeProvider, useDesignAccess } from './designMode';
+import { DesignModeNotice, DesignModeProvider, useDesignAccess } from './designMode';
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 
@@ -922,6 +922,7 @@ export default function App() {
             </>
           )}
 
+          <DesignModeNotice />
           <Suspense fallback={<LinearProgress sx={{ my: 2 }} />}>
             {section === 'home' && orgId && (
               <Home orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
