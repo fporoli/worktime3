@@ -45,6 +45,8 @@
     <include file="027-basicdata.sql" relativeToChangelogFile="true"/>
     <include file="028-basicdata-static-data.sql" relativeToChangelogFile="true"/>
     <include file="029-membership-exit-at.sql" relativeToChangelogFile="true"/>
+    <include file="030-field-config.sql" relativeToChangelogFile="true"/>
+    <include file="031-expense-data.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

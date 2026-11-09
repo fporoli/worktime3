@@ -12,6 +12,7 @@ import {
   Divider,
   FormControlLabel,
   Menu,
+  ListItemIcon,
   MenuItem,
   TextField,
   Typography,
@@ -27,6 +28,10 @@ interface UserMenuProps {
   authHeaders: () => Promise<Record<string, string>>;
   currentOrgId: string | null;
   canSwitchUser: boolean;
+  /** The user may switch on design mode for configurable forms in the current org. */
+  canDesign: boolean;
+  designMode: boolean;
+  onDesignModeChange: (on: boolean) => void;
   adminSession: Session | null;
   onSwitchSession: (session: Session, organizationId: string) => void;
   onReturnToAdmin: () => void;
@@ -44,7 +49,7 @@ interface SearchUser {
   status: string;
 }
 
-export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
+export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, canDesign, designMode, onDesignModeChange, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
   const t = useT();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -107,13 +112,13 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(`Could not switch user (${data.error ?? 'unknown error'}).`);
+        setError(t('usermenu.switchFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       onSwitchSession(data as Session, currentOrgId);
       setSwitchOpen(false);
     } catch {
-      setError('Could not reach the API.');
+      setError(t('common.cannotReachApi'));
     } finally {
       setSwitching(false);
     }
@@ -131,14 +136,14 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(`Could not save (${data.error ?? 'unknown error'}).`);
+        setError(t('usermenu.saveFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       onLocaleChange(selectedLocale);
       onSettingsChange(settings);
       setSettingsOpen(false);
     } catch {
-      setError('Could not reach the API.');
+      setError(t('common.cannotReachApi'));
     } finally {
       setSaving(false);
     }
@@ -171,8 +176,14 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
         <Divider />
         <MenuItem onClick={openSettings}>{t('usermenu.settings')}</MenuItem>
         <MenuItem onClick={() => { setAnchorEl(null); setAboutOpen(true); }}>{t('usermenu.information')}</MenuItem>
-        {canSwitchUser && <MenuItem onClick={openSwitchUser}>Switch User...</MenuItem>}
-        {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>Return to my account</MenuItem>}
+        {canDesign && (
+          <MenuItem onClick={() => { setAnchorEl(null); onDesignModeChange(!designMode); }}>
+            <ListItemIcon sx={{ minWidth: 28 }}>{designMode ? '✓' : ''}</ListItemIcon>
+            {t('design.menu')}
+          </MenuItem>
+        )}
+        {canSwitchUser && <MenuItem onClick={openSwitchUser}>{t('usermenu.switchUser')}…</MenuItem>}
+        {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>{t('usermenu.returnToAccount')}</MenuItem>}
         <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>{t('usermenu.logout')}</MenuItem>
       </Menu>
 
@@ -214,16 +225,16 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
       </Dialog>
 
       <Dialog open={switchOpen} onClose={() => !switching && setSwitchOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Switch User</DialogTitle>
+        <DialogTitle>{t('usermenu.switchUser')}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
           {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
           <TextField
             autoFocus
-            label="Search by name or email"
+            label={t('usermenu.searchLabel')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             size="small"
-            helperText="Enter at least two characters."
+            helperText={t('usermenu.searchHelper')}
           />
           <Box sx={{ display: 'grid', gap: 0.5 }}>
             {searchUsers.map((user) => (
@@ -234,7 +245,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
                 </Box>
               </Button>
             ))}
-            {search.trim().length >= 2 && searchUsers.length === 0 && <Typography variant="body2" color="text.secondary">No organization members found.</Typography>}
+            {search.trim().length >= 2 && searchUsers.length === 0 && <Typography variant="body2" color="text.secondary">{t('usermenu.noMembersFound')}</Typography>}
           </Box>
         </DialogContent>
         <DialogActions><Button onClick={() => setSwitchOpen(false)} disabled={switching}>{t('usermenu.cancel')}</Button></DialogActions>

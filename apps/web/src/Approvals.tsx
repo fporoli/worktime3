@@ -19,6 +19,7 @@ import {
   Typography,
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
+import { useI18n, type TFunction } from './i18n';
 import { getSourceTitle } from './Timesheet';
 import { getExpenseReportTitle } from './ExpenseReports';
 import { getAbsenceTitle } from './Absences';
@@ -63,8 +64,11 @@ interface AbsenceDocumentRow {
   created_at: string;
 }
 
-/** "military_service" -> "Military service" — this screen isn't localized (unlike Absences.tsx), so a plain humanized fallback is enough. */
-function formatAbsenceType(type: string): string {
+/** Translated absence type; an org-defined type with no dictionary entry falls back to "military_service" -> "Military service". */
+function formatAbsenceType(type: string, t: TFunction): string {
+  const key = `absences.type.${type}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
   const spaced = type.replace(/_/g, ' ');
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
@@ -87,11 +91,11 @@ interface ActionItem {
 }
 
 /** Friendly label for a workflow_definitions name — unrecognized ones just show as-is, so new workflow types need no frontend change to appear. */
-function actionItemLabel(definitionName: string): string {
-  if (definitionName === 'approve timesheet') return 'Timesheet approval';
-  if (definitionName === 'reopen approved timesheet') return 'Reopen request';
-  if (definitionName === 'approve expense report') return 'Expense report approval';
-  if (definitionName === 'approve absence') return 'Vacation request approval';
+function actionItemLabel(definitionName: string, t: TFunction): string {
+  if (definitionName === 'approve timesheet') return t('approvals.kind.timesheet');
+  if (definitionName === 'reopen approved timesheet') return t('approvals.kind.reopen');
+  if (definitionName === 'approve expense report') return t('approvals.kind.expenseReport');
+  if (definitionName === 'approve absence') return t('approvals.kind.absence');
   return definitionName;
 }
 
@@ -125,6 +129,7 @@ interface ApprovalsProps {
 }
 
 export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) {
+  const { t, locale } = useI18n();
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [approved, setApproved] = useState<PeriodRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -203,7 +208,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       const data = await res.json();
       setInspectingEntries(Array.isArray(data.entries) ? data.entries : []);
     } catch {
-      setInspectingError('Failed to load timesheet entries.');
+      setInspectingError(t('approvals.loadEntriesFailed'));
     } finally {
       setInspectingLoading(false);
     }
@@ -220,7 +225,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       const data = await res.json();
       setInspectingExpenses(Array.isArray(data) ? data : []);
     } catch {
-      setInspectingReportError('Failed to load expense report items.');
+      setInspectingReportError(t('approvals.loadReportFailed'));
     } finally {
       setInspectingReportLoading(false);
     }
@@ -253,11 +258,11 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
     try {
       const res = await fetch(`${API}/workflows/${id}/approve`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
-      if (!data.ok) { setError(`Failed to approve (${data.error ?? 'unknown error'}).`); return; }
-      setSuccess('Approved.');
+      if (!data.ok) { setError(t('approvals.approveFailedWith', { error: data.error ?? t('common.unknownError') })); return; }
+      setSuccess(t('approvals.approved'));
       await reload();
     } catch {
-      setError('Failed to approve.');
+      setError(t('approvals.approveFailed'));
     }
   }
 
@@ -271,13 +276,13 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
         body: JSON.stringify({ note }),
       });
       const data = await res.json();
-      if (!data.ok) { setError(`Failed to decline (${data.error ?? 'unknown error'}).`); return; }
-      setSuccess('Declined.');
+      if (!data.ok) { setError(t('approvals.declineFailedWith', { error: data.error ?? t('common.unknownError') })); return; }
+      setSuccess(t('approvals.declined'));
       setRejectingId(null);
       setNote('');
       await reload();
     } catch {
-      setError('Failed to decline.');
+      setError(t('approvals.declineFailed'));
     }
   }
 
@@ -288,13 +293,13 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       const res = await fetch(`${API}/timesheet-periods/${id}/reopen`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error === 'forbidden' ? 'Only admins can reopen an approved period.' : `Failed to reopen (${data.error ?? 'unknown error'}).`);
+        setError(data.error === 'forbidden' ? t('approvals.reopenForbidden') : t('approvals.reopenFailedWith', { error: data.error ?? t('common.unknownError') }));
         return;
       }
-      setSuccess('Reopened for corrections.');
+      setSuccess(t('approvals.reopened'));
       await reload();
     } catch {
-      setError('Failed to reopen.');
+      setError(t('approvals.reopenFailed'));
     }
   }
 
@@ -308,7 +313,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       item.expense_report?.user_email,
       item.absence?.user_display_name,
       item.absence?.user_email,
-      actionItemLabel(item.definition_name),
+      actionItemLabel(item.definition_name, t),
       correspondingObject(item),
       actionItemDetail(item),
     ]
@@ -320,9 +325,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Workflow</Typography>
+      <Typography variant="h6">{t('approvals.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Open workflows assigned to you, directly or through a team — timesheet submissions and reopen requests.
+        {t('approvals.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -331,23 +336,25 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
       <TextField
         size="small"
-        placeholder="Search by member, type, or corresponding object…"
+        placeholder={t('approvals.searchPlaceholder')}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         sx={{ mb: 2, maxWidth: 320, display: 'block' }}
       />
 
       <Typography variant="subtitle1" sx={{ mb: 1 }}>
-        Action items ({filteredActionItems.length}{search.trim() ? ` of ${actionItems.length}` : ''})
+        {search.trim()
+          ? t('approvals.actionItemsFiltered', { count: filteredActionItems.length, total: actionItems.length })
+          : t('approvals.actionItems', { count: filteredActionItems.length })}
       </Typography>
       <Table size="small" sx={{ mb: 3 }}>
         <TableHead>
           <TableRow>
-            <TableCell>Member</TableCell>
-            <TableCell>Type</TableCell>
-            <TableCell>Corresponding object</TableCell>
-            <TableCell>Details</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            <TableCell>{t('teamHours.member')}</TableCell>
+            <TableCell>{t('approvals.col.type')}</TableCell>
+            <TableCell>{t('approvals.col.object')}</TableCell>
+            <TableCell>{t('audit.col.details')}</TableCell>
+            <TableCell align="right">{t('common.actions')}</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -358,37 +365,37 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
                   <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
                 </TableCell>
-                <TableCell><Chip label={actionItemLabel(item.definition_name)} size="small" variant="outlined" /></TableCell>
+                <TableCell><Chip label={actionItemLabel(item.definition_name, t)} size="small" variant="outlined" /></TableCell>
                 <TableCell>
                   {correspondingObject(item)}
                   {item.absence && (
                     <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
-                      <Chip label={formatAbsenceType(item.absence.absence_type)} size="small" variant="outlined" />
-                      {item.absence.half_day && <Chip label="Half day" size="small" />}
+                      <Chip label={formatAbsenceType(item.absence.absence_type, t)} size="small" variant="outlined" />
+                      {item.absence.half_day && <Chip label={t('approvals.halfDay')} size="small" />}
                     </Box>
                   )}
                 </TableCell>
                 <TableCell>{actionItemDetail(item)}</TableCell>
                 <TableCell align="right">
                   {item.timesheet_period && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>Inspect</Button>
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>{t('approvals.inspect')}</Button>
                   )}
                   {item.expense_report && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>Inspect</Button>
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>{t('approvals.inspect')}</Button>
                   )}
                   {item.absence?.document_id && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => viewAbsenceDocument(item.absence!)}>Documents</Button>
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => viewAbsenceDocument(item.absence!)}>{t('approvals.documents')}</Button>
                   )}
-                  <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>Approve</Button>
-                  <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>Reject</Button>
+                  <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>{t('approvals.approve')}</Button>
+                  <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>{t('approvals.reject')}</Button>
                 </TableCell>
               </TableRow>
               {rejectingId === item.id && (
                 <TableRow>
                   <TableCell colSpan={5} sx={{ bgcolor: 'action.hover' }}>
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                      <TextField size="small" label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
-                      <Button size="small" color="error" variant="contained" onClick={() => rejectItem(item.id)}>Confirm reject</Button>
+                      <TextField size="small" label={t('approvals.note')} value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
+                      <Button size="small" color="error" variant="contained" onClick={() => rejectItem(item.id)}>{t('approvals.confirmReject')}</Button>
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -396,17 +403,17 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
             </Fragment>
           ))}
           {filteredActionItems.length === 0 && (
-            <TableRow><TableCell colSpan={5}>{actionItems.length === 0 ? 'Nothing pending.' : 'No action items match your search.'}</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5}>{actionItems.length === 0 ? t('approvals.nothingPending') : t('approvals.noMatch')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
 
       {role === 'admin' && (
         <>
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>Approved ({approved.length})</Typography>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('approvals.approvedList', { count: approved.length })}</Typography>
           <Table size="small">
             <TableHead>
-              <TableRow><TableCell>Member</TableCell><TableCell>Period</TableCell><TableCell align="right">Actions</TableCell></TableRow>
+              <TableRow><TableCell>{t('teamHours.member')}</TableCell><TableCell>{t('time.period')}</TableCell><TableCell align="right">{t('common.actions')}</TableCell></TableRow>
             </TableHead>
             <TableBody>
               {approved.map((p) => (
@@ -414,13 +421,13 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   <TableCell>{p.user_display_name}</TableCell>
                   <TableCell>{p.period_start.slice(0, 7)}</TableCell>
                   <TableCell align="right">
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p, null)}>Inspect</Button>
-                    <Button size="small" onClick={() => reopen(p.id)}>Reopen</Button>
+                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p, null)}>{t('approvals.inspect')}</Button>
+                    <Button size="small" onClick={() => reopen(p.id)}>{t('approvals.reopen')}</Button>
                   </TableCell>
                 </TableRow>
               ))}
               {approved.length === 0 && (
-                <TableRow><TableCell colSpan={3}>None yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={3}>{t('approvals.noneYet')}</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -429,7 +436,9 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
       <Dialog open={!!inspectingPeriod} onClose={() => setInspectingPeriod(null)} maxWidth="md" fullWidth>
         <DialogTitle>
-          {inspectingPeriod ? `Review Timesheet: ${inspectingPeriod.user_display_name} (${periodLabel('month', inspectingPeriod.period_start.slice(0, 10))})` : 'Review Timesheet'}
+          {inspectingPeriod
+            ? t('approvals.reviewTimesheetFor', { name: inspectingPeriod.user_display_name, period: periodLabel('month', inspectingPeriod.period_start.slice(0, 10), locale) })
+            : t('approvals.reviewTimesheet')}
         </DialogTitle>
         <DialogContent dividers>
           {inspectingError && <Alert severity="error" sx={{ mb: 2 }}>{inspectingError}</Alert>}
@@ -440,24 +449,24 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 {inspectingPeriod.user_email}
               </Typography>
               <Chip
-                label={`Total: ${Math.floor(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) / 60)}h ${Math.round(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) % 60)}m`}
+                label={`${t('approvals.total')}: ${Math.floor(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) / 60)}h ${Math.round(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) % 60)}m`}
                 color="primary"
                 variant="outlined"
               />
             </Box>
           )}
           {inspectingEntries.length === 0 && !inspectingLoading ? (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No entries logged for this period.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noEntries')}</Typography>
           ) : (
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Date</TableCell>
-                  <TableCell>Time</TableCell>
-                  <TableCell align="right">Duration</TableCell>
-                  <TableCell>Project</TableCell>
-                  <TableCell>Subproject</TableCell>
-                  <TableCell>Comment</TableCell>
+                  <TableCell>{t('common.date')}</TableCell>
+                  <TableCell>{t('time.time')}</TableCell>
+                  <TableCell align="right">{t('approvals.duration')}</TableCell>
+                  <TableCell>{t('common.project')}</TableCell>
+                  <TableCell>{t('common.subproject')}</TableCell>
+                  <TableCell>{t('common.comment')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -465,11 +474,11 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   const m = Math.round(minutes(e));
                   const h = Math.floor(m / 60);
                   const rem = m % 60;
-                  const startTime = new Date(e.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                  const endTime = new Date(e.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const startTime = new Date(e.start_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                  const endTime = new Date(e.end_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
                   return (
                     <TableRow key={e.id}>
-                      <TableCell>{new Date(e.start_time).toLocaleDateString()}</TableCell>
+                      <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
                       <TableCell>{`${startTime} – ${endTime}`}</TableCell>
                       <TableCell align="right">{`${h}h ${rem}m`}</TableCell>
                       <TableCell>{e.project_name ?? '—'}</TableCell>
@@ -483,7 +492,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setInspectingPeriod(null)}>Close</Button>
+          <Button onClick={() => setInspectingPeriod(null)}>{t('common.close')}</Button>
           {inspectingActionItemId && (
             <>
               <Button
@@ -494,7 +503,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   setRejectingId(id);
                 }}
               >
-                Reject...
+                {t('approvals.reject')}…
               </Button>
               <Button
                 variant="contained"
@@ -504,7 +513,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   await approveItem(id);
                 }}
               >
-                Approve
+                {t('approvals.approve')}
               </Button>
             </>
           )}
@@ -513,7 +522,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
       <Dialog open={!!inspectingReport} onClose={() => setInspectingReport(null)} maxWidth="md" fullWidth>
         <DialogTitle>
-          {inspectingReport ? `Review Expense Report: ${inspectingReport.user_display_name}` : 'Review Expense Report'}
+          {inspectingReport ? t('approvals.reviewReportFor', { name: inspectingReport.user_display_name }) : t('approvals.reviewReport')}
         </DialogTitle>
         <DialogContent dividers>
           {inspectingReportError && <Alert severity="error" sx={{ mb: 2 }}>{inspectingReportError}</Alert>}
@@ -522,17 +531,17 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{inspectingReport.user_email}</Typography>
           )}
           {inspectingExpenses.length === 0 && !inspectingReportLoading ? (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No expenses in this report.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noExpenses')}</Typography>
           ) : (
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Date</TableCell>
-                  <TableCell>Category</TableCell>
-                  <TableCell align="right">Value</TableCell>
-                  <TableCell>Project</TableCell>
-                  <TableCell>Subproject</TableCell>
-                  <TableCell>Comment</TableCell>
+                  <TableCell>{t('common.date')}</TableCell>
+                  <TableCell>{t('approvals.category')}</TableCell>
+                  <TableCell align="right">{t('approvals.value')}</TableCell>
+                  <TableCell>{t('common.project')}</TableCell>
+                  <TableCell>{t('common.subproject')}</TableCell>
+                  <TableCell>{t('common.comment')}</TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
@@ -546,7 +555,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                     <TableCell>{e.subproject_name ?? '—'}</TableCell>
                     <TableCell>{e.comment ?? '—'}</TableCell>
                     <TableCell align="right">
-                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>Payslip</Button>}
+                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>{t('approvals.receipt')}</Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -555,7 +564,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setInspectingReport(null)}>Close</Button>
+          <Button onClick={() => setInspectingReport(null)}>{t('common.close')}</Button>
           {inspectingReportActionItemId && (
             <>
               <Button
@@ -566,7 +575,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   setRejectingId(id);
                 }}
               >
-                Reject...
+                {t('approvals.reject')}…
               </Button>
               <Button
                 variant="contained"
@@ -576,7 +585,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                   await approveItem(id);
                 }}
               >
-                Approve
+                {t('approvals.approve')}
               </Button>
             </>
           )}
@@ -585,20 +594,20 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
 
       <Dialog open={!!inspectingAbsence} onClose={() => setInspectingAbsence(null)} maxWidth="sm" fullWidth>
         <DialogTitle>
-          {inspectingAbsence ? `Evidence: ${inspectingAbsence.user_display_name}` : 'Evidence'}
+          {inspectingAbsence ? t('approvals.evidenceFor', { name: inspectingAbsence.user_display_name }) : t('approvals.evidence')}
         </DialogTitle>
         <DialogContent dividers>
           {absenceDocument ? (
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
               <Typography variant="body2">{absenceDocument.file_name}</Typography>
-              <Button size="small" onClick={() => downloadAbsenceDocument(inspectingAbsence!.id, absenceDocument)}>Download</Button>
+              <Button size="small" onClick={() => downloadAbsenceDocument(inspectingAbsence!.id, absenceDocument)}>{t('approvals.download')}</Button>
             </Box>
           ) : (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>No document attached.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noDocument')}</Typography>
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setInspectingAbsence(null)}>Close</Button>
+          <Button onClick={() => setInspectingAbsence(null)}>{t('common.close')}</Button>
         </DialogActions>
       </Dialog>
     </Paper>

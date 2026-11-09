@@ -34,6 +34,8 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { BasicDataController } from './basicdata.controller';
 import { BasicDataService } from './basicdata.service';
+import { FieldsController } from './fields.controller';
+import { FieldsService } from './fields.service';
 import { DbService } from './db.service';
 
 @Module({
@@ -43,6 +45,7 @@ import { DbService } from './db.service';
     AuthController,
     UsersController,
     BasicDataController,
+    FieldsController,
     OrgsController,
     RolesController,
     TeamsController,
@@ -74,6 +77,7 @@ import { DbService } from './db.service';
     NotificationsService,
     NotificationsGateway,
     BasicDataService,
+    FieldsService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })

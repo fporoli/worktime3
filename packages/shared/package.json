@@ -1,1 +1,25 @@
-{"name":"@worktime3/shared","version":"0.1.0","type":"module","main":"src/index.ts","scripts":{"build":"tsc -p tsconfig.json","test":"node --test src/**/*.test.mjs"},"devDependencies":{"typescript":"^5.5.0"}}
+{
+  "name": "@worktime3/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --test src/**/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fields": {
+      "source": "./src/fields.ts",
+      "types": "./dist/fields.d.ts",
+      "default": "./dist/fields.js"
+    }
+  }
+}

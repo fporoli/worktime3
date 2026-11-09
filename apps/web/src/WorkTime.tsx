@@ -18,7 +18,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useT } from './i18n';
+import { useI18n } from './i18n';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -48,10 +48,10 @@ function formatDuration(startIso: string, endIso: string | null): string {
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
 }
 
-function formatDateTime(iso: string | null): string {
+function formatDateTime(iso: string | null, locale: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return d.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 /** ISO instant -> the 'YYYY-MM-DDTHH:mm' shape a `datetime-local` input wants, in local time. */
@@ -72,7 +72,7 @@ interface WorkTimeProps {
 }
 
 export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [status, setStatus] = useState<Session | null>(null);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [entries, setEntries] = useState<Session[]>([]);
@@ -230,7 +230,7 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
         </Button>
         {checkedIn && (
           <Typography variant="body2" color="text.secondary">
-            {t('workTime.checkedInSince', { time: formatDateTime(status!.check_in), elapsed: `${Math.floor(elapsed / 60)}h ${String(elapsed % 60).padStart(2, '0')}m` })}
+            {t('workTime.checkedInSince', { time: formatDateTime(status!.check_in, locale), elapsed: `${Math.floor(elapsed / 60)}h ${String(elapsed % 60).padStart(2, '0')}m` })}
           </Typography>
         )}
       </Box>
@@ -249,8 +249,8 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
         <TableBody>
           {entries.map((e) => (
             <TableRow key={e.id}>
-              <TableCell>{formatDateTime(e.check_in)}</TableCell>
-              <TableCell>{formatDateTime(e.check_out)}</TableCell>
+              <TableCell>{formatDateTime(e.check_in, locale)}</TableCell>
+              <TableCell>{formatDateTime(e.check_out, locale)}</TableCell>
               <TableCell>{formatDuration(e.check_in, e.check_out)}</TableCell>
               <TableCell>{e.comment ?? ''}</TableCell>
               <TableCell align="right">

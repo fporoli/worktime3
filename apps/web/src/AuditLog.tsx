@@ -10,6 +10,8 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
+import { useI18n } from './i18n';
+
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 interface AuditLogItem {
@@ -36,6 +38,7 @@ function formatMetadata(metadata: Record<string, unknown> | null): string {
 }
 
 export default function AuditLog({ orgId, authHeaders }: AuditLogProps) {
+  const { t, locale } = useI18n();
   const [entries, setEntries] = useState<AuditLogItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +50,7 @@ export default function AuditLog({ orgId, authHeaders }: AuditLogProps) {
       const data = await res.json();
       if (Array.isArray(data)) setEntries(data);
     } catch {
-      setError('Failed to load audit log. Is the API running?');
+      setError(t('audit.loadFailed'));
     }
   }
 
@@ -59,9 +62,9 @@ export default function AuditLog({ orgId, authHeaders }: AuditLogProps) {
 
   return (
     <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">Audit log</Typography>
+      <Typography variant="h6">{t('audit.title')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        A record of administrative and approval actions taken in this organization.
+        {t('audit.subtitle')}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -70,25 +73,25 @@ export default function AuditLog({ orgId, authHeaders }: AuditLogProps) {
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>When</TableCell>
-            <TableCell>Actor</TableCell>
-            <TableCell>Action</TableCell>
-            <TableCell>Target</TableCell>
-            <TableCell>Details</TableCell>
+            <TableCell>{t('audit.col.when')}</TableCell>
+            <TableCell>{t('audit.col.actor')}</TableCell>
+            <TableCell>{t('audit.col.action')}</TableCell>
+            <TableCell>{t('audit.col.target')}</TableCell>
+            <TableCell>{t('audit.col.details')}</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {entries.map((entry) => (
             <TableRow key={entry.id} hover>
-              <TableCell>{new Date(entry.created_at).toLocaleString()}</TableCell>
-              <TableCell>{entry.actor_display_name ?? entry.actor_email ?? 'Unknown'}</TableCell>
+              <TableCell>{new Date(entry.created_at).toLocaleString(locale)}</TableCell>
+              <TableCell>{entry.actor_display_name ?? entry.actor_email ?? t('common.unknown')}</TableCell>
               <TableCell>{entry.action}</TableCell>
               <TableCell>{entry.target_type}{entry.target_id ? ` (${entry.target_id.slice(0, 8)}…)` : ''}</TableCell>
               <TableCell>{formatMetadata(entry.metadata)}</TableCell>
             </TableRow>
           ))}
           {entries.length === 0 && !loading && (
-            <TableRow><TableCell colSpan={5}>No audit entries yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5}>{t('audit.empty')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

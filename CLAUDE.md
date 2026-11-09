@@ -26,7 +26,8 @@ npm run db:migrate         # apply Liquibase changelogs to $DATABASE_URL (Docker
 npm run db:introspect      # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
 ```
 
-Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --test ../../test/api/orgs.test.ts`.
+Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --conditions=source --test ../../test/api/orgs.test.ts`
+(`--conditions=source` makes `@worktime3/shared` resolve to its TypeScript sources).
 
 Environments: **dev** (N=1, `.env.dev`, `compose/docker-compose.dev.yml`) runs
 only pg/Keycloak/Mailpit in Docker, with the API and web on the host: pg 5431,
@@ -47,7 +48,7 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 ## Tests
 
-- All real tests are API tests in `test/api/*.test.ts`, using `node:test` +
+- Most tests are API tests in `test/api/*.test.ts`, using `node:test` +
   `node:assert`, run through `tsx` from the `apps/api` workspace. No Nest boot,
   no database: controllers are constructed directly with hand-rolled mock
   `DbService`/service objects (see `project-time-auth.test.ts`), and pure
@@ -58,7 +59,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 - Several tests do `import type { AuthenticatedRequest } from '../../apps/api/src/types'`,
   which does not exist (the type lives in `jwt.guard.ts`). It works only
   because tsx strips type-only imports; use `jwt.guard` in new tests.
-- `apps/web` and `packages/shared` have `test` scripts but no test files yet.
+- `apps/web` and `packages/shared` tests are `src/*.test.mjs` run by
+  `node --test`; they can import plain `.ts` files (Node strips types) but not
+  `.tsx`.
 - CI (`.github/workflows/ci.yml`) builds, tests, then runs `db:migrate` and
   `db:seed` against a fresh Postgres 16, so a broken changelog or seed fails CI.
 
@@ -68,7 +71,9 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   (`NNN-description.sql`, formatted SQL with `--changeset author:id`
   headers), added to `db.changelog-master.xml`. Never edit an existing
   changeset; Liquibase checksums them.
-- Then run `npm run db:migrate` and `npm run db:introspect`.
+- Then run `npm run db:migrate` and `npm run db:introspect`. (`db:introspect` currently
+  fails: the installed drizzle-kit 0.18 has no `introspect` command. drizzle-kit
+  0.31.x, which matches drizzle-orm 0.45, run from outside the repo works.)
 - `apps/api/src/db/schema.ts` and `relations.ts` are **generated**. Never
   hand-edit them. `scripts/fix-introspected-schema.mjs` patches `citext`
   columns after introspection.
@@ -99,7 +104,8 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
      Never trust a user id from the body or query for the caller.
   3. Gate with `isOrgMember` / `isOrgManagerOrAdmin` / `isOrgAdmin` /
      `isOrgHrOrAdmin` / `isOrgBillingAdmin` / `isManagerOf` /
-     `canManageTeamMembers` / `isOwnerAdminOrManagerOf` as appropriate.
+     `canManageTeamMembers` / `isOwnerAdminOrManagerOf` / `isOrgDeveloper` /
+     `isSuperDeveloper` as appropriate.
   4. Time-entry writes also check `isPeriodLocked` (submitted/approved month).
 - Roles are per organization. A membership can hold several roles
   (`membership_roles`). "Manager of X" means `organization_memberships.manager_user_id`,
@@ -133,7 +139,30 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   `const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1'`
   is declared per file.
 - All UI strings go through i18n: `const t = useT()` from `i18n.tsx`. When you
-  add a key, add it to all four dictionaries in `DICTIONARIES` (en/de/fr/it).
+  add a key, add it to all four dictionaries in `dictionaries.ts` (en/de/fr/it);
+  `dictionaries.test.mjs` fails on missing keys or mismatched `{{placeholders}}`.
+- Format dates, times and numbers with the app's `locale` from `useI18n()`,
+  never the browser default (`toLocaleDateString()` with no argument).
+- Configurable form fields (docs/FIELD_CONFIG.md): field definitions live in
+  `packages/shared/src/fields.ts` (imported as `@worktime3/shared/fields`) and
+  are rendered by `ConfigField` / `ConfigFieldGroup` (`ConfigField.tsx`). Number
+  entry and display go through `localeFormat.ts`; date pickers are MUI X with
+  dayjs, set up once by `DatePickerLocalization` in `main.tsx`. The basic-data
+  and expense forms use them; other forms still have hand-written fields.
+- Global and per-org templates (`field_config`, edited by the `developer` role
+  and `users.is_superdeveloper`) override the registry. Merging, override
+  checks (`checkFieldOverride`) and value validation (`validateFields`) live in
+  `fields.ts` so the browser and the API apply the same rules. A form page
+  loads its merged template from `GET organizations/:orgId/forms/:formId`; a
+  controller saving a configured form validates with
+  `FieldsService.resolved()` + `validateFields`, as `basicdata.controller.ts` does.
+  In the web app, a page with a configured form uses `useFormTemplate`
+  (`designMode.tsx`), wraps the form in `FieldDesignScope` and renders
+  `FormDesignPanel` while designing, as `Home.tsx` does.
+- Custom fields (defined by a template, `field_config.is_custom`) are stored in
+  the form's `customStorage` JSON column. Basic data keeps org-defined ones in
+  `users.basicdata.orgs.<orgId>`: read basic data through `scopeToOrg` so one
+  org never sees another's section.
 - Show API errors to the user. Don't apply changes optimistically and then
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one
@@ -141,8 +170,13 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
 
 ## Other
 
-- `packages/shared` (role ids, RBAC matrix) mirrors API constants but is not
-  imported by either app yet.
+- `packages/shared`: `index.ts` (role ids, RBAC matrix) mirrors API constants
+  and is not imported yet; `fields.ts` (the field registry) is used by the web
+  app and the API. Keep `fields.ts` to erasable TypeScript (no enums) so Node
+  tests can import it. Its `exports` map has a `source` condition (the `.ts`
+  sources, used by Vite, the web type check and all tests) and a built `dist/`
+  (used by the API, which is CommonJS and loads it via `require` of ESM). The
+  API's `build` script builds the shared package first.
 - Environments: `compose/docker-compose.{dev,local,vps}.yml`; `local` uses
   `infra/caddy/Caddyfile.local`, `vps` the shared edge in `infra/caddy/edge/`.
   Azure is `infra/azure/provision.sh` (no compose file). `vps` and `azure`

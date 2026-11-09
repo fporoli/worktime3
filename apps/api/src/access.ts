@@ -79,6 +79,19 @@ export async function isOrgHrOrAdmin(db: Executor, organizationId: string, userI
   return names.includes('owner') || names.includes('admin') || names.includes('hr');
 }
 
+/** True when the user is a superdeveloper: edits the global form template and any org's template. */
+export async function isSuperDeveloper(db: Executor, userId: string): Promise<boolean> {
+  const rows = await db.execute(sql`SELECT is_superdeveloper FROM users WHERE id = ${userId} LIMIT 1`);
+  return rows.rows[0]?.is_superdeveloper === true;
+}
+
+/** True when the user may edit this organization's form template: its developer, or a superdeveloper. */
+export async function isOrgDeveloper(db: Executor, organizationId: string, userId: string): Promise<boolean> {
+  const names = await activeRoleNames(db, organizationId, userId);
+  if (names.includes('developer')) return true;
+  return isSuperDeveloper(db, userId);
+}
+
 /**
  * The caller's single highest-privilege role name in the organization — a
  * membership can hold several roles at once, so this collapses them to the

@@ -16,6 +16,57 @@ export interface BasicDataHistoryEntry {
   note: string | null;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Moves an org's custom fields into that org's section of users.basicdata (docs/FIELD_CONFIG.md,
+ * "Storing custom JSON fields"): `{ placeOfBirth }` becomes `{ orgs: { <orgId>: { placeOfBirth } } }`.
+ */
+export function nestOrgKeys(patch: Record<string, unknown>, orgKeys: readonly string[], orgId: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const section: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (orgKeys.includes(key)) section[key] = value;
+    else out[key] = value;
+  }
+  if (Object.keys(section).length > 0) out.orgs = { [orgId]: section };
+  return out;
+}
+
+/**
+ * Basic data as one org sees it: built-in and global keys, plus that org's own section flattened
+ * in. Other orgs' sections are dropped, so one org's custom data never reaches another.
+ */
+export function scopeToOrg(data: Record<string, unknown>, orgId: string): Record<string, unknown> {
+  const { orgs, ...rest } = data;
+  const own = isPlainObject(orgs) ? orgs[orgId] : undefined;
+  return isPlainObject(own) ? { ...rest, ...own } : rest;
+}
+
+/** Keeps only `orgId`'s section of a stored patch, e.g. when that org's HR approves a request. */
+export function keepOrgSection(data: Record<string, unknown>, orgId: string): Record<string, unknown> {
+  const { orgs, ...rest } = data;
+  const own = isPlainObject(orgs) ? orgs[orgId] : undefined;
+  return isPlainObject(own) ? { ...rest, orgs: { [orgId]: own } } : rest;
+}
+
+/**
+ * SQL that merges a patch into users.basicdata. Top-level keys replace, as before; each org's
+ * section under `orgs` is merged key by key, so saving one org's fields keeps the others.
+ */
+function mergedBasicdata(patch: Record<string, unknown>) {
+  const { orgs, ...flat } = patch;
+  let expr = sql`COALESCE(${users.basicdata}, '{}'::jsonb) || ${JSON.stringify(flat)}::jsonb`;
+  for (const [orgId, section] of Object.entries(isPlainObject(orgs) ? orgs : {})) {
+    expr = sql`jsonb_set(${expr}, '{orgs}',
+      COALESCE(${users.basicdata} -> 'orgs', '{}'::jsonb)
+      || jsonb_build_object(${orgId}::text, COALESCE(${users.basicdata} -> 'orgs' -> ${orgId}::text, '{}'::jsonb) || ${JSON.stringify(section)}::jsonb))`;
+  }
+  return expr;
+}
+
 /**
  * "Meine Daten" personal/family data: the current value lives as a JSON blob on users.basicdata,
  * while every edit — applied or merely requested — is appended to a per-user basicdata_versions
@@ -93,7 +144,7 @@ export class BasicDataService {
   async applyDirectEdit(userId: string, patch: Record<string, unknown>, actorUserId: string): Promise<void> {
     const db = this.db.getDb();
     if (!db) return;
-    await db.update(users).set({ basicdata: sql`${users.basicdata} || ${JSON.stringify(patch)}::jsonb` }).where(eq(users.id, userId));
+    await db.update(users).set({ basicdata: mergedBasicdata(patch) }).where(eq(users.id, userId));
     await this.appendEntry(db, userId, { status: 'approved', data: patch, requested_by_user_id: actorUserId, reviewed_by_user_id: actorUserId, reviewed_at: new Date().toISOString() });
   }
 
@@ -106,13 +157,17 @@ export class BasicDataService {
     return { ok: true };
   }
 
-  /** Admin/HR resolves the pending request: approving merges its data into users.basicdata, rejecting leaves it untouched. */
+  /**
+   * Admin/HR resolves the pending request: approving merges its data into users.basicdata, rejecting
+   * leaves it untouched. Only the reviewing org's own custom-field section is applied.
+   */
   async resolveRequest(
     userId: string,
     versionNr: number,
     outcome: 'approved' | 'rejected',
     actorUserId: string,
     note: string | null,
+    orgId?: string,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const db = this.db.getDb();
     if (!db) return { ok: false, error: 'offline' };
@@ -129,7 +184,8 @@ export class BasicDataService {
       .where(eq(basicdata_versions.user_id, userId));
 
     if (outcome === 'approved') {
-      await db.update(users).set({ basicdata: sql`${users.basicdata} || ${JSON.stringify(history[idx].data)}::jsonb` }).where(eq(users.id, userId));
+      const data = orgId ? keepOrgSection(history[idx].data, orgId) : history[idx].data;
+      await db.update(users).set({ basicdata: mergedBasicdata(data) }).where(eq(users.id, userId));
     }
     return { ok: true };
   }

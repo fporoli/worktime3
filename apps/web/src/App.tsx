@@ -40,6 +40,7 @@ import { useI18n, type Locale } from './i18n';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import UserMenu from './UserMenu';
+import { DesignModeNotice, DesignModeProvider, useDesignAccess } from './designMode';
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 
@@ -70,12 +71,8 @@ const ASSISTANT_PANEL_WIDTH = 380;
 const ASSISTANT_TAB_HEIGHT = 40;
 const ASSISTANT_PANEL_HEIGHT_MOBILE = '50vh';
 
-const PROJECT_TIME_ERROR_MESSAGES: Record<string, string> = {
-  'period-locked': 'This month has already been submitted or approved and is locked. Ask your manager to reopen it, or use a different month.',
-  'forbidden': 'You do not have permission to do that.',
-  'not-found': 'That entry no longer exists.',
-  'unknown-user': 'Could not identify your account — try logging in again.',
-};
+/** API error codes with their own message; the text is `time.error.<code>` in the dictionaries. */
+const PROJECT_TIME_ERRORS = new Set(['period-locked', 'forbidden', 'not-found', 'unknown-user']);
 
 /** A project or subproject as returned by the API (raw db row). */
 interface Option {
@@ -129,8 +126,8 @@ function splitLocal(iso: string): { date: string; time: string } {
   };
 }
 
-function timeOf(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function timeOf(iso: string, locale: string): string {
+  return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Whole minutes between two ISO instants. */
@@ -203,6 +200,8 @@ export default function App() {
   const rows = useMemo(() => bucket(entries, 'daily'), [entries]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
   const orgId = currentOrgId;
+  // Design mode for configurable forms: access is re-checked on every org switch.
+  const designAccess = useDesignAccess(orgId, authHeaders);
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
   const canManage = role === 'manager' || role === 'admin';
@@ -484,7 +483,7 @@ export default function App() {
           setOverlapConfirm({ kind: 'add', overlaps: data.overlaps ?? [] });
           return;
         }
-        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not add the entry (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERRORS.has(data.error) ? t(`time.error.${data.error}`) : t('time.addFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       setOverlapConfirm(null);
@@ -536,7 +535,7 @@ export default function App() {
           setOverlapConfirm({ kind: 'draft', overlaps: data.overlaps ?? [] });
           return;
         }
-        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not save the change (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERRORS.has(data.error) ? t(`time.error.${data.error}`) : t('time.saveFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       setOverlapConfirm(null);
@@ -564,7 +563,7 @@ export default function App() {
       });
       const data = await res.json();
       if (data.ok === false) {
-        setProjectTimeError(PROJECT_TIME_ERROR_MESSAGES[data.error] ?? `Could not remove the entry (${data.error ?? 'unknown error'}).`);
+        setProjectTimeError(PROJECT_TIME_ERRORS.has(data.error) ? t(`time.error.${data.error}`) : t('time.removeFailed', { error: data.error ?? t('common.unknownError') }));
         return;
       }
       setEntries((prev) => prev.filter((e) => e.id !== id));
@@ -644,13 +643,15 @@ export default function App() {
   const assistantReservedWidth = !isMobile && orgId ? (assistantOpen ? ASSISTANT_TAB_WIDTH + ASSISTANT_PANEL_WIDTH : ASSISTANT_TAB_WIDTH) : 0;
   const assistantReservedHeight =
     isMobile && orgId ? (assistantOpen ? `calc(${ASSISTANT_TAB_HEIGHT}px + ${ASSISTANT_PANEL_HEIGHT_MOBILE})` : `${ASSISTANT_TAB_HEIGHT}px`) : '0px';
+  const designMode = { ...designAccess, panelTop: appBarHeight, panelRight: assistantReservedWidth };
 
   return (
+    <DesignModeProvider value={designMode}>
     <Box sx={{ display: 'flex' }}>
       <AppBar ref={setAppBarNode} position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
         <Toolbar sx={{ gap: 1.5, flexWrap: 'wrap', py: 1 }}>
           {isMobile && (
-            <IconButton color="inherit" edge="start" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation">
+            <IconButton color="inherit" edge="start" onClick={() => setMobileNavOpen(true)} aria-label={t('app.openNavigation')}>
               ☰
             </IconButton>
           )}
@@ -708,6 +709,9 @@ export default function App() {
             authHeaders={authHeaders}
             currentOrgId={currentOrgId}
             canSwitchUser={role === 'admin' && !adminSession}
+            canDesign={designAccess.canDesign}
+            designMode={designAccess.enabled}
+            onDesignModeChange={designAccess.setEnabled}
             adminSession={adminSession}
             onSwitchSession={switchUserSession}
             onReturnToAdmin={returnToAdmin}
@@ -869,7 +873,7 @@ export default function App() {
                     {entries.map((e) => (
                       <TableRow key={e.id} hover>
                         <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
-                        <TableCell>{timeOf(e.start_time)} – {timeOf(e.end_time)}</TableCell>
+                        <TableCell>{timeOf(e.start_time, locale)} – {timeOf(e.end_time, locale)}</TableCell>
                         <TableCell align="right">{Math.round(minutes(e))}</TableCell>
                         <TableCell>{e.project_name ?? '—'}</TableCell>
                         <TableCell>{e.subproject_name ?? '—'}</TableCell>
@@ -918,6 +922,7 @@ export default function App() {
             </>
           )}
 
+          <DesignModeNotice />
           <Suspense fallback={<LinearProgress sx={{ my: 2 }} />}>
             {section === 'home' && orgId && (
               <Home orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
@@ -1010,8 +1015,8 @@ export default function App() {
           <Box
             onClick={toggleAssistantPin}
             role="button"
-            aria-label={assistantPinned ? 'Unpin assistant' : 'Pin assistant open'}
-            title={assistantPinned ? 'Unpin assistant' : 'Tap to keep the assistant open'}
+            aria-label={assistantPinned ? t('app.assistantUnpin') : t('app.assistantPin')}
+            title={assistantPinned ? t('app.assistantUnpin') : t('app.assistantPinTap')}
             sx={{
               height: ASSISTANT_TAB_HEIGHT,
               flexShrink: 0,
@@ -1038,7 +1043,7 @@ export default function App() {
             >
               📌
             </Typography>
-            <Typography variant="button" sx={{ letterSpacing: 1 }}>Assistant</Typography>
+            <Typography variant="button" sx={{ letterSpacing: 1 }}>{t('assistant.title')}</Typography>
           </Box>
           <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <Suspense fallback={<LinearProgress sx={{ m: 2 }} />}>
@@ -1067,8 +1072,8 @@ export default function App() {
           <Box
             onClick={toggleAssistantPin}
             role="button"
-            aria-label={assistantPinned ? 'Unpin assistant' : 'Pin assistant open'}
-            title={assistantPinned ? 'Unpin assistant' : 'Click to keep the assistant open'}
+            aria-label={assistantPinned ? t('app.assistantUnpin') : t('app.assistantPin')}
+            title={assistantPinned ? t('app.assistantUnpin') : t('app.assistantPinClick')}
             sx={{
               width: ASSISTANT_TAB_WIDTH,
               flexShrink: 0,
@@ -1100,7 +1105,7 @@ export default function App() {
               variant="button"
               sx={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', letterSpacing: 1, whiteSpace: 'nowrap' }}
             >
-              Assistant
+              {t('assistant.title')}
             </Typography>
           </Box>
           <Box sx={{ width: ASSISTANT_PANEL_WIDTH, flexShrink: 0, height: '100%' }}>
@@ -1112,14 +1117,14 @@ export default function App() {
       ))}
 
       <Dialog open={!!draft} onClose={closeDraft} fullWidth maxWidth="sm">
-        <DialogTitle>Edit entry</DialogTitle>
+        <DialogTitle>{t('time.editEntry')}</DialogTitle>
         {draft && (
           <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
             {projectTimeError && <Alert severity="error" onClose={() => setProjectTimeError(null)}>{projectTimeError}</Alert>}
-            <TextField label="Date" type="date" value={draft.date} onChange={(e) => e.target.value && setDraft({ ...draft, date: e.target.value })} size="small" sx={{ mt: 1 }} />
+            <TextField label={t('time.date')} type="date" value={draft.date} onChange={(e) => e.target.value && setDraft({ ...draft, date: e.target.value })} size="small" sx={{ mt: 1 }} />
             {useProjectTimeRanges && (
               <TextField
-                label="Start time"
+                label={t('time.start')}
                 type="time"
                 value={draft.startTime}
                 onChange={(e) => e.target.value && setDraft({ ...draft, startTime: e.target.value })}
@@ -1128,38 +1133,38 @@ export default function App() {
               />
             )}
             <TextField
-              label="Duration (minutes)"
+              label={t('time.durationMinutes')}
               type="number"
               value={draft.durationMinutes}
               onChange={(e) => setDraft({ ...draft, durationMinutes: Number(e.target.value) })}
               size="small"
               slotProps={{ htmlInput: { step: 5, min: 5 } }}
               error={draftDurationInvalid}
-              helperText={draftDurationInvalid ? 'Duration must be greater than zero.' : ' '}
+              helperText={draftDurationInvalid ? t('time.durationMustBePositive') : ' '}
             />
             <TextField
               select
-              label="Project"
+              label={t('time.project')}
               value={draft.projectId}
               onChange={(e) => setDraft({ ...draft, projectId: e.target.value, subprojectId: '' })}
               size="small"
             >
-              <MenuItem value=""><em>None</em></MenuItem>
+              <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
               {projects.map((p) => (<MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>))}
             </TextField>
             <TextField
               select
-              label="Subproject"
+              label={t('time.subproject')}
               value={draft.subprojectId}
               onChange={(e) => setDraft({ ...draft, subprojectId: e.target.value })}
               size="small"
               disabled={!draft.projectId || draftSubprojects.length === 0}
             >
-              <MenuItem value=""><em>None</em></MenuItem>
+              <MenuItem value=""><em>{t('time.none')}</em></MenuItem>
               {draftSubprojects.map((s) => (<MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>))}
             </TextField>
             <TextField
-              label="Comment"
+              label={t('time.comment')}
               value={draft.comment}
               onChange={(e) => setDraft({ ...draft, comment: e.target.value })}
               size="small"
@@ -1170,26 +1175,26 @@ export default function App() {
           </DialogContent>
         )}
         <DialogActions>
-          <Button onClick={closeDraft}>Cancel</Button>
-          <Button variant="contained" onClick={() => saveDraft()} disabled={draftDurationInvalid}>Save</Button>
+          <Button onClick={closeDraft}>{t('time.cancel')}</Button>
+          <Button variant="contained" onClick={() => saveDraft()} disabled={draftDurationInvalid}>{t('time.save')}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={!!overlapConfirm} onClose={() => setOverlapConfirm(null)} fullWidth maxWidth="xs">
-        <DialogTitle>Overlapping entry</DialogTitle>
+        <DialogTitle>{t('time.overlapTitle')}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 1, pt: 1 }}>
           <Typography variant="body2">
-            This is an additional booking — it overlaps {overlapConfirm && overlapConfirm.overlaps.length > 1 ? 'these existing entries' : 'an existing entry'} on that day:
+            {overlapConfirm && overlapConfirm.overlaps.length > 1 ? t('time.overlapIntroMany') : t('time.overlapIntroOne')}
           </Typography>
           {overlapConfirm?.overlaps.map((o) => (
             <Typography key={o.id} variant="body2" color="text.secondary">
-              {timeOf(o.start_time)} – {timeOf(o.end_time)}{o.comment ? ` (${o.comment})` : ''}
+              {timeOf(o.start_time, locale)} – {timeOf(o.end_time, locale)}{o.comment ? ` (${o.comment})` : ''}
             </Typography>
           ))}
-          <Typography variant="body2">Add it anyway?</Typography>
+          <Typography variant="body2">{t('time.overlapConfirm')}</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOverlapConfirm(null)}>Cancel</Button>
+          <Button onClick={() => setOverlapConfirm(null)}>{t('time.cancel')}</Button>
           <Button
             variant="contained"
             onClick={() => {
@@ -1197,18 +1202,18 @@ export default function App() {
               else if (overlapConfirm?.kind === 'draft') saveDraft(true);
             }}
           >
-            Add anyway
+            {t('time.addAnyway')}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={!!confirmDialog} onClose={() => setConfirmDialog(null)}>
-        <DialogTitle>{confirmDialog?.title ?? 'Confirm'}</DialogTitle>
+        <DialogTitle>{confirmDialog?.title ?? t('app.confirm')}</DialogTitle>
         <DialogContent>
           <DialogContentText>{confirmDialog?.message}</DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDialog(null)}>Cancel</Button>
+          <Button onClick={() => setConfirmDialog(null)}>{t('common.cancel')}</Button>
           <Button
             color="error"
             variant="contained"
@@ -1223,5 +1228,6 @@ export default function App() {
         </DialogActions>
       </Dialog>
     </Box>
+    </DesignModeProvider>
   );
 }

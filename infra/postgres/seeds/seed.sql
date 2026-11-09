@@ -62,6 +62,12 @@ VALUES
   ('eeeeeeee-eeee-eeee-eeee-222222222222', '00000000-0000-0000-0000-000000000003')
 ON CONFLICT (membership_id, role_id) DO NOTHING;
 
+-- Demo form designer: admin@acme.com edits Acme's form template (developer) and the global one (superdeveloper).
+INSERT INTO membership_roles (membership_id, role_id)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', '00000000-0000-0000-0000-000000000008')
+ON CONFLICT (membership_id, role_id) DO NOTHING;
+UPDATE users SET is_superdeveloper = TRUE WHERE id = '11111111-1111-1111-1111-111111111111';
+
 INSERT INTO teams (id, organization_id, name, description, lead_user_id)
 VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Platform', 'Platform team', '22222222-2222-2222-2222-222222222222')
 ON CONFLICT (organization_id, name) DO NOTHING;

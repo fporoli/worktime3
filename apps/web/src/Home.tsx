@@ -5,7 +5,6 @@ import {
   Button,
   IconButton,
   LinearProgress,
-  MenuItem,
   Paper,
   Table,
   TableBody,
@@ -17,7 +16,11 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { BASICDATA_FORM, validateFields, writableKeys, type ResolvedForm } from '@worktime3/shared/fields';
+import { FieldDesignScope, useFormTemplate } from './designMode';
+import { DESIGN_PANEL_WIDTH, FormDesignPanel } from './FormDesigner';
 import { useI18n } from './i18n';
+import { ConfigFieldGroup, useGroupTitle } from './ConfigField';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -78,11 +81,22 @@ interface StaticDataRow {
   translation: Record<string, Record<string, string>> | null;
 }
 
-/** "Personalien" — identity fields only admin/HR may ever touch (mirrors the API's ADMIN_ONLY_KEYS). */
-const PERSONALIEN_KEYS = ['displayName', 'firstName', 'middleName', 'lastName', 'personnelNumber', 'gender', 'birthDate', 'socialSecurityNumber', 'languageCode', 'placeOfOrigin', 'nationality', 'residencePermitCode'] as const;
-/** Address/bank/emergency contacts — anyone may self-request a change (mirrors the API's SELF_SERVICE_KEYS). */
-const ADDRESS_KEYS = ['salutation', 'street', 'postalCode', 'city', 'country', 'canton', 'phone1', 'phone2', 'mobile', 'email', 'bankAccounts', 'emergencyContacts'] as const;
-const FAMILY_KEYS = ['civilStatus', 'civilStatusSince', 'partner', 'children'] as const;
+/**
+ * Each section saves its registry group's fields (as the org's template arranges them) plus the
+ * nested lists it lays out by hand. Fields marked `editableBy: 'hr'` (the Personalien) are only
+ * changed by an admin/HR direct edit; everything else may also be requested by the employee.
+ */
+const SECTION_NESTED_KEYS: Record<string, string[]> = {
+  personalien: [],
+  address: ['bankAccounts', 'emergencyContacts'],
+  civilStatus: ['partner', 'children'],
+};
+
+/** Keys a section may save: all its writable fields for HR, only `self` ones for a change request. */
+export function sectionKeys(form: ResolvedForm, group: string, direct: boolean): string[] {
+  const fieldKeys = writableKeys(form, group).filter((k) => direct || form.fields.find((f) => f.key === k)?.editableBy === 'self');
+  return [...fieldKeys, ...(SECTION_NESTED_KEYS[group] ?? [])];
+}
 
 /** Pick a patch containing only the given keys' current values from `data` — used to submit one section's fields at a time. */
 function pick(data: BasicData, keys: readonly string[]): Record<string, unknown> {
@@ -104,6 +118,10 @@ function optionsFromRow(row: StaticDataRow | undefined, locale: string): Option[
 }
 
 interface EditableGroup {
+  /** Failed validation rule per field key. */
+  errors: Record<string, string>;
+  /** Fields shown read-only while editing, because this editor may not change them. */
+  readOnlyKeys: string[];
   editing: boolean;
   draft: BasicData;
   setDraft: (d: BasicData) => void;
@@ -122,33 +140,52 @@ interface EditableGroup {
 function useEditableGroup(params: {
   orgId: string;
   userId: string;
-  keys: readonly string[];
+  form: ResolvedForm;
+  group: string;
   data: BasicData;
   canEditDirectly: boolean;
+  /** Whether the viewer may request changes to their own data (self-service). */
   canRequest: boolean;
   authHeaders: () => Promise<Record<string, string>>;
   t: T;
   onSaved: () => void;
   setNotice: (msg: string | null) => void;
 }): EditableGroup {
-  const { orgId, userId, keys, data, canEditDirectly, canRequest, authHeaders, t, onSaved, setNotice } = params;
+  const { orgId, userId, form, group, data, canEditDirectly, authHeaders, t, onSaved, setNotice } = params;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<BasicData>({});
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const keys = sectionKeys(form, group, canEditDirectly);
+  const canRequest = params.canRequest && sectionKeys(form, group, false).length > 0;
+  const readOnlyKeys = canEditDirectly ? [] : writableKeys(form, group).filter((k) => !keys.includes(k));
+
+  function showErrors(list: { field: string; rule: string }[]) {
+    setErrors(Object.fromEntries(list.map((e) => [e.field, e.rule])));
+    setNotice(t('home.fixFieldErrors'));
+  }
 
   function start() {
     setDraft(pick(data, keys) as BasicData);
+    setErrors({});
     setNotice(null);
     setEditing(true);
   }
   function cancel() {
+    setErrors({});
     setEditing(false);
   }
   async function save() {
-    setSaving(true);
     setNotice(null);
+    const checked = validateFields(form, pick(draft, keys));
+    if (checked.errors.length > 0) {
+      showErrors(checked.errors);
+      return;
+    }
+    setErrors({});
+    setSaving(true);
     try {
-      const patch = pick(draft, keys);
+      const patch = checked.values;
       const url = canEditDirectly
         ? `${API}/organizations/${orgId}/users/${userId}/basicdata`
         : `${API}/organizations/${orgId}/users/${userId}/basicdata/request`;
@@ -159,7 +196,8 @@ function useEditableGroup(params: {
       });
       const body = await res.json();
       if (!body.ok) {
-        setNotice(body.error === 'request-already-pending' ? t('home.requestAlreadyPending') : t('home.saveFailed', { error: body.error ?? 'unknown' }));
+        if (body.error === 'invalid-field' && Array.isArray(body.fields)) showErrors(body.fields);
+        else setNotice(body.error === 'request-already-pending' ? t('home.requestAlreadyPending') : t('home.saveFailed', { error: body.error ?? 'unknown' }));
         return;
       }
       setNotice(canEditDirectly ? t('home.appliedDirectly') : t('home.requestSent'));
@@ -172,7 +210,7 @@ function useEditableGroup(params: {
     }
   }
 
-  return { editing, draft, setDraft, canEdit: canEditDirectly || canRequest, start, cancel, save, saving };
+  return { errors, readOnlyKeys, editing, draft, setDraft, canEdit: canEditDirectly || canRequest, start, cancel, save, saving };
 }
 
 function GroupActions({ t, group }: { t: T; group: EditableGroup }) {
@@ -216,6 +254,8 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const [staticRows, setStaticRows] = useState<StaticDataRow[]>([]);
   const [rejectNote, setRejectNote] = useState('');
   const [resolving, setResolving] = useState(false);
+  // `form` is what renders (the draft preview while designing); saves use the saved template.
+  const { form, savedForm, designer } = useFormTemplate(orgId, BASICDATA_FORM, authHeaders);
 
   async function reload() {
     setLoading(true);
@@ -257,9 +297,10 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const countryOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'countries'), locale), [staticRows, locale]);
   const cantonOptions = useMemo(() => SWISS_CANTONS.map((c) => ({ value: c, label: c })), []);
 
-  const personalien = useEditableGroup({ orgId, userId, keys: PERSONALIEN_KEYS, data, canEditDirectly, canRequest: false, authHeaders, t, onSaved: reload, setNotice });
-  const address = useEditableGroup({ orgId, userId, keys: ADDRESS_KEYS, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice });
-  const family = useEditableGroup({ orgId, userId, keys: FAMILY_KEYS, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice });
+  const groupParams = { orgId, userId, form: savedForm, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice };
+  const personalien = useEditableGroup({ ...groupParams, group: 'personalien' });
+  const address = useEditableGroup({ ...groupParams, group: 'address' });
+  const family = useEditableGroup({ ...groupParams, group: 'civilStatus' });
 
   function switchTab(next: 'personal' | 'family') {
     setTab(next);
@@ -292,7 +333,9 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
   const pendingIsMine = pending?.requested_by_user_id === userId;
 
   return (
-    <Paper sx={{ p: 2 }}>
+    <FieldDesignScope designer={designer}>
+    {designer && <FormDesignPanel designer={designer} />}
+    <Paper sx={{ p: 2, mr: designer ? { md: `${DESIGN_PANEL_WIDTH}px` } : 0 }}>
       <Typography variant="h6">{t('home.title')}</Typography>
       {error && <Alert severity="error" sx={{ my: 1 }} onClose={() => setError(null)}>{error}</Alert>}
       {notice && <Alert severity="info" sx={{ my: 1 }} onClose={() => setNotice(null)}>{notice}</Alert>}
@@ -326,7 +369,8 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
         <Box sx={{ display: 'grid', gap: 1.5 }}>
           <Box>
             <PersonalienSection
-              t={t}
+              form={form}
+              group={personalien}
               data={personalien.editing ? personalien.draft : data}
               editing={personalien.editing}
               onChange={personalien.setDraft}
@@ -340,6 +384,8 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
           <Box>
             <AddressSection
               t={t}
+              form={form}
+              group={address}
               data={address.editing ? address.draft : data}
               editing={address.editing}
               onChange={address.setDraft}
@@ -351,11 +397,12 @@ export function BasicDataPanel({ orgId, userId, isSelf, authHeaders }: BasicData
         </Box>
       ) : (
         <Box>
-          <FamilySection t={t} data={family.editing ? family.draft : data} editing={family.editing} onChange={family.setDraft} />
+          <FamilySection t={t} form={form} group={family} data={family.editing ? family.draft : data} editing={family.editing} onChange={family.setDraft} />
           <Box sx={{ mt: 1 }}><GroupActions t={t} group={family} /></Box>
         </Box>
       )}
     </Paper>
+    </FieldDesignScope>
   );
 }
 
@@ -371,70 +418,35 @@ function Field({ t, label, value, editing, onChange, type }: { t: T; label: stri
   return <TextField size="small" type={type ?? 'text'} label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 200 }} slotProps={type === 'date' ? { inputLabel: { shrink: true } } : undefined} />;
 }
 
-/** A read-only field that never becomes editable — for values (like the account/company email) this form doesn't own. */
-function StaticField({ label, value, t }: { label: string; value: string; t: T }) {
-  return (
-    <Box sx={{ minWidth: 200 }}>
-      <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-      <Typography variant="body2">{value || t('home.noneSet')}</Typography>
-    </Box>
-  );
-}
-
-function SelectField({ t, label, value, options, editing, onChange }: { t: T; label: string; value: string; options: Option[]; editing: boolean; onChange: (v: string) => void }) {
-  if (!editing) {
-    const found = options.find((o) => o.value === value)?.label ?? value;
-    return (
-      <Box sx={{ minWidth: 200 }}>
-        <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-        <Typography variant="body2">{found || t('home.noneSet')}</Typography>
-      </Box>
-    );
-  }
-  return (
-    <TextField select size="small" label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 200 }}>
-      <MenuItem value=""><em>{t('home.noneSet')}</em></MenuItem>
-      {options.map((o) => (<MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>))}
-    </TextField>
-  );
-}
-
 function PersonalienSection({
-  t, data, editing, onChange, companyEmail, localeOptions, nationOptions,
+  form, group, data, editing, onChange, companyEmail, localeOptions, nationOptions,
 }: {
-  t: T; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; companyEmail: string | null; localeOptions: Option[]; nationOptions: Option[];
+  form: ResolvedForm; group: EditableGroup; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; companyEmail: string | null; localeOptions: Option[]; nationOptions: Option[];
 }) {
-  function set<K extends keyof BasicData>(key: K, value: BasicData[K]) {
-    onChange({ ...data, [key]: value });
-  }
-
+  const title = useGroupTitle(form, 'personalien');
   return (
     <Box>
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.personalien')}</Typography>
-      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <Field t={t} label={t('home.field.displayName')} value={data.displayName ?? ''} editing={editing} onChange={(v) => set('displayName', v)} />
-        <Field t={t} label={t('home.field.firstName')} value={data.firstName ?? ''} editing={editing} onChange={(v) => set('firstName', v)} />
-        <Field t={t} label={t('home.field.middleName')} value={data.middleName ?? ''} editing={editing} onChange={(v) => set('middleName', v)} />
-        <Field t={t} label={t('home.field.lastName')} value={data.lastName ?? ''} editing={editing} onChange={(v) => set('lastName', v)} />
-        <Field t={t} label={t('home.field.personnelNumber')} value={data.personnelNumber ?? ''} editing={editing} onChange={(v) => set('personnelNumber', v)} />
-        <Field t={t} label={t('home.field.gender')} value={data.gender ?? ''} editing={editing} onChange={(v) => set('gender', v)} />
-        <Field t={t} type="date" label={t('home.field.birthDate')} value={data.birthDate ?? ''} editing={editing} onChange={(v) => set('birthDate', v)} />
-        <Field t={t} label={t('home.field.socialSecurityNumber')} value={data.socialSecurityNumber ?? ''} editing={editing} onChange={(v) => set('socialSecurityNumber', v)} />
-        <SelectField t={t} label={t('home.field.languageCode')} value={data.languageCode ?? ''} options={localeOptions} editing={editing} onChange={(v) => set('languageCode', v)} />
-        <Field t={t} label={t('home.field.placeOfOrigin')} value={data.placeOfOrigin ?? ''} editing={editing} onChange={(v) => set('placeOfOrigin', v)} />
-        <SelectField t={t} label={t('home.field.nationality')} value={data.nationality ?? ''} options={nationOptions} editing={editing} onChange={(v) => set('nationality', v)} />
-        <Field t={t} label={t('home.field.residencePermitCode')} value={data.residencePermitCode ?? ''} editing={editing} onChange={(v) => set('residencePermitCode', v)} />
-        <StaticField t={t} label={t('home.field.companyEmail')} value={companyEmail ?? ''} />
-      </Box>
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>{title}</Typography>
+      <ConfigFieldGroup
+        form={form}
+        group="personalien"
+        errors={group.errors}
+        readOnlyKeys={group.readOnlyKeys}
+        values={{ ...data, companyEmail: companyEmail ?? '' }}
+        editing={editing}
+        onChange={(key, value) => onChange({ ...data, [key]: value })}
+        options={{ locales: localeOptions, nations: nationOptions }}
+      />
     </Box>
   );
 }
 
 function AddressSection({
-  t, data, editing, onChange, countryOptions, cantonOptions,
+  t, form, group, data, editing, onChange, countryOptions, cantonOptions,
 }: {
-  t: T; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; countryOptions: Option[]; cantonOptions: Option[];
+  t: T; form: ResolvedForm; group: EditableGroup; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; countryOptions: Option[]; cantonOptions: Option[];
 }) {
+  const title = useGroupTitle(form, 'address');
   const bankAccounts = data.bankAccounts ?? [];
   const emergencyContacts = data.emergencyContacts ?? [];
 
@@ -445,19 +457,17 @@ function AddressSection({
   return (
     <Box sx={{ display: 'grid', gap: 3 }}>
       <Box>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.address')}</Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Field t={t} label={t('home.field.salutation')} value={data.salutation ?? ''} editing={editing} onChange={(v) => set('salutation', v)} />
-          <Field t={t} label={t('home.field.street')} value={data.street ?? ''} editing={editing} onChange={(v) => set('street', v)} />
-          <Field t={t} label={t('home.field.postalCode')} value={data.postalCode ?? ''} editing={editing} onChange={(v) => set('postalCode', v)} />
-          <Field t={t} label={t('home.field.city')} value={data.city ?? ''} editing={editing} onChange={(v) => set('city', v)} />
-          <SelectField t={t} label={t('home.field.country')} value={data.country ?? ''} options={countryOptions} editing={editing} onChange={(v) => set('country', v)} />
-          <SelectField t={t} label={t('home.field.canton')} value={data.canton ?? ''} options={cantonOptions} editing={editing} onChange={(v) => set('canton', v)} />
-          <Field t={t} label={t('home.field.phone1')} value={data.phone1 ?? ''} editing={editing} onChange={(v) => set('phone1', v)} />
-          <Field t={t} label={t('home.field.phone2')} value={data.phone2 ?? ''} editing={editing} onChange={(v) => set('phone2', v)} />
-          <Field t={t} label={t('home.field.mobile')} value={data.mobile ?? ''} editing={editing} onChange={(v) => set('mobile', v)} />
-          <Field t={t} label={t('home.field.email')} value={data.email ?? ''} editing={editing} onChange={(v) => set('email', v)} />
-        </Box>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>{title}</Typography>
+        <ConfigFieldGroup
+          form={form}
+          group="address"
+          errors={group.errors}
+          readOnlyKeys={group.readOnlyKeys}
+          values={data as Record<string, unknown>}
+          editing={editing}
+          onChange={(key, value) => onChange({ ...data, [key]: value })}
+          options={{ countries: countryOptions, cantons: cantonOptions }}
+        />
       </Box>
 
       <Box>
@@ -504,7 +514,8 @@ function AddressSection({
   );
 }
 
-function FamilySection({ t, data, editing, onChange }: { t: T; data: BasicData; editing: boolean; onChange: (d: BasicData) => void }) {
+function FamilySection({ t, form, group, data, editing, onChange }: { t: T; form: ResolvedForm; group: EditableGroup; data: BasicData; editing: boolean; onChange: (d: BasicData) => void }) {
+  const title = useGroupTitle(form, 'civilStatus');
   const partner = data.partner ?? { lastName: '', firstName: '', birthDate: '', socialSecurityNumber: '' };
   const children = data.children ?? [];
 
@@ -515,11 +526,16 @@ function FamilySection({ t, data, editing, onChange }: { t: T; data: BasicData; 
   return (
     <Box sx={{ display: 'grid', gap: 3 }}>
       <Box>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('home.section.civilStatus')}</Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Field t={t} label={t('home.field.civilStatus')} value={data.civilStatus ?? ''} editing={editing} onChange={(v) => set('civilStatus', v)} />
-          <Field t={t} label={t('home.field.civilStatusSince')} value={data.civilStatusSince ?? ''} editing={editing} onChange={(v) => set('civilStatusSince', v)} />
-        </Box>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>{title}</Typography>
+        <ConfigFieldGroup
+          form={form}
+          group="civilStatus"
+          errors={group.errors}
+          readOnlyKeys={group.readOnlyKeys}
+          values={data as Record<string, unknown>}
+          editing={editing}
+          onChange={(key, value) => onChange({ ...data, [key]: value })}
+        />
       </Box>
 
       <Box>
