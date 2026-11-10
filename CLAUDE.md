@@ -33,8 +33,10 @@ Environments: **dev** (N=1, `.env.dev`, `compose/docker-compose.dev.yml`) runs
 only pg/Keycloak/Mailpit in Docker, with the API and web on the host: pg 5431,
 Keycloak 8091, web 3001, API 8001, Mailpit SMTP 1025 / inbox UI 8025. This is
 the day-to-day setup. **local** (N=2, `.env.local`) runs everything in Docker
-behind Caddy on 5432/8092/3002/8002. The VS Code launch configs "Development …"
-and "Local …" debug the API against `.env.dev` and `.env.local` respectively.
+behind Caddy on 5432/8092/3002/8002. The VS Code "Development …" launch configs
+debug the host-run API and web against `.env.dev`; "Local Full Stack: Docker +
+Chrome" brings up the local compose stack (task `local: stack up`) and opens
+Chrome on 3002. Host processes must not run on local's ports, which Caddy holds.
 
 npm scripts are environment-agnostic. They read all config from the shell and
 never from an env file, so source `env.dev.sh` / `env.local.sh` first. Don't

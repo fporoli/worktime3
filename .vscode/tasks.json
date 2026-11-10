@@ -24,6 +24,20 @@
         }
       },
       "presentation": { "reveal": "always", "panel": "dedicated", "group": "dev" }
+    },
+    {
+      "label": "local: stack up",
+      "type": "shell",
+      "command": ". ./env.local.sh && docker compose -f compose/docker-compose.local.yml up -d --build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "local" }
+    },
+    {
+      "label": "local: stack down",
+      "type": "shell",
+      "command": ". ./env.local.sh && docker compose -f compose/docker-compose.local.yml down",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "local" }
     }
   ]
 }
