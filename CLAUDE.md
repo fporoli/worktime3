@@ -71,12 +71,12 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   (`NNN-description.sql`, formatted SQL with `--changeset author:id`
   headers), added to `db.changelog-master.xml`. Never edit an existing
   changeset; Liquibase checksums them.
-- Then run `npm run db:migrate` and `npm run db:introspect`. (`db:introspect` currently
-  fails: the installed drizzle-kit 0.18 has no `introspect` command. drizzle-kit
-  0.31.x, which matches drizzle-orm 0.45, run from outside the repo works.)
+- Then run `npm run db:migrate` and `npm run db:introspect` (drizzle-kit 0.31,
+  matching drizzle-orm 0.45; needs `DATABASE_URL` exported).
 - `apps/api/src/db/schema.ts` and `relations.ts` are **generated**. Never
-  hand-edit them. `scripts/fix-introspected-schema.mjs` patches `citext`
-  columns after introspection.
+  hand-edit them. `scripts/fix-introspected-schema.mjs` patches what drizzle-kit
+  gets wrong after introspection (`citext` columns, truncated `COALESCE(... ::uuid)`
+  index expressions); extend it rather than editing the output.
 - The seed (`infra/postgres/seeds/seed.sql`) is separate from migrations and
   must run cleanly on a freshly migrated database, which CI checks. Insert
   parents before children (e.g. `users` before `organizations`, which

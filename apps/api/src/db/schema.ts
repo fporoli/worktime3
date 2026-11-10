@@ -101,7 +101,7 @@ export const field_config = pgTable("field_config", {
 	is_custom: boolean().default(false).notNull(),
 	config: jsonb().default({}).notNull(),
 }, (table) => [
-	uniqueIndex("uq_field_config").using("btree", sql`COALESCE(organization_id, '00000000-0000-0000-0000-000000000000`, sql`form_id`, sql`field_key`),
+	uniqueIndex("uq_field_config").using("btree", sql`COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid)`, sql`form_id`, sql`field_key`),
 	foreignKey({
 			columns: [table.organization_id],
 			foreignColumns: [organizations.id],
@@ -404,7 +404,8 @@ export const static_data = pgTable("static_data", {
 	translation: jsonb().default({}).notNull(),
 	organization_id: uuid(),
 }, (table) => [
-	index("idx_static_data_org_entity").using("btree", table.organization_id.asc().nullsLast().op("text_ops"), table.entity.asc().nullsLast().op("uuid_ops"), table.enum_name.asc().nullsLast().op("uuid_ops")),
+	index("idx_static_data_global_entity").using("btree", table.entity.asc().nullsLast().op("text_ops"), table.enum_name.asc().nullsLast().op("text_ops")).where(sql`(organization_id IS NULL)`),
+	index("idx_static_data_org_entity").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.entity.asc().nullsLast().op("text_ops"), table.enum_name.asc().nullsLast().op("text_ops")),
 	uniqueIndex("uq_static_data_org_entity_enum").using("btree", sql`COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid)`, sql`entity`, sql`enum_name`),
 	foreignKey({
 			columns: [table.organization_id],
