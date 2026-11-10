@@ -442,11 +442,12 @@ built before any tag exists show as untagged; host builds as local.
 
 ### Azure Container Apps
 
-The apps run as Container Apps in a VNet-integrated environment:
+The apps run as Container Apps in a plain Consumption environment (no custom
+VNet, which would add an always-on load balancer):
 `worktime3-auth` (Keycloak), `worktime3-api`, `worktime3-web`, plus the
 `worktime3-migrate` and `worktime3-seed` jobs. Postgres is an Azure Database
-for PostgreSQL Flexible Server (Burstable B1ms, private access in the same
-VNet, TLS required, `citext`/`uuid-ossp` allowlisted via `azure.extensions`). `build-push` publishes the extra
+for PostgreSQL Flexible Server (Burstable B1ms, public endpoint open only to
+Azure services, TLS required, `citext`/`uuid-ossp` allowlisted via `azure.extensions`). `build-push` publishes the extra
 `migrate`, `seed`, `dbtools` and `web-azure` images; `web-azure` has the Azure hostnames
 baked in from the repo variables `AZURE_API_URL` / `AZURE_KEYCLOAK_URL`.
 
@@ -474,19 +475,24 @@ rollout is the separate `azure-deploy` workflow.
 |---|---|
 | `freeze` | Stops the apps and Postgres. Storage is still billed, and Azure restarts a stopped server after 7 days, so re-run it before then. |
 | `unfreeze` | Starts Postgres and the apps. |
-| `deepfreeze` | Stops the apps, dumps the database to the `db-dumps` blob container, then deletes the Postgres server and its DNS zone. The server is kept if the dump fails. |
+| `deepfreeze` | Stops the apps, dumps the database to the `db-dumps` blob container, then deletes the Postgres server. The server is kept if the dump fails. |
 | `deepunfreeze` | Recreates the server, restores the newest dump, starts the apps. |
 | `dropdb` | Stops the apps and deletes the server with no dump. All data is lost; you must type the server name in `confirm`. |
 | `initdb` | Creates an empty server, runs migrations, starts the apps. Refuses if a server exists. The `seed` checkbox also loads the demo data. |
 | `seed` | Loads the demo data, fresh database only. |
 | `apps` | Re-applies the app specs after a config or secret change. |
-| `adminer` | Creates or updates the Adminer database UI. The first run must be from a laptop, because it creates the Entra registration. |
 
 `base` and `github` have no workflow: they need more rights than the deploy
 identity has. `azure-deploy` needs a running database, so unfreeze first.
 
-Adminer is the way into the private database: `worktime3-adminer` runs inside
-the environment, scales to zero, and stops and starts with the other apps. It
-asks for three logins: Microsoft sign-in (tenant accounts only), the browser
-prompt (`admin`, same password as the VPS), then Adminer's own. In Adminer
-choose PostgreSQL and log in as `worktime` with `POSTGRES_PASSWORD`.
+To reach the database from a laptop (psql, DBeaver, ...), open the firewall for
+your IP while you need it, and close it again afterwards:
+
+```sh
+az postgres flexible-server firewall-rule create -g <rg> -n <server> -r laptop \
+  --start-ip-address <your ip> --end-ip-address <your ip>
+az postgres flexible-server firewall-rule delete -g <rg> -n <server> -r laptop --yes
+```
+
+Connect to `<server>.postgres.database.azure.com` as `worktime` with
+`POSTGRES_PASSWORD` and `sslmode=require`.

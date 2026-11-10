@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Provisions worktime3 on Azure Container Apps, with Postgres on a private Azure Database
-# for PostgreSQL Flexible Server (Burstable B1ms), in the tenant and subscription configured
+# Provisions worktime3 on Azure Container Apps, with Postgres on an Azure Database for
+# PostgreSQL Flexible Server (Burstable B1ms), in the tenant and subscription configured
 # in infra/azure/.env.azure (copy env.example.azure.cfg).
+# This is a demo deployment, sized for cost: no custom VNet (it would add an always-on load
+# balancer), and Postgres has a public endpoint that only Azure services may reach, with TLS
+# and a password.
 # Every phase is safe to re-run: resources are created when missing, updated otherwise.
 #
-#   provision.sh base     resource group, VNet, Postgres server, storage, Container Apps
+#   provision.sh base     resource group, Postgres server, storage, Container Apps
 #                         environment; prints the hostnames and the GitHub variables to set
 #   provision.sh apps     migrate job (and runs it), keycloak, api, web
 #   provision.sh seed     loads infra/postgres/seeds/seed.sql (fresh database only)
@@ -18,8 +21,6 @@
 #   provision.sh deepunfreeze  recreates the server, restores the newest dump, starts the apps
 #   provision.sh dropdb   stops the apps and deletes the Postgres server without a dump
 #   provision.sh initdb   creates an empty server, runs migrations, starts the apps
-#   provision.sh adminer  Adminer database UI behind Entra sign-in and a password prompt.
-#                         The first run needs a laptop: it creates the Entra registration
 #
 # Needs: az CLI (logged in: az login --tenant <id>), node, bash (Git Bash on Windows).
 # The azure-* GitHub workflows run the same phases, with the config in their environment.
@@ -44,14 +45,10 @@ elif [ -z "${GITHUB_ACTIONS:-}" ]; then
 fi
 
 ENV_NAME=worktime3-env
-VNET=worktime3-vnet
-SUBNET=aca
-PG_SUBNET=postgres
 PG_HOST="${PG_SERVER_NAME:-}.postgres.database.azure.com"
 AUTH_APP=worktime3-auth
 API_APP=worktime3-api
 WEB_APP=worktime3-web
-ADMINER_APP=worktime3-adminer
 MIGRATE_JOB=worktime3-migrate
 SEED_JOB=worktime3-seed
 DB_JOB=worktime3-dbtools
@@ -81,25 +78,14 @@ login_check() {
 env_domain() { tsv containerapp env show -g "$RESOURCE_GROUP" -n "$ENV_NAME" --query properties.defaultDomain; }
 
 ensure_postgres() {
-  # Private access: the zone linked to the VNet is what lets apps in the environment
-  # resolve $PG_HOST to the server's private IP.
-  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com" pg_zone_id pg_subnet_id
-  if ! az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
-    az network private-dns zone create -g "$RESOURCE_GROUP" -n "$pg_zone" -o none
-  fi
-  if ! az network private-dns link vnet show -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" -o none 2>/dev/null; then
-    az network private-dns link vnet create -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$VNET" \
-      --virtual-network "$VNET" --registration-enabled false -o none
-  fi
-  pg_zone_id="$(tsv network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" --query id)"
-  pg_subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" --query id)"
-
+  # Public access, but 0.0.0.0 creates the one firewall rule that admits only connections
+  # from Azure services (the Container Apps have no fixed outbound IP to allow instead).
   # Takes several minutes.
   if ! az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -o none 2>/dev/null; then
     az postgres flexible-server create -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" -l "$LOCATION" \
       --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 16 \
       --admin-user worktime --admin-password "$POSTGRES_PASSWORD" \
-      --subnet "$pg_subnet_id" --private-dns-zone "$pg_zone_id" \
+      --public-access 0.0.0.0 \
       --yes -o none
   fi
   if ! az postgres flexible-server db show -g "$RESOURCE_GROUP" --server-name "$PG_SERVER_NAME" -n worktime -o none 2>/dev/null; then
@@ -110,20 +96,9 @@ ensure_postgres() {
     --name azure.extensions --value CITEXT,UUID-OSSP -o none
 }
 
-# The DNS zone goes too: it is billed monthly and ensure_postgres recreates it.
 delete_postgres() {
-  local pg_zone="$PG_SERVER_NAME.private.postgres.database.azure.com"
   if pg_exists; then
     az postgres flexible-server delete -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" --yes -o none
-  fi
-  if az network private-dns zone show -g "$RESOURCE_GROUP" -n "$pg_zone" -o none 2>/dev/null; then
-    # Delete every link in the zone, not just ours: Azure refuses to delete a zone that
-    # still has nested resources (CannotDeleteResource).
-    local link
-    for link in $(az network private-dns link vnet list -g "$RESOURCE_GROUP" -z "$pg_zone" --query '[].name' -o tsv | tr -d '\r'); do
-      az network private-dns link vnet delete -g "$RESOURCE_GROUP" -z "$pg_zone" -n "$link" --yes -o none
-    done
-    az network private-dns zone delete -g "$RESOURCE_GROUP" -n "$pg_zone" --yes -o none
   fi
   echo "  $PG_SERVER_NAME deleted"
 }
@@ -136,22 +111,6 @@ base() {
   done
   az group create -n "$RESOURCE_GROUP" -l "$LOCATION" -o none
 
-  # One VNet for the apps and a private Postgres server, so the database has no public
-  # endpoint at all. Each subnet is delegated to the service that lives in it.
-  if ! az network vnet show -g "$RESOURCE_GROUP" -n "$VNET" -o none 2>/dev/null; then
-    az network vnet create -g "$RESOURCE_GROUP" -n "$VNET" -l "$LOCATION" --address-prefixes 10.40.0.0/16 -o none
-  fi
-  if ! az network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$SUBNET" -o none 2>/dev/null; then
-    az network vnet subnet create -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$SUBNET" \
-      --address-prefixes 10.40.0.0/23 --delegations Microsoft.App/environments -o none
-  fi
-  if ! az network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" -o none 2>/dev/null; then
-    az network vnet subnet create -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$PG_SUBNET" \
-      --address-prefixes 10.40.2.0/28 --delegations Microsoft.DBforPostgreSQL/flexibleServers -o none
-  fi
-  local subnet_id
-  subnet_id="$(tsv network vnet subnet show -g "$RESOURCE_GROUP" --vnet-name "$VNET" -n "$SUBNET" --query id)"
-
   ensure_postgres
 
   # Uploaded documents (DOCUMENTS_DIR): plain files, so cheap standard SMB is fine.
@@ -163,9 +122,14 @@ base() {
     az storage share-rm create -g "$RESOURCE_GROUP" --storage-account "$DOCS_STORAGE_ACCOUNT" -n documents --quota 10 -o none
   fi
 
+  # No --infrastructure-subnet-resource-id: with a custom VNet Azure adds a managed load
+  # balancer that bills around the clock, even while every app is stopped.
   if ! az containerapp env show -g "$RESOURCE_GROUP" -n "$ENV_NAME" -o none 2>/dev/null; then
     az containerapp env create -g "$RESOURCE_GROUP" -n "$ENV_NAME" -l "$LOCATION" \
-      --infrastructure-subnet-resource-id "$subnet_id" --enable-workload-profiles -o none
+      --enable-workload-profiles -o none
+  elif [ -n "$(tsv containerapp env show -g "$RESOURCE_GROUP" -n "$ENV_NAME" --query properties.vnetConfiguration.infrastructureSubnetId)" ]; then
+    echo "$ENV_NAME is still VNet-integrated: delete it (and worktime3-vnet) first, then re-run base." >&2
+    exit 1
   fi
   local docs_key
   docs_key="$(tsv storage account keys list -g "$RESOURCE_GROUP" -n "$DOCS_STORAGE_ACCOUNT" --query '[0].value')"
@@ -441,77 +405,6 @@ EOF
   run_job "$SEED_JOB"
 }
 
-# Entra sign-in in front of the whole app. No client secret: Azure then signs in with ID
-# tokens, so there is no credential to store, rotate or carry through app updates.
-adminer_signin() {
-  local name=worktime3-adminer app_id
-  app_id="$(tsv ad app list --display-name "$name" --query '[0].appId')"
-  [ -n "$app_id" ] || app_id="$(tsv ad app create --display-name "$name" --sign-in-audience AzureADMyOrg --query appId)"
-  az ad app update --id "$app_id" --enable-id-token-issuance true \
-    --web-redirect-uris "https://$ADMINER_APP.$DOMAIN/.auth/login/aad/callback" -o none
-  az ad sp show --id "$app_id" -o none 2>/dev/null || az ad sp create --id "$app_id" -o none
-  az containerapp auth microsoft update -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --client-id "$app_id" \
-    --issuer "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" --yes -o none
-  az containerapp auth update -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --enabled true \
-    --action RedirectToLoginPage --redirect-provider azureactivedirectory --require-https true -o none
-  echo "  $ADMINER_APP sign-in ok"
-}
-
-# Postgres has no public endpoint, so Adminer is the way in: it runs in the environment and
-# only it is public. Caddy adds the same Basic Auth prompt as the VPS (sites/db.caddy) on
-# 8081; Adminer stays on localhost. Requests reach Caddy only after Entra sign-in.
-adminer() {
-  require PG_SERVER_NAME ADMINER_PASSWORD_HASH
-  prepare_specs
-  # The deploy identity can't create the Entra registration, so a workflow must not be the
-  # one to create this app, or it would come up without sign-in.
-  if [ -n "${GITHUB_ACTIONS:-}" ]; then
-    local enabled
-    enabled="$(tsv containerapp auth show -g "$RESOURCE_GROUP" -n "$ADMINER_APP" --query platform.enabled 2>/dev/null || true)"
-    [ "${enabled,,}" = true ] || { echo "Run provision.sh adminer from a laptop first, to set up sign-in." >&2; exit 1; }
-  fi
-
-  local caddyfile
-  caddyfile="$(printf ':8081 {\n  basic_auth {\n    admin %s\n  }\n  reverse_proxy localhost:8080\n}\n' "$ADMINER_PASSWORD_HASH" |
-    node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0, "utf8")))')"
-  { spec_head; cat <<EOF
-    activeRevisionsMode: Single
-    secrets:
-      - name: ghcr-token
-        value: "$GHCR_TOKEN"
-      - name: caddyfile
-        value: $caddyfile
-    ingress: { external: true, targetPort: 8081, transport: auto, allowInsecure: false }
-  template:
-    containers:
-      - name: adminer
-        image: adminer:5
-        resources: { cpu: 0.25, memory: 0.5Gi }
-        env:
-          - { name: ADMINER_DEFAULT_SERVER, value: "$PG_HOST" }
-      - name: caddy
-        image: caddy:2
-        resources: { cpu: 0.25, memory: 0.5Gi }
-        volumeMounts:
-          - { volumeName: caddy-config, mountPath: /etc/caddy }
-    scale: { minReplicas: 0, maxReplicas: 1 }
-    volumes:
-      - name: caddy-config
-        storageType: Secret
-        secrets:
-          - { secretRef: caddyfile, path: Caddyfile }
-EOF
-  } > "$RENDER/adminer.yaml"
-  upsert app "$ADMINER_APP" "$RENDER/adminer.yaml"
-  [ -n "${GITHUB_ACTIONS:-}" ] || adminer_signin
-
-  cat <<EOF
-
-Adminer: https://$ADMINER_APP.$DOMAIN
-Choose PostgreSQL, then log in as worktime with POSTGRES_PASSWORD. Needs Postgres running.
-EOF
-}
-
 # Creates the credential, or corrects its subject if one with that name already exists.
 federated_credential() {
   local app_id="$1" cred="$2" subject="$3" params
@@ -568,7 +461,7 @@ secrets() {
   # Config lives in the `azure` GitHub Environment (the workflows declare it). Creating it
   # is idempotent; the secrets and variables below are scoped to it, not the whole repo.
   gh api -X PUT "repos/$GITHUB_REPOSITORY/environments/azure" --silent
-  for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET ADMINER_PASSWORD_HASH SMTP_PASSWORD; do
+  for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET SMTP_PASSWORD; do
     [ -z "${!name:-}" ] || printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY" --env azure
   done
   gh variable set AZURE_RESOURCE_GROUP --repo "$GITHUB_REPOSITORY" --env azure --body "$RESOURCE_GROUP"
@@ -600,12 +493,9 @@ app_power() {
   return 1
 }
 
-# Adminer is optional, so it only joins stop and start once it exists.
-adminer_if_present() { az containerapp show -g "$RESOURCE_GROUP" -n "$ADMINER_APP" -o none 2>/dev/null && echo "$ADMINER_APP"; }
-
 stop_apps() {
   local app
-  for app in $(adminer_if_present) "$WEB_APP" "$API_APP" "$AUTH_APP"; do
+  for app in "$WEB_APP" "$API_APP" "$AUTH_APP"; do
     app_power stop "$app"
   done
 }
@@ -613,7 +503,7 @@ stop_apps() {
 # Postgres has to be up first: Keycloak and the API need it to start.
 start_apps() {
   local app
-  for app in "$AUTH_APP" "$API_APP" "$WEB_APP" $(adminer_if_present); do
+  for app in "$AUTH_APP" "$API_APP" "$WEB_APP"; do
     app_power start "$app"
   done
   echo
@@ -660,7 +550,8 @@ blob_url() {
   printf 'https://%s.blob.core.windows.net/%s/%s?%s' "$DOCS_STORAGE_ACCOUNT" "$DUMP_CONTAINER" "$blob" "$sas"
 }
 
-# Runs dbtools.sh inside the environment, the only place that can reach the private server.
+# Runs dbtools.sh inside the environment, which the Postgres firewall admits (a laptop or a
+# GitHub runner would not be).
 db_job() {
   local action="$1" url="$2"
   prepare_specs
@@ -775,6 +666,6 @@ initdb() {
 }
 
 case "${1:-}" in
-  base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb|adminer) login_check; "$1" ;;
-  *) echo "Usage: $0 base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb|adminer" >&2; exit 1 ;;
+  base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb) login_check; "$1" ;;
+  *) echo "Usage: $0 base|apps|seed|github|secrets|freeze|unfreeze|deepfreeze|deepunfreeze|dropdb|initdb" >&2; exit 1 ;;
 esac

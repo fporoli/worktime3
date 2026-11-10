@@ -367,8 +367,9 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
               value={submitNote}
               onChange={(e) => setSubmitNote(e.target.value)}
               multiline
-              minRows={2}
-              sx={{ mt: 2, mb: 1.5, display: 'block', width: '100%', maxWidth: 720, '& textarea': { resize: 'vertical' } }}
+              fullWidth
+              minRows={4}
+              sx={{ mt: 2, mb: 1.5, display: 'flex', maxWidth: 900, '& textarea': { resize: 'vertical' } }}
             />
             <Button variant="contained" onClick={submit} disabled={items.length === 0}>{t('expenseReports.submit')}</Button>
           </Box>

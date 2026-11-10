@@ -348,12 +348,12 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
             value={submitNote}
             onChange={(e) => setSubmitNote(e.target.value)}
             multiline
-            minRows={2}
+            fullWidth
+            minRows={4}
             sx={{
-              display: 'block',
+              display: 'flex',
               mb: 1.5,
-              width: '100%',
-              maxWidth: 720,
+              maxWidth: 900,
               '& textarea': { resize: 'vertical' },
             }}
           />

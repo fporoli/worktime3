@@ -12,7 +12,7 @@ on:
         description: 'What to run'
         required: true
         type: choice
-        options: [apps, seed, initdb, freeze, unfreeze, deepfreeze, deepunfreeze, adminer, dropdb]
+        options: [apps, seed, initdb, freeze, unfreeze, deepfreeze, deepunfreeze, dropdb]
       image_tag: { description: 'Image tag (apps only)', default: 'latest' }
       seed: { description: 'initdb only: also load the demo data', type: boolean, default: true }
       confirm: { description: 'dropdb only: type the Postgres server name to confirm' }
@@ -78,7 +78,6 @@ jobs:
           KEYCLOAK_ADMIN: ${{ vars.KEYCLOAK_ADMIN }}
           KEYCLOAK_ADMIN_PASSWORD: ${{ secrets.KEYCLOAK_ADMIN_PASSWORD }}
           API_JWT_SECRET: ${{ secrets.API_JWT_SECRET }}
-          ADMINER_PASSWORD_HASH: ${{ secrets.ADMINER_PASSWORD_HASH }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}
           SMTP_FROM: ${{ vars.SMTP_FROM }}
