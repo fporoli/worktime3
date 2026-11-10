@@ -402,10 +402,10 @@ export const static_data = pgTable("static_data", {
 	enum_name: varchar({ length: 128 }).notNull(),
 	values: jsonb().default({}).notNull(),
 	translation: jsonb().default({}).notNull(),
-	organization_id: uuid().notNull(),
+	organization_id: uuid(),
 }, (table) => [
 	index("idx_static_data_org_entity").using("btree", table.organization_id.asc().nullsLast().op("text_ops"), table.entity.asc().nullsLast().op("uuid_ops"), table.enum_name.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("uq_static_data_org_entity_enum").using("btree", table.organization_id.asc().nullsLast().op("uuid_ops"), table.entity.asc().nullsLast().op("uuid_ops"), table.enum_name.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("uq_static_data_org_entity_enum").using("btree", sql`COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid)`, sql`entity`, sql`enum_name`),
 	foreignKey({
 			columns: [table.organization_id],
 			foreignColumns: [organizations.id],

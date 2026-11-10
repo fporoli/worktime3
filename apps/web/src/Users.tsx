@@ -1,7 +1,33 @@
-import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, LinearProgress, MenuItem, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
-import { BasicDataPanel } from './Home';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  InputAdornment,
+  LinearProgress,
+  MenuItem,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import { BasicDataPanel } from './BasicDataPanel';
+import { BalanceLedger } from './BalanceLedger';
 import { useT } from './i18n';
+import { PageHeader, TableEmptyRow } from './components';
+import { AccountBalanceWalletIcon, CloseIcon, PeopleIcon, PersonIcon, SearchIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -12,22 +38,22 @@ interface RoleOption {
 }
 
 interface Member {
-  id: string; // membership id
+  id: string;
   user_id: string;
   status: string;
   email: string;
   display_name: string;
-  /** Who this member's timesheet approvals route to; null means they don't need approval (e.g. an owner). */
   manager_user_id: string | null;
   manager_display_name: string | null;
-  /** A membership can hold more than one role. */
   role_ids: string[];
   role_names: string[];
 }
 
 interface UsersProps {
   orgId: string;
-  role: 'admin' | 'manager' | 'user';
+  isAdmin: boolean;
+  isHr: boolean;
+  canManage: boolean;
   authHeaders: () => Promise<Record<string, string>>;
 }
 
@@ -37,14 +63,19 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
   suspended: 'error',
 };
 
-export default function Users({ orgId, role, authHeaders }: UsersProps) {
+export default function Users({ orgId, isAdmin, isHr, canManage, authHeaders }: UsersProps) {
   const t = useT();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [addRoleFor, setAddRoleFor] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [basicDataFor, setBasicDataFor] = useState<Member | null>(null);
+  const [balancesFor, setBalancesFor] = useState<Member | null>(null);
+
+  const canAccessBasicData = isAdmin || isHr;
+  const canViewBalances = isAdmin || canManage;
 
   async function reloadMembers() {
     setLoading(true);
@@ -58,6 +89,10 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
   }
 
   async function reloadRoles() {
+    if (!isAdmin) {
+      setRoles([]);
+      return;
+    }
     try {
       const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
       const data = await res.json();
@@ -66,10 +101,10 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
   }
 
   useEffect(() => {
-    reloadMembers();
-    reloadRoles();
+    void reloadMembers();
+    void reloadRoles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
+  }, [orgId, isAdmin]);
 
   async function grantRole(membershipId: string) {
     const roleId = addRoleFor[membershipId];
@@ -134,107 +169,181 @@ export default function Users({ orgId, role, authHeaders }: UsersProps) {
     }
   }
 
+  const filteredMembers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        m.display_name.toLowerCase().includes(q) ||
+        m.email.toLowerCase().includes(q) ||
+        m.role_names.some((r) => r.toLowerCase().includes(q)),
+    );
+  }, [members, search]);
+
+  function statusLabel(status: string): string {
+    const key = `users.status.${status}`;
+    const translated = t(key);
+    return translated === key ? status : translated;
+  }
+
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('users.title')}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('users.subtitle')}
-      </Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('users.title')} subtitle={t('users.subtitle')} />
 
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {loading && <LinearProgress sx={{ mb: 2 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
 
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('common.name')}</TableCell>
-            <TableCell>{t('common.email')}</TableCell>
-            <TableCell>{t('common.status')}</TableCell>
-            <TableCell>{t('users.col.manager')}</TableCell>
-            <TableCell>{t('users.col.roles')}</TableCell>
-            <TableCell>{t('users.col.addRole')}</TableCell>
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {members.map((m) => {
-            const availableRoles = roles.filter((r) => !m.role_ids.includes(r.id));
-            return (
-              <TableRow key={m.id} hover>
-                <TableCell>{m.display_name}</TableCell>
-                <TableCell>{m.email}</TableCell>
-                <TableCell>
-                  <Chip label={m.status} size="small" color={STATUS_COLOR[m.status] ?? 'default'} />
-                </TableCell>
-                <TableCell>
-                  {role === 'admin' ? (
-                    <TextField
-                      select
-                      size="small"
-                      value={m.manager_user_id ?? ''}
-                      onChange={(e) => setManager(m.id, e.target.value)}
-                      sx={{ minWidth: 160 }}
-                    >
-                      <MenuItem value=""><em>{t('users.noManager')}</em></MenuItem>
-                      {members.filter((o) => o.id !== m.id).map((o) => (
-                        <MenuItem key={o.user_id} value={o.user_id}>{o.display_name}</MenuItem>
-                      ))}
-                    </TextField>
-                  ) : (
-                    m.manager_display_name ?? '—'
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {m.role_ids.map((rid, i) => (
-                      <Chip
-                        key={rid}
-                        label={m.role_names[i] ?? rid}
-                        size="small"
-                        onDelete={m.role_ids.length > 1 ? () => revokeRole(m.id, rid) : undefined}
-                      />
-                    ))}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField
-                      select
-                      size="small"
-                      value={addRoleFor[m.id] ?? ''}
-                      onChange={(e) => setAddRoleFor((p) => ({ ...p, [m.id]: e.target.value }))}
-                      sx={{ minWidth: 140 }}
-                      disabled={availableRoles.length === 0}
-                    >
-                      <MenuItem value=""><em>{t('common.select')}</em></MenuItem>
-                      {availableRoles.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
-                    </TextField>
-                    <Button size="small" onClick={() => grantRole(m.id)} disabled={!addRoleFor[m.id]}>{t('common.add')}</Button>
-                  </Box>
-                </TableCell>
-                <TableCell align="right">
-                  <Button size="small" onClick={() => setBasicDataFor(m)}>{t('users.basicData')}</Button>
-                </TableCell>
+      <Paper sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, mb: 2 }}>
+          <TextField
+            size="small"
+            placeholder={t('users.searchPlaceholder')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ minWidth: { xs: '100%', sm: 300 } }}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" color="action" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </Box>
+
+        {loading && <LinearProgress sx={{ mb: 2 }} />}
+
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('common.name')}</TableCell>
+                <TableCell>{t('common.email')}</TableCell>
+                <TableCell>{t('common.status')}</TableCell>
+                <TableCell>{t('users.col.manager')}</TableCell>
+                <TableCell>{t('users.col.roles')}</TableCell>
+                {isAdmin && <TableCell>{t('users.col.addRole')}</TableCell>}
+                {(canAccessBasicData || canViewBalances) && <TableCell align="right">{t('common.actions')}</TableCell>}
               </TableRow>
-            );
-          })}
-          {members.length === 0 && !loading && (
-            <TableRow><TableCell colSpan={7}>{t('users.empty')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
+            </TableHead>
+            <TableBody>
+              {filteredMembers.map((m) => {
+                const availableRoles = roles.filter((r) => !m.role_ids.includes(r.id));
+                return (
+                  <TableRow key={m.id} hover>
+                    <TableCell sx={{ fontWeight: 600 }}>{m.display_name}</TableCell>
+                    <TableCell>{m.email}</TableCell>
+                    <TableCell>
+                      <Chip label={statusLabel(m.status)} size="small" color={STATUS_COLOR[m.status] ?? 'default'} />
+                    </TableCell>
+                    <TableCell>
+                      {isAdmin ? (
+                        <TextField
+                          select
+                          size="small"
+                          value={m.manager_user_id ?? ''}
+                          onChange={(e) => void setManager(m.id, e.target.value)}
+                          sx={{ minWidth: 160 }}
+                        >
+                          <MenuItem value=""><em>{t('users.noManager')}</em></MenuItem>
+                          {members.filter((o) => o.id !== m.id).map((o) => (
+                            <MenuItem key={o.user_id} value={o.user_id}>{o.display_name}</MenuItem>
+                          ))}
+                        </TextField>
+                      ) : (
+                        m.manager_display_name ?? '—'
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                        {m.role_ids.map((rid, i) => (
+                          <Chip
+                            key={rid}
+                            label={m.role_names[i] ?? rid}
+                            size="small"
+                            onDelete={isAdmin && m.role_ids.length > 1 ? () => void revokeRole(m.id, rid) : undefined}
+                          />
+                        ))}
+                      </Box>
+                    </TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <TextField
+                            select
+                            size="small"
+                            value={addRoleFor[m.id] ?? ''}
+                            onChange={(e) => setAddRoleFor((p) => ({ ...p, [m.id]: e.target.value }))}
+                            sx={{ minWidth: 140 }}
+                            disabled={availableRoles.length === 0}
+                          >
+                            <MenuItem value=""><em>{t('common.select')}</em></MenuItem>
+                            {availableRoles.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
+                          </TextField>
+                          <Button size="small" onClick={() => void grantRole(m.id)} disabled={!addRoleFor[m.id]}>{t('common.add')}</Button>
+                        </Box>
+                      </TableCell>
+                    )}
+                    {(canAccessBasicData || canViewBalances) && (
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        {canViewBalances && (
+                          <Tooltip title={t('users.balances')}>
+                            <IconButton size="small" aria-label={t('users.balances')} onClick={() => setBalancesFor(m)}>
+                              <AccountBalanceWalletIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {canAccessBasicData && (
+                          <Button size="small" startIcon={<PersonIcon fontSize="small" />} onClick={() => setBasicDataFor(m)}>
+                            {t('users.basicData')}
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
+              {filteredMembers.length === 0 && !loading && (
+                <TableEmptyRow colSpan={isAdmin ? 7 : 6} icon={<PeopleIcon fontSize="inherit" />} title={t('users.empty')} />
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
 
       <Dialog open={!!basicDataFor} onClose={() => setBasicDataFor(null)} fullWidth maxWidth="md">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {basicDataFor?.display_name}
-          <IconButton size="small" aria-label={t('common.close')} onClick={() => setBasicDataFor(null)}>✕</IconButton>
+          <Typography variant="h6" component="span">{basicDataFor?.display_name}</Typography>
+          <IconButton size="small" aria-label={t('common.close')} onClick={() => setBasicDataFor(null)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ pb: 3 }}>
+        <DialogContent dividers sx={{ pb: 3 }}>
           {basicDataFor && (
-            <BasicDataPanel orgId={orgId} userId={basicDataFor.user_id} isSelf={false} authHeaders={authHeaders} />
+            <BasicDataPanel orgId={orgId} userId={basicDataFor.user_id} isSelf={false} embedded authHeaders={authHeaders} />
           )}
         </DialogContent>
       </Dialog>
-    </Paper>
+
+      <Dialog open={!!balancesFor} onClose={() => setBalancesFor(null)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="h6" component="span">
+            {balancesFor ? t('balances.forUser', { name: balancesFor.display_name }) : t('balances.title')}
+          </Typography>
+          <IconButton size="small" aria-label={t('common.close')} onClick={() => setBalancesFor(null)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {balancesFor && (
+            <BalanceLedger orgId={orgId} userId={balancesFor.user_id} isAdmin={isAdmin} authHeaders={authHeaders} />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBalancesFor(null)}>{t('common.close')}</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   );
 }

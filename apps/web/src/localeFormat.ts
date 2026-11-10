@@ -65,3 +65,42 @@ export function formatLocaleDateTime(iso: string, locale: string): string {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
 }
+
+/** Formats non-negative minutes as "Xh YYm", e.g. 95 -> "1h 35m", 60 -> "1h 00m". */
+export function formatDurationMinutes(minutes: number): string {
+  const rounded = Math.max(0, Math.round(minutes));
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Formats signed minutes with explicit +/- prefix, e.g. -65 -> "-1h 05m", 90 -> "+1h 30m". */
+export function formatSignedMinutes(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+';
+  return `${sign}${formatDurationMinutes(Math.abs(minutes))}`;
+}
+
+/** Formats byte sizes for attachments, e.g. 1536 -> "1.5 KB". */
+export function formatFileSize(bytes: number, locale = 'en'): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(bytes / 1024)} KB`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} MB`;
+}
+
+/** Relative timestamp for notifications (falls back to localized date beyond 7 days). */
+export function formatRelativeTime(iso: string, locale: string, nowMs = Date.now()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const diffSec = Math.round((d.getTime() - nowMs) / 1000);
+  const absSec = Math.abs(diffSec);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  if (absSec < 60) return rtf.format(diffSec, 'second');
+  const diffMin = Math.round(diffSec / 60);
+  if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute');
+  const diffHours = Math.round(diffMin / 60);
+  if (Math.abs(diffHours) < 24) return rtf.format(diffHours, 'hour');
+  const diffDays = Math.round(diffHours / 24);
+  if (Math.abs(diffDays) <= 7) return rtf.format(diffDays, 'day');
+  return d.toLocaleDateString(locale);
+}

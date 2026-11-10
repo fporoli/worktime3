@@ -8,17 +8,27 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   LinearProgress,
+  MenuItem,
   Paper,
+  Tab,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { useI18n } from './i18n';
+import { formatDurationMinutes, formatSignedMinutes } from './localeFormat';
+import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { BalanceLedger } from './BalanceLedger';
+import { DeleteIcon, EditIcon, PlayArrowIcon, StopIcon, TimerIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -34,27 +44,38 @@ interface Balance {
   vacationMinutes: number;
 }
 
-function formatSignedMinutes(minutes: number): string {
-  const sign = minutes < 0 ? '-' : '+';
-  const abs = Math.round(Math.abs(minutes));
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
-  return `${sign}${h}h ${String(m).padStart(2, '0')}m`;
+type RangeKey = '14d' | 'thisMonth' | 'lastMonth' | '90d';
+
+function rangeBounds(range: RangeKey): { from: string; to: string } {
+  const now = new Date();
+  if (range === 'thisMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return { from: start.toISOString(), to: end.toISOString() };
+  }
+  if (range === 'lastMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: start.toISOString(), to: end.toISOString() };
+  }
+  const days = range === '90d' ? 90 : 13;
+  return {
+    from: new Date(Date.now() - days * 86400000).toISOString(),
+    to: new Date(Date.now() + 86400000).toISOString(),
+  };
 }
 
 function formatDuration(startIso: string, endIso: string | null): string {
   if (!endIso) return '—';
-  const mins = Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
-  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+  const mins = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000;
+  return formatDurationMinutes(mins);
 }
 
 function formatDateTime(iso: string | null, locale: string): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(iso).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-/** ISO instant -> the 'YYYY-MM-DDTHH:mm' shape a `datetime-local` input wants, in local time. */
 function toLocalInput(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -68,11 +89,15 @@ function fromLocalInput(value: string): string {
 interface WorkTimeProps {
   orgId: string;
   userId: string;
+  isAdmin?: boolean;
   authHeaders: () => Promise<Record<string, string>>;
+  onWorkTimeChanged?: () => void;
 }
 
-export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) {
+export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, onWorkTimeChanged }: WorkTimeProps) {
   const { t, locale } = useI18n();
+  const [tab, setTab] = useState<'sessions' | 'balances'>('sessions');
+  const [range, setRange] = useState<RangeKey>('14d');
   const [status, setStatus] = useState<Session | null>(null);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [entries, setEntries] = useState<Session[]>([]);
@@ -80,6 +105,8 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [draft, setDraft] = useState<Session | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
 
   async function reloadStatus() {
     try {
@@ -96,9 +123,8 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
     } catch { /* offline fallback */ }
   }
 
-  async function reloadEntries() {
-    const from = new Date(Date.now() - 13 * 86400000).toISOString();
-    const to = new Date(Date.now() + 86400000).toISOString();
+  async function reloadEntries(selectedRange = range) {
+    const { from, to } = rangeBounds(selectedRange);
     try {
       const res = await fetch(
         `${API}/organizations/${orgId}/work-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
@@ -112,15 +138,20 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
   async function reloadAll() {
     setLoading(true);
     await Promise.all([reloadStatus(), reloadBalance(), reloadEntries()]);
+    setBalanceRefreshKey((k) => k + 1);
     setLoading(false);
   }
 
   useEffect(() => {
-    reloadAll();
+    void reloadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
-  // Ticking elapsed-time display while checked in.
+  useEffect(() => {
+    void reloadEntries(range);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
+
   useEffect(() => {
     if (!status?.check_in || status.check_out) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -141,6 +172,7 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
         return;
       }
       await reloadAll();
+      onWorkTimeChanged?.();
     } catch {
       setError(t('workTime.checkInFailed', { error: 'offline' }));
     }
@@ -156,6 +188,7 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
         return;
       }
       await reloadAll();
+      onWorkTimeChanged?.();
     } catch {
       setError(t('workTime.checkOutFailed', { error: 'offline' }));
     }
@@ -171,6 +204,7 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
         return;
       }
       await reloadAll();
+      onWorkTimeChanged?.();
     } catch {
       setError(t('workTime.deleteFailed', { error: 'offline' }));
     }
@@ -192,6 +226,7 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
       }
       setDraft(null);
       await reloadAll();
+      onWorkTimeChanged?.();
     } catch {
       setError(t('workTime.saveFailed', { error: 'offline' }));
     }
@@ -201,101 +236,182 @@ export default function WorkTime({ orgId, userId, authHeaders }: WorkTimeProps) 
   const elapsed = checkedIn ? Math.max(0, Math.round((now - new Date(status!.check_in).getTime()) / 60000)) : 0;
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('workTime.title')}</Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader
+        title={t('workTime.title')}
+        end={
+          balance && (
+            <>
+              <Chip
+                label={t('workTime.overtimeBalance', { value: formatSignedMinutes(balance.overtimeMinutes) })}
+                color={balance.overtimeMinutes < 0 ? 'error' : 'success'}
+                variant="outlined"
+                size="small"
+              />
+              <Chip
+                label={t('workTime.vacationBalance', { value: formatSignedMinutes(balance.vacationMinutes) })}
+                color="default"
+                variant="outlined"
+                size="small"
+              />
+            </>
+          )
+        }
+      />
 
-      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {loading && <LinearProgress />}
 
-      <Box sx={{ display: 'flex', gap: 1, my: 2, flexWrap: 'wrap' }}>
-        {balance && (
+      <Paper sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+            <Button
+              variant="contained"
+              color={checkedIn ? 'warning' : 'success'}
+              startIcon={checkedIn ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
+              onClick={checkedIn ? checkOut : checkIn}
+            >
+              {checkedIn ? t('workTime.checkOut') : t('workTime.checkIn')}
+            </Button>
+            {checkedIn && (
+              <Typography variant="body2" color="text.secondary">
+                {t('workTime.checkedInSince', { time: formatDateTime(status!.check_in, locale), elapsed: formatDurationMinutes(elapsed) })}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      </Paper>
+
+      <Paper sx={{ p: 2 }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+          <Tab value="sessions" label={t('workTime.tab.sessions')} />
+          <Tab value="balances" label={t('workTime.tab.balances')} />
+        </Tabs>
+
+        {tab === 'sessions' ? (
           <>
-            <Chip
-              label={t('workTime.overtimeBalance', { value: formatSignedMinutes(balance.overtimeMinutes) })}
-              color={balance.overtimeMinutes < 0 ? 'error' : 'success'}
-              variant="outlined"
-            />
-            <Chip
-              label={t('workTime.vacationBalance', { value: formatSignedMinutes(balance.vacationMinutes) })}
-              color="default"
-              variant="outlined"
-            />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{t('workTime.recentSessions')}</Typography>
+              <TextField
+                select
+                size="small"
+                label={t('workTime.rangeLabel')}
+                value={range}
+                onChange={(e) => setRange(e.target.value as RangeKey)}
+                sx={{ minWidth: 170 }}
+              >
+                <MenuItem value="14d">{t('workTime.range.14d')}</MenuItem>
+                <MenuItem value="thisMonth">{t('workTime.range.thisMonth')}</MenuItem>
+                <MenuItem value="lastMonth">{t('workTime.range.lastMonth')}</MenuItem>
+                <MenuItem value="90d">{t('workTime.range.90d')}</MenuItem>
+              </TextField>
+            </Box>
+
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('workTime.checkIn')}</TableCell>
+                    <TableCell>{t('workTime.checkOut')}</TableCell>
+                    <TableCell>{t('workTime.duration')}</TableCell>
+                    <TableCell>{t('time.comment')}</TableCell>
+                    <TableCell align="right">{t('common.actions')}</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {entries.map((e) => (
+                    <TableRow key={e.id} hover>
+                      <TableCell>{formatDateTime(e.check_in, locale)}</TableCell>
+                      <TableCell>{formatDateTime(e.check_out, locale)}</TableCell>
+                      <TableCell>{formatDuration(e.check_in, e.check_out)}</TableCell>
+                      <TableCell>{e.comment || '—'}</TableCell>
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        <Tooltip title={t('time.edit')}>
+                          <IconButton size="small" aria-label={t('time.edit')} onClick={() => setDraft(e)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={t('time.remove')}>
+                          <IconButton size="small" color="error" aria-label={t('time.remove')} onClick={() => setConfirmDeleteId(e.id)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {entries.length === 0 && (
+                    <TableEmptyRow colSpan={5} icon={<TimerIcon fontSize="inherit" />} title={t('time.noEntries')} />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
           </>
+        ) : (
+          <BalanceLedger
+            orgId={orgId}
+            userId={userId}
+            isAdmin={isAdmin}
+            authHeaders={authHeaders}
+            refreshKey={balanceRefreshKey}
+            onAdjusted={() => {
+              void reloadBalance();
+            }}
+          />
         )}
-      </Box>
-
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-        <Button variant="contained" color={checkedIn ? 'warning' : 'success'} onClick={checkedIn ? checkOut : checkIn}>
-          {checkedIn ? t('workTime.checkOut') : t('workTime.checkIn')}
-        </Button>
-        {checkedIn && (
-          <Typography variant="body2" color="text.secondary">
-            {t('workTime.checkedInSince', { time: formatDateTime(status!.check_in, locale), elapsed: `${Math.floor(elapsed / 60)}h ${String(elapsed % 60).padStart(2, '0')}m` })}
-          </Typography>
-        )}
-      </Box>
-
-      <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('workTime.recentSessions')}</Typography>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('workTime.checkIn')}</TableCell>
-            <TableCell>{t('workTime.checkOut')}</TableCell>
-            <TableCell>{t('workTime.duration')}</TableCell>
-            <TableCell>{t('time.comment')}</TableCell>
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {entries.map((e) => (
-            <TableRow key={e.id}>
-              <TableCell>{formatDateTime(e.check_in, locale)}</TableCell>
-              <TableCell>{formatDateTime(e.check_out, locale)}</TableCell>
-              <TableCell>{formatDuration(e.check_in, e.check_out)}</TableCell>
-              <TableCell>{e.comment ?? ''}</TableCell>
-              <TableCell align="right">
-                <Button size="small" onClick={() => setDraft(e)}>{t('time.edit')}</Button>
-                <Button size="small" color="error" onClick={() => removeEntry(e.id)}>{t('time.remove')}</Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {entries.length === 0 && (
-            <TableRow><TableCell colSpan={5}>{t('time.noEntries')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
+      </Paper>
 
       <Dialog open={!!draft} onClose={() => setDraft(null)} fullWidth maxWidth="sm">
-        <DialogTitle>{t('workTime.editSession')}</DialogTitle>
-        {draft && (
-          <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-            <TextField
-              label={t('workTime.checkIn')}
-              type="datetime-local"
-              size="small"
-              value={toLocalInput(draft.check_in)}
-              onChange={(e) => e.target.value && setDraft({ ...draft, check_in: fromLocalInput(e.target.value) })}
-            />
-            <TextField
-              label={t('workTime.checkOut')}
-              type="datetime-local"
-              size="small"
-              value={draft.check_out ? toLocalInput(draft.check_out) : ''}
-              onChange={(e) => setDraft({ ...draft, check_out: e.target.value ? fromLocalInput(e.target.value) : null })}
-            />
-            <TextField
-              label={t('time.comment')}
-              size="small"
-              value={draft.comment ?? ''}
-              onChange={(e) => setDraft({ ...draft, comment: e.target.value })}
-            />
-          </DialogContent>
-        )}
-        <DialogActions>
-          <Button onClick={() => setDraft(null)}>{t('usermenu.cancel')}</Button>
-          <Button variant="contained" onClick={saveDraft}>{t('usermenu.save')}</Button>
-        </DialogActions>
+        <Box
+          component="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveDraft();
+          }}
+        >
+          <DialogTitle>{t('workTime.editSession')}</DialogTitle>
+          {draft && (
+            <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+              <TextField
+                label={t('workTime.checkIn')}
+                type="datetime-local"
+                size="small"
+                sx={{ mt: 1 }}
+                value={toLocalInput(draft.check_in)}
+                onChange={(e) => e.target.value && setDraft({ ...draft, check_in: fromLocalInput(e.target.value) })}
+              />
+              <TextField
+                label={t('workTime.checkOut')}
+                type="datetime-local"
+                size="small"
+                value={draft.check_out ? toLocalInput(draft.check_out) : ''}
+                onChange={(e) => setDraft({ ...draft, check_out: e.target.value ? fromLocalInput(e.target.value) : null })}
+              />
+              <TextField
+                label={t('time.comment')}
+                size="small"
+                value={draft.comment ?? ''}
+                onChange={(e) => setDraft({ ...draft, comment: e.target.value })}
+              />
+            </DialogContent>
+          )}
+          <DialogActions>
+            <Button onClick={() => setDraft(null)}>{t('usermenu.cancel')}</Button>
+            <Button type="submit" variant="contained">{t('usermenu.save')}</Button>
+          </DialogActions>
+        </Box>
       </Dialog>
-    </Paper>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title={t('time.removeEntry')}
+        message={t('workTime.deleteConfirm')}
+        confirmLabel={t('time.remove')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) return removeEntry(confirmDeleteId);
+        }}
+      />
+    </Box>
   );
 }

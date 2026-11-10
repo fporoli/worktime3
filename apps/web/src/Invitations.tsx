@@ -4,23 +4,21 @@ import {
   Box,
   Button,
   Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
   LinearProgress,
   MenuItem,
   Paper,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
   Typography,
 } from '@mui/material';
 import { useI18n } from './i18n';
+import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { ContentCopyIcon, MailIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -60,6 +58,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [revokeTargetId, setRevokeTargetId] = useState<string | null>(null);
 
@@ -68,9 +67,10 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
       const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) {
-        setRoles(data.filter((r) => r.name !== 'owner'));
-        if (!roleId && data.length > 0) {
-          const defaultRole = data.find((r) => r.name === 'member') ?? data[0];
+        const assignable = data.filter((r) => r.name !== 'owner');
+        setRoles(assignable);
+        if (!roleId && assignable.length > 0) {
+          const defaultRole = assignable.find((r) => r.name === 'member') ?? assignable[0];
           setRoleId(defaultRole.id);
         }
       }
@@ -89,8 +89,8 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   }
 
   useEffect(() => {
-    reloadRoles();
-    reloadInvitations();
+    void reloadRoles();
+    void reloadInvitations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -100,6 +100,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
     setError(null);
     setSuccess(null);
     setLastInviteLink(null);
+    setCopied(false);
     try {
       const res = await fetch(`${API}/organizations/${orgId}/invite`, {
         method: 'POST',
@@ -129,7 +130,12 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
   async function handleRevoke(invitationId: string) {
     setError(null);
     try {
-      await fetch(`${API}/organizations/invitations/${invitationId}`, { method: 'DELETE', headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/invitations/${invitationId}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (data.ok === false) {
+        setError(data.error === 'forbidden' ? t('invitations.forbidden') : t('invitations.revokeFailed'));
+        return;
+      }
       setSuccess(t('invitations.revoked'));
       await reloadInvitations();
     } catch {
@@ -137,110 +143,125 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
     }
   }
 
-  return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('invitations.title')}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('invitations.subtitle')}
-      </Typography>
+  async function copyLink() {
+    if (!lastInviteLink) return;
+    try {
+      await navigator.clipboard.writeText(lastInviteLink);
+      setCopied(true);
+    } catch { /* clipboard unavailable */ }
+  }
 
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
+  return (
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('invitations.title')} subtitle={t('invitations.subtitle')} />
+
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
       {lastInviteLink && (
-        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setLastInviteLink(null)}>
+        <Alert
+          severity="info"
+          onClose={() => setLastInviteLink(null)}
+          action={
+            <Button size="small" color="inherit" startIcon={<ContentCopyIcon fontSize="small" />} onClick={() => void copyLink()}>
+              {copied ? t('invitations.copied') : t('invitations.copyLink')}
+            </Button>
+          }
+        >
           {t('invitations.shareLink')} <code>{lastInviteLink}</code>
         </Alert>
       )}
 
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 3 }}>
-        <TextField
-          label={t('common.email')}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          size="small"
-          sx={{ minWidth: 240 }}
-          placeholder={t('invitations.emailPlaceholder')}
-        />
-        <TextField
-          select
-          label={t('common.role')}
-          value={roleId}
-          onChange={(e) => setRoleId(e.target.value)}
-          size="small"
-          sx={{ minWidth: 160 }}
-        >
-          {roles.map((r) => (
-            <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
-          ))}
-        </TextField>
-        <Button variant="contained" onClick={handleSendInvite} disabled={!email.trim() || !roleId}>
-          {t('invitations.send')}
-        </Button>
-      </Box>
-
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('invitations.sentList', { count: invitations.length })}</Typography>
-      {loading && <LinearProgress sx={{ mb: 1 }} />}
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('common.email')}</TableCell>
-            <TableCell>{t('common.role')}</TableCell>
-            <TableCell>{t('common.status')}</TableCell>
-            <TableCell>{t('invitations.invitedBy')}</TableCell>
-            <TableCell>{t('invitations.expires')}</TableCell>
-            <TableCell align="right">{t('common.actions')}</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {invitations.map((inv) => (
-            <TableRow key={inv.id} hover>
-              <TableCell>{inv.email}</TableCell>
-              <TableCell>{inv.role_name}</TableCell>
-              <TableCell>
-                <Chip label={t(`invitations.status.${inv.status}`)} size="small" color={STATUS_COLOR[inv.status]} />
-              </TableCell>
-              <TableCell>{inv.invited_by}</TableCell>
-              <TableCell>{new Date(inv.expires_at).toLocaleDateString(locale)}</TableCell>
-              <TableCell align="right">
-                <Button
-                  size="small"
-                  color="error"
-                  disabled={inv.status !== 'pending'}
-                  onClick={() => setRevokeTargetId(inv.id)}
-                >
-                  {t('invitations.revoke')}
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {invitations.length === 0 && (
-            <TableRow><TableCell colSpan={6}>{t('invitations.empty')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
-
-      <Dialog open={!!revokeTargetId} onClose={() => setRevokeTargetId(null)}>
-        <DialogTitle>{t('invitations.revokeTitle')}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {t('invitations.revokeConfirm')}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRevokeTargetId(null)}>{t('common.cancel')}</Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={async () => {
-              const id = revokeTargetId;
-              setRevokeTargetId(null);
-              if (id) await handleRevoke(id);
-            }}
+      <Paper
+        component="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleSendInvite();
+        }}
+        sx={{ p: 2 }}
+      >
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <TextField
+            label={t('common.email')}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            size="small"
+            sx={{ minWidth: 240 }}
+            placeholder={t('invitations.emailPlaceholder')}
+          />
+          <TextField
+            select
+            label={t('common.role')}
+            value={roleId}
+            onChange={(e) => setRoleId(e.target.value)}
+            size="small"
+            sx={{ minWidth: 160 }}
           >
-            {t('invitations.revoke')}
+            {roles.map((r) => (
+              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+            ))}
+          </TextField>
+          <Button type="submit" variant="contained" disabled={!email.trim() || !roleId}>
+            {t('invitations.send')}
           </Button>
-        </DialogActions>
-      </Dialog>
-    </Paper>
+        </Box>
+      </Paper>
+
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('invitations.sentList', { count: invitations.length })}</Typography>
+        {loading && <LinearProgress sx={{ mb: 1 }} />}
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('common.email')}</TableCell>
+                <TableCell>{t('common.role')}</TableCell>
+                <TableCell>{t('common.status')}</TableCell>
+                <TableCell>{t('invitations.invitedBy')}</TableCell>
+                <TableCell>{t('invitations.expires')}</TableCell>
+                <TableCell align="right">{t('common.actions')}</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {invitations.map((inv) => (
+                <TableRow key={inv.id} hover>
+                  <TableCell>{inv.email}</TableCell>
+                  <TableCell>{inv.role_name}</TableCell>
+                  <TableCell>
+                    <Chip label={t(`invitations.status.${inv.status}`)} size="small" color={STATUS_COLOR[inv.status]} />
+                  </TableCell>
+                  <TableCell>{inv.invited_by}</TableCell>
+                  <TableCell>{new Date(inv.expires_at).toLocaleDateString(locale)}</TableCell>
+                  <TableCell align="right">
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={inv.status !== 'pending'}
+                      onClick={() => setRevokeTargetId(inv.id)}
+                    >
+                      {t('invitations.revoke')}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {invitations.length === 0 && (
+                <TableEmptyRow colSpan={6} icon={<MailIcon fontSize="inherit" />} title={t('invitations.empty')} />
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <ConfirmDialog
+        open={!!revokeTargetId}
+        title={t('invitations.revokeTitle')}
+        message={t('invitations.revokeConfirm')}
+        confirmLabel={t('invitations.revoke')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setRevokeTargetId(null)}
+        onConfirm={() => {
+          if (revokeTargetId) return handleRevoke(revokeTargetId);
+        }}
+      />
+    </Box>
   );
 }

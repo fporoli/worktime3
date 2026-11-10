@@ -7,8 +7,8 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogContentText,
   DialogTitle,
+  IconButton,
   LinearProgress,
   MenuItem,
   Paper,
@@ -16,21 +16,24 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import type { Session } from './Login';
 import { useT } from './i18n';
+import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { AddIcon, DeleteIcon, EditIcon, PeopleIcon, WorkspacesIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 export interface OrgMember {
-  id: string; // membership_id
+  id: string;
   user_id: string;
-  /** A membership can hold more than one role. */
   role_ids: string[];
   role_names: string[];
   status: string;
@@ -89,7 +92,6 @@ interface ManagementProps {
   role: 'admin' | 'manager' | 'user';
   authHeaders: () => Promise<Record<string, string>>;
   onDataChanged?: () => void;
-  /** Which sub-view to show; driven by the left nav (Teams / Projects and Subprojects). */
   tab: 'teams' | 'projects';
   onTabChange: (tab: 'teams' | 'projects') => void;
 }
@@ -100,60 +102,22 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Org members for assignments
-  const [members, setMembers] = useState<OrgMember[]>([
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-111111111111', user_id: '11111111-1111-1111-1111-111111111111', role_ids: ['00000000-0000-0000-0000-000000000002'], role_names: ['admin'], status: 'active', email: 'admin@acme.example', display_name: 'Acme Admin' },
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-222222222222', user_id: '22222222-2222-2222-2222-222222222222', role_ids: ['00000000-0000-0000-0000-000000000006'], role_names: ['manager'], status: 'active', email: 'manager@acme.example', display_name: 'Marta Manager' },
-    { id: 'aaaaaaaa-aaaa-aaaa-aaaa-333333333333', user_id: '33333333-3333-3333-3333-333333333333', role_ids: ['00000000-0000-0000-0000-000000000003'], role_names: ['member'], status: 'active', email: 'user@acme.example', display_name: 'Uli User' },
-  ]);
-
-  // --- TEAMS STATE ---
-  const [teams, setTeams] = useState<TeamItem[]>([
-    { id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', organization_id: orgId, name: 'Platform', description: 'Platform team', member_count: 1 },
-  ]);
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [teams, setTeams] = useState<TeamItem[]>([]);
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamItem | null>(null);
   const [teamName, setTeamName] = useState('');
   const [teamDesc, setTeamDesc] = useState('');
   const [teamLeadId, setTeamLeadId] = useState('');
 
-  // Team Members Dialog
   const [selectedTeam, setSelectedTeam] = useState<TeamItem | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMemberItem[]>([]);
   const [addMemberId, setAddMemberId] = useState('');
 
-  // --- PROJECTS & SUBPROJECTS STATE ---
-  const [projects, setProjects] = useState<ProjectItem[]>([
-    {
-      id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-      organization_id: orgId,
-      name: 'Website Relaunch',
-      owner_user_id: '22222222-2222-2222-2222-222222222222',
-      cost_item: 'COST-100',
-      type: 'customer',
-      owner_name: 'Marta Manager',
-      owner_email: 'manager@acme.example',
-      subproject_count: 1,
-    },
-  ]);
-  const [subprojectsByProject, setSubprojectsByProject] = useState<Record<string, SubprojectItem[]>>({
-    'cccccccc-cccc-cccc-cccc-cccccccccccc': [
-      {
-        id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
-        project_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-        organization_id: orgId,
-        name: 'Design phase',
-        owner_user_id: '22222222-2222-2222-2222-222222222222',
-        cost_item: 'COST-101',
-        type: 'phase',
-        owner_name: 'Marta Manager',
-        owner_email: 'manager@acme.example',
-      },
-    ],
-  });
-  const [expandedProjectId, setExpandedProjectId] = useState<string | null>('cccccccc-cccc-cccc-cccc-cccccccccccc');
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [subprojectsByProject, setSubprojectsByProject] = useState<Record<string, SubprojectItem[]>>({});
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
 
-  // Project Dialog
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectItem | null>(null);
   const [projectName, setProjectName] = useState('');
@@ -161,7 +125,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   const [projectCost, setProjectCost] = useState('');
   const [projectOwner, setProjectOwner] = useState(session.userId);
 
-  // Subproject Dialog
   const [subprojectDialogOpen, setSubprojectDialogOpen] = useState(false);
   const [editingSubproject, setEditingSubproject] = useState<SubprojectItem | null>(null);
   const [subprojectParentId, setSubprojectParentId] = useState<string>('');
@@ -170,17 +133,13 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   const [subprojectCost, setSubprojectCost] = useState('');
   const [subprojectOwner, setSubprojectOwner] = useState(session.userId);
 
-  // Confirmation Dialog
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void> } | null>(null);
 
-  // -------------------------------------------------------------
-  // Data Fetching
-  // -------------------------------------------------------------
   async function reloadMembers() {
     try {
       const res = await fetch(`${API}/organizations/${orgId}/members`, { headers: await authHeaders() });
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) setMembers(data);
+      if (Array.isArray(data)) setMembers(data);
     } catch { /* offline fallback */ }
   }
 
@@ -213,45 +172,34 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
 
   useEffect(() => {
     setLoading(true);
+    setExpandedProjectId(null);
+    setSubprojectsByProject({});
     Promise.all([reloadMembers(), reloadTeams(), reloadProjects()]).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   useEffect(() => {
-    if (expandedProjectId) reloadSubprojects(expandedProjectId);
+    if (expandedProjectId) void reloadSubprojects(expandedProjectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedProjectId]);
 
-  // Load team members when selectedTeam changes
   async function loadTeamMembers(team: TeamItem) {
     setSelectedTeam(team);
     setAddMemberId('');
+    setTeamMembers([]);
     try {
       const res = await fetch(`${API}/teams/${team.id}/members`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) setTeamMembers(data);
-    } catch {
-      // offline fallback
-      const uli = members.find((m) => m.email.includes('user'));
-      if (uli) {
-        setTeamMembers([
-          { team_id: team.id, membership_id: uli.id, user_id: uli.user_id, email: uli.email, display_name: uli.display_name },
-        ]);
-      }
-    }
+    } catch { /* offline fallback */ }
   }
 
-  // -------------------------------------------------------------
-  // TEAM ACTIONS
-  // -------------------------------------------------------------
-  /** Onboarding/offboarding on a team is restricted to org admins and that team's designated lead. */
   function canManageTeamMembers(team: TeamItem): boolean {
     if (role === 'admin') return true;
     if (role === 'manager' && team.lead_user_id === session.userId) return true;
     return false;
   }
 
-  /** Reassigning a team's lead is restricted to org admins and that team's current lead. */
   function canEditTeamLead(team: TeamItem | null): boolean {
     if (role === 'admin') return true;
     return !!team && team.lead_user_id === session.userId;
@@ -276,54 +224,34 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function handleSaveTeam() {
     if (!teamName.trim()) return;
     setError(null);
-    // Only an org admin or the team's current lead may set/change the team lead — omit the
-    // field entirely otherwise, so a save can't be rejected just for carrying a value the
-    // caller isn't allowed to set. On creation the server defaults the lead to the creator.
+    setSuccess(null);
     const canEditLead = canEditTeamLead(editingTeam);
     const leadPatch = canEditLead ? { leadUserId: teamLeadId || null } : {};
-    const lead = members.find((m) => m.user_id === teamLeadId);
     try {
       if (editingTeam) {
-        // Update team
-        await fetch(`${API}/teams/${editingTeam.id}`, {
+        const res = await fetch(`${API}/teams/${editingTeam.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null, ...leadPatch }),
         });
-        setTeams((prev) =>
-          prev.map((t) =>
-            t.id === editingTeam.id
-              ? {
-                  ...t,
-                  name: teamName.trim(),
-                  description: teamDesc.trim() || null,
-                  ...(canEditLead ? { lead_user_id: teamLeadId || null, lead_display_name: lead?.display_name ?? null } : {}),
-                }
-              : t,
-          ),
-        );
-        setSuccess(t('management.teamUpdated', { name: teamName }));
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          setError(t('management.teamSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.teamUpdated', { name: teamName.trim() }));
       } else {
-        // Create team
         const res = await fetch(`${API}/organizations/${orgId}/teams`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({ name: teamName.trim(), description: teamDesc.trim() || null, ...leadPatch }),
         });
         const data = await res.json();
-        const newTeam: TeamItem = {
-          id: data.id ?? String(Date.now()),
-          organization_id: orgId,
-          name: teamName.trim(),
-          description: teamDesc.trim() || null,
-          // A creator who isn't an admin can't have set leadUserId (the field is hidden for
-          // them), so the server defaults the lead to the creator themself in that case.
-          lead_user_id: canEditLead ? teamLeadId || null : session.userId,
-          lead_display_name: canEditLead ? (lead?.display_name ?? null) : session.displayName,
-          member_count: 0,
-        };
-        setTeams((prev) => [...prev, newTeam]);
-        setSuccess(t('management.teamCreated', { name: teamName }));
+        if (!res.ok || data.ok === false) {
+          setError(t('management.teamSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.teamCreated', { name: teamName.trim() }));
       }
       setTeamDialogOpen(false);
       await reloadTeams();
@@ -334,8 +262,14 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
 
   async function handleDeleteTeam(teamId: string) {
     setError(null);
+    setSuccess(null);
     try {
-      await fetch(`${API}/teams/${teamId}`, { method: 'DELETE', headers: await authHeaders() });
+      const res = await fetch(`${API}/teams/${teamId}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        setError(t('management.teamDeleteFailed'));
+        return;
+      }
       setTeams((prev) => prev.filter((tm) => tm.id !== teamId));
       setSuccess(t('management.teamDeleted'));
       if (selectedTeam?.id === teamId) setSelectedTeam(null);
@@ -349,25 +283,21 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     const member = members.find((m) => m.id === addMemberId || m.user_id === addMemberId);
     if (!member) return;
     setError(null);
+    setSuccess(null);
     try {
-      await fetch(`${API}/teams/${selectedTeam.id}/members`, {
+      const res = await fetch(`${API}/teams/${selectedTeam.id}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ membershipId: member.id }),
       });
-      const newTm: TeamMemberItem = {
-        team_id: selectedTeam.id,
-        membership_id: member.id,
-        user_id: member.user_id,
-        email: member.email,
-        display_name: member.display_name,
-      };
-      setTeamMembers((prev) => [...prev.filter((m) => m.membership_id !== member.id), newTm]);
-      setTeams((prev) =>
-        prev.map((tm) => (tm.id === selectedTeam.id ? { ...tm, member_count: (tm.member_count ?? 0) + 1 } : tm)),
-      );
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        setError(t('management.memberAddFailed'));
+        return;
+      }
       setAddMemberId('');
       setSuccess(t('management.memberAdded', { name: member.display_name, team: selectedTeam.name }));
+      await Promise.all([loadTeamMembers(selectedTeam), reloadTeams()]);
     } catch {
       setError(t('management.memberAddFailed'));
     }
@@ -376,24 +306,24 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function handleRemoveTeamMember(membershipId: string) {
     if (!selectedTeam) return;
     setError(null);
+    setSuccess(null);
     try {
-      await fetch(`${API}/teams/${selectedTeam.id}/members/${membershipId}`, {
+      const res = await fetch(`${API}/teams/${selectedTeam.id}/members/${membershipId}`, {
         method: 'DELETE',
         headers: await authHeaders(),
       });
-      setTeamMembers((prev) => prev.filter((m) => m.membership_id !== membershipId));
-      setTeams((prev) =>
-        prev.map((tm) => (tm.id === selectedTeam.id ? { ...tm, member_count: Math.max(0, (tm.member_count ?? 1) - 1) } : tm)),
-      );
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        setError(t('management.memberRemoveFailed'));
+        return;
+      }
       setSuccess(t('management.memberRemoved'));
+      await Promise.all([loadTeamMembers(selectedTeam), reloadTeams()]);
     } catch {
       setError(t('management.memberRemoveFailed'));
     }
   }
 
-  // -------------------------------------------------------------
-  // PROJECT ACTIONS
-  // -------------------------------------------------------------
   function openCreateProject() {
     setEditingProject(null);
     setProjectName('');
@@ -415,10 +345,10 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function handleSaveProject() {
     if (!projectName.trim()) return;
     setError(null);
+    setSuccess(null);
     try {
-      const owner = members.find((m) => m.user_id === projectOwner);
       if (editingProject) {
-        await fetch(`${API}/projects/${editingProject.id}`, {
+        const res = await fetch(`${API}/projects/${editingProject.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({
@@ -428,22 +358,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
             ownerUserId: projectOwner,
           }),
         });
-        setProjects((prev) =>
-          prev.map((p) =>
-            p.id === editingProject.id
-              ? {
-                  ...p,
-                  name: projectName.trim(),
-                  type: projectType,
-                  cost_item: projectCost.trim() || null,
-                  owner_user_id: projectOwner,
-                  owner_name: owner?.display_name ?? p.owner_name,
-                  owner_email: owner?.email ?? p.owner_email,
-                }
-              : p,
-          ),
-        );
-        setSuccess(t('management.projectUpdated', { name: projectName }));
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          setError(t('management.projectSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.projectUpdated', { name: projectName.trim() }));
       } else {
         const res = await fetch(`${API}/organizations/${orgId}/projects`, {
           method: 'POST',
@@ -456,19 +376,11 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           }),
         });
         const data = await res.json();
-        const newProj: ProjectItem = {
-          id: data.id ?? String(Date.now()),
-          organization_id: orgId,
-          name: projectName.trim(),
-          type: projectType,
-          cost_item: projectCost.trim() || null,
-          owner_user_id: projectOwner,
-          owner_name: owner?.display_name ?? session.displayName,
-          owner_email: owner?.email ?? session.email,
-          subproject_count: 0,
-        };
-        setProjects((prev) => [...prev, newProj]);
-        setSuccess(t('management.projectCreated', { name: projectName }));
+        if (!res.ok || data.ok === false) {
+          setError(t('management.projectSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.projectCreated', { name: projectName.trim() }));
       }
       setProjectDialogOpen(false);
       onDataChanged?.();
@@ -478,17 +390,23 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     }
   }
 
-  async function handleDeleteProject(projectId: string) {
+  async function handleDeleteProject(pid: string) {
     setError(null);
+    setSuccess(null);
     try {
-      await fetch(`${API}/projects/${projectId}`, { method: 'DELETE', headers: await authHeaders() });
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      const res = await fetch(`${API}/projects/${pid}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        setError(t('management.projectDeleteFailed'));
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== pid));
       setSubprojectsByProject((prev) => {
         const next = { ...prev };
-        delete next[projectId];
+        delete next[pid];
         return next;
       });
-      if (expandedProjectId === projectId) setExpandedProjectId(null);
+      if (expandedProjectId === pid) setExpandedProjectId(null);
       setSuccess(t('management.projectDeleted'));
       onDataChanged?.();
     } catch {
@@ -496,9 +414,6 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
     }
   }
 
-  // -------------------------------------------------------------
-  // SUBPROJECT ACTIONS
-  // -------------------------------------------------------------
   function canManageSubprojects(project: ProjectItem): boolean {
     if (role === 'admin') return true;
     if (role === 'manager' && project.owner_user_id === session.userId) return true;
@@ -528,11 +443,10 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
   async function handleSaveSubproject() {
     if (!subprojectName.trim() || !subprojectParentId) return;
     setError(null);
+    setSuccess(null);
     try {
-      const owner = members.find((m) => m.user_id === subprojectOwner);
-      const parent = projects.find((p) => p.id === subprojectParentId);
       if (editingSubproject) {
-        await fetch(`${API}/subprojects/${editingSubproject.id}`, {
+        const res = await fetch(`${API}/subprojects/${editingSubproject.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({
@@ -542,23 +456,12 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
             ownerUserId: subprojectOwner,
           }),
         });
-        setSubprojectsByProject((prev) => ({
-          ...prev,
-          [subprojectParentId]: (prev[subprojectParentId] ?? []).map((s) =>
-            s.id === editingSubproject.id
-              ? {
-                  ...s,
-                  name: subprojectName.trim(),
-                  type: subprojectType,
-                  cost_item: subprojectCost.trim() || null,
-                  owner_user_id: subprojectOwner,
-                  owner_name: owner?.display_name ?? s.owner_name,
-                  owner_email: owner?.email ?? s.owner_email,
-                }
-              : s,
-          ),
-        }));
-        setSuccess(t('management.subprojectUpdated', { name: subprojectName }));
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          setError(t('management.subprojectSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.subprojectUpdated', { name: subprojectName.trim() }));
       } else {
         const res = await fetch(`${API}/projects/${subprojectParentId}/subprojects`, {
           method: 'POST',
@@ -572,30 +475,15 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           }),
         });
         const data = await res.json();
-        const newSub: SubprojectItem = {
-          id: data.id ?? String(Date.now()),
-          project_id: subprojectParentId,
-          organization_id: orgId,
-          name: subprojectName.trim(),
-          type: subprojectType,
-          cost_item: subprojectCost.trim() || null,
-          owner_user_id: subprojectOwner,
-          owner_name: owner?.display_name ?? session.displayName,
-          owner_email: owner?.email ?? session.email,
-          project_name: parent?.name ?? null,
-        };
-        setSubprojectsByProject((prev) => ({
-          ...prev,
-          [subprojectParentId]: [...(prev[subprojectParentId] ?? []), newSub],
-        }));
-        setProjects((prev) =>
-          prev.map((p) => (p.id === subprojectParentId ? { ...p, subproject_count: (p.subproject_count ?? 0) + 1 } : p)),
-        );
-        setSuccess(t('management.subprojectAdded', { name: subprojectName }));
+        if (!res.ok || data.ok === false) {
+          setError(t('management.subprojectSaveFailed'));
+          return;
+        }
+        setSuccess(t('management.subprojectAdded', { name: subprojectName.trim() }));
       }
       setSubprojectDialogOpen(false);
       onDataChanged?.();
-      await reloadSubprojects(subprojectParentId);
+      await Promise.all([reloadSubprojects(subprojectParentId), reloadProjects()]);
     } catch {
       setError(t('management.subprojectSaveFailed'));
     }
@@ -603,329 +491,337 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
 
   async function handleDeleteSubproject(sub: SubprojectItem) {
     setError(null);
+    setSuccess(null);
     try {
-      await fetch(`${API}/subprojects/${sub.id}`, { method: 'DELETE', headers: await authHeaders() });
-      setSubprojectsByProject((prev) => ({
-        ...prev,
-        [sub.project_id]: (prev[sub.project_id] ?? []).filter((s) => s.id !== sub.id),
-      }));
-      setProjects((prev) =>
-        prev.map((p) => (p.id === sub.project_id ? { ...p, subproject_count: Math.max(0, (p.subproject_count ?? 1) - 1) } : p)),
-      );
+      const res = await fetch(`${API}/subprojects/${sub.id}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        setError(t('management.subprojectDeleteFailed'));
+        return;
+      }
       setSuccess(t('management.subprojectDeleted', { name: sub.name }));
       onDataChanged?.();
+      await Promise.all([reloadSubprojects(sub.project_id), reloadProjects()]);
     } catch {
       setError(t('management.subprojectDeleteFailed'));
     }
   }
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="h6">{t('management.title')}</Typography>
-        <Chip
-          label={role === 'admin' ? t('management.accessAdmin') : t('management.accessManager')}
-          color={role === 'admin' ? 'secondary' : 'primary'}
-          size="small"
-          variant="outlined"
-        />
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('management.subtitle')}
-        {role === 'manager' && ` ${t('management.managerNote')}`}
-      </Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader
+        title={t('management.title')}
+        subtitle={`${t('management.subtitle')}${role === 'manager' ? ` ${t('management.managerNote')}` : ''}`}
+        end={
+          <Chip
+            label={role === 'admin' ? t('management.accessAdmin') : t('management.accessManager')}
+            color={role === 'admin' ? 'secondary' : 'primary'}
+            size="small"
+            variant="outlined"
+          />
+        }
+      />
 
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mb: 2 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress />}
 
-      <Tabs value={tab} onChange={(_, v) => onTabChange(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tab value="teams" label={t('management.tabTeams', { count: teams.length })} />
-        <Tab value="projects" label={t('management.tabProjects', { count: projects.length })} />
-      </Tabs>
+      <Paper sx={{ p: 2 }}>
+        <Tabs value={tab} onChange={(_, v) => onTabChange(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+          <Tab value="teams" label={t('management.tabTeams', { count: teams.length })} />
+          <Tab value="projects" label={t('management.tabProjects', { count: projects.length })} />
+        </Tabs>
 
-      {/* ========================================================================= */}
-      {/* TAB 0: TEAMS                                                              */}
-      {/* ========================================================================= */}
-      {tab === 'teams' && (
-        <Box>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            <Button variant="contained" size="small" onClick={openCreateTeam}>+ {t('management.createTeam')}</Button>
-          </Box>
+        {tab === 'teams' && (
+          <Box>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+              <Button variant="contained" size="small" startIcon={<AddIcon fontSize="small" />} onClick={openCreateTeam}>
+                {t('management.createTeam')}
+              </Button>
+            </Box>
 
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('management.teamName')}</TableCell>
-                <TableCell>{t('management.description')}</TableCell>
-                <TableCell>{t('management.lead')}</TableCell>
-                <TableCell align="center">{t('management.members')}</TableCell>
-                <TableCell align="right">{t('common.actions')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {teams.map((team) => (
-                <TableRow key={team.id} hover>
-                  <TableCell sx={{ fontWeight: 600 }}>{team.name}</TableCell>
-                  <TableCell>{team.description ?? '—'}</TableCell>
-                  <TableCell>
-                    {team.lead_display_name ?? '—'}
-                    {team.lead_user_id === session.userId && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
-                  </TableCell>
-                  <TableCell align="center">
-                    <Chip label={t('management.memberCount', { count: team.member_count ?? 0 })} size="small" />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => loadTeamMembers(team)}>
-                      {t('management.members')}
-                    </Button>
-                    <Button size="small" sx={{ mr: 1 }} onClick={() => openEditTeam(team)}>
-                      {t('common.edit')}
-                    </Button>
-                    <Button
-                      size="small"
-                      color="error"
-                      onClick={() =>
-                        setConfirmDialog({
-                          title: t('management.deleteTeam'),
-                          message: t('management.deleteTeamConfirm'),
-                          onConfirm: () => handleDeleteTeam(team.id),
-                        })
-                      }
-                    >
-                      {t('common.delete')}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {teams.length === 0 && (
-                <TableRow><TableCell colSpan={5}>{t('management.noTeams')}</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </Box>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 1: PROJECTS & SUBPROJECTS                                             */}
-      {/* ========================================================================= */}
-      {tab === 'projects' && (
-        <Box>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            <Button variant="contained" size="small" onClick={openCreateProject}>+ {t('management.createProject')}</Button>
-          </Box>
-
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('management.projectName')}</TableCell>
-                <TableCell>{t('approvals.col.type')}</TableCell>
-                <TableCell>{t('management.costItem')}</TableCell>
-                <TableCell>{t('management.owner')}</TableCell>
-                <TableCell align="center">{t('management.subprojects')}</TableCell>
-                <TableCell align="right">{t('common.actions')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {projects.map((p) => {
-                const isExpanded = expandedProjectId === p.id;
-                const pSubprojects = subprojectsByProject[p.id] ?? [];
-                const isOwner = p.owner_user_id === session.userId;
-                const canSub = canManageSubprojects(p);
-
-                return (
-                  <TableRow key={p.id} hover selected={isExpanded}>
-                    <TableCell sx={{ fontWeight: 600 }}>{p.name}</TableCell>
-                    <TableCell>
-                      <Chip
-                        label={t(`management.projectType.${p.type}`)}
-                        size="small"
-                        color={p.type === 'customer' ? 'primary' : p.type === 'research' ? 'warning' : 'default'}
-                      />
-                    </TableCell>
-                    <TableCell>{p.cost_item ?? '—'}</TableCell>
-                    <TableCell>
-                      {p.owner_name ?? p.owner_email ?? '—'}
-                      {isOwner && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
-                    </TableCell>
-                    <TableCell align="center">
-                      <Button
-                        size="small"
-                        variant={isExpanded ? 'contained' : 'outlined'}
-                        onClick={() => setExpandedProjectId(isExpanded ? null : p.id)}
-                      >
-                        {t('management.subprojectsCount', { count: pSubprojects.length || p.subproject_count || 0 })}
-                      </Button>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Button
-                        size="small"
-                        sx={{ mr: 1 }}
-                        disabled={role !== 'admin' && !isOwner}
-                        onClick={() => openEditProject(p)}
-                      >
-                        {t('common.edit')}
-                      </Button>
-                      <Button
-                        size="small"
-                        color="error"
-                        disabled={role !== 'admin' && !isOwner}
-                        onClick={() =>
-                          setConfirmDialog({
-                            title: t('management.deleteProject'),
-                            message: t('management.deleteProjectConfirm'),
-                            onConfirm: () => handleDeleteProject(p.id),
-                          })
-                        }
-                      >
-                        {t('common.delete')}
-                      </Button>
-                    </TableCell>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('management.teamName')}</TableCell>
+                    <TableCell>{t('management.description')}</TableCell>
+                    <TableCell>{t('management.lead')}</TableCell>
+                    <TableCell align="center">{t('management.members')}</TableCell>
+                    <TableCell align="right">{t('common.actions')}</TableCell>
                   </TableRow>
-                );
-              })}
-              {projects.length === 0 && (
-                <TableRow><TableCell colSpan={6}>{t('management.noProjects')}</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-
-          {/* Subprojects Section for the currently expanded project */}
-          {expandedProjectId && (() => {
-            const currentProj = projects.find((p) => p.id === expandedProjectId);
-            if (!currentProj) return null;
-            const pSubs = subprojectsByProject[currentProj.id] ?? [];
-            const canSub = canManageSubprojects(currentProj);
-
-            return (
-              <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                    {t('management.subprojectsOf', { name: currentProj.name })}
-                  </Typography>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    disabled={!canSub}
-                    onClick={() => openCreateSubproject(currentProj)}
-                  >
-                    + {t('management.addSubproject')}
-                  </Button>
-                </Box>
-                {!canSub && (
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                    {t('management.subprojectsOwnerOnly')}
-                  </Typography>
-                )}
-
-                <Table size="small" sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>{t('management.subprojectName')}</TableCell>
-                      <TableCell>{t('approvals.col.type')}</TableCell>
-                      <TableCell>{t('management.costItem')}</TableCell>
-                      <TableCell>{t('management.owner')}</TableCell>
-                      <TableCell align="right">{t('common.actions')}</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {pSubs.map((s) => (
-                      <TableRow key={s.id} hover>
-                        <TableCell sx={{ fontWeight: 500 }}>{s.name}</TableCell>
-                        <TableCell><Chip label={t(`management.subprojectType.${s.type}`)} size="small" variant="outlined" /></TableCell>
-                        <TableCell>{s.cost_item ?? '—'}</TableCell>
-                        <TableCell>
-                          {s.owner_name ?? s.owner_email ?? '—'}
-                          {s.owner_user_id === session.userId && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
-                        </TableCell>
-                        <TableCell align="right">
-                          <Button
-                            size="small"
-                            disabled={!canSub}
-                            sx={{ mr: 1 }}
-                            onClick={() => openEditSubproject(s)}
-                          >
-                            {t('common.edit')}
-                          </Button>
-                          <Button
+                </TableHead>
+                <TableBody>
+                  {teams.map((team) => (
+                    <TableRow key={team.id} hover>
+                      <TableCell sx={{ fontWeight: 600 }}>{team.name}</TableCell>
+                      <TableCell>{team.description ?? '—'}</TableCell>
+                      <TableCell>
+                        {team.lead_display_name ?? '—'}
+                        {team.lead_user_id === session.userId && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip label={t('management.memberCount', { count: team.member_count ?? 0 })} size="small" />
+                      </TableCell>
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        <Button size="small" variant="outlined" startIcon={<PeopleIcon fontSize="small" />} sx={{ mr: 0.5 }} onClick={() => void loadTeamMembers(team)}>
+                          {t('management.members')}
+                        </Button>
+                        <Tooltip title={t('common.edit')}>
+                          <IconButton size="small" aria-label={t('common.edit')} onClick={() => openEditTeam(team)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={t('common.delete')}>
+                          <IconButton
                             size="small"
                             color="error"
-                            disabled={!canSub}
+                            aria-label={t('common.delete')}
                             onClick={() =>
                               setConfirmDialog({
-                                title: t('management.deleteSubproject'),
-                                message: t('management.deleteSubprojectConfirm', { name: s.name }),
-                                onConfirm: () => handleDeleteSubproject(s),
+                                title: t('management.deleteTeam'),
+                                message: t('management.deleteTeamConfirm'),
+                                onConfirm: () => handleDeleteTeam(team.id),
                               })
                             }
                           >
-                            {t('common.delete')}
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {teams.length === 0 && !loading && (
+                    <TableEmptyRow colSpan={5} icon={<PeopleIcon fontSize="inherit" />} title={t('management.noTeams')} />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )}
+
+        {tab === 'projects' && (
+          <Box>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+              <Button variant="contained" size="small" startIcon={<AddIcon fontSize="small" />} onClick={openCreateProject}>
+                {t('management.createProject')}
+              </Button>
+            </Box>
+
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('management.projectName')}</TableCell>
+                    <TableCell>{t('approvals.col.type')}</TableCell>
+                    <TableCell>{t('management.costItem')}</TableCell>
+                    <TableCell>{t('management.owner')}</TableCell>
+                    <TableCell align="center">{t('management.subprojects')}</TableCell>
+                    <TableCell align="right">{t('common.actions')}</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {projects.map((p) => {
+                    const isExpanded = expandedProjectId === p.id;
+                    const pSubprojects = subprojectsByProject[p.id];
+                    const isOwner = p.owner_user_id === session.userId;
+                    const subCount = pSubprojects ? pSubprojects.length : (p.subproject_count ?? 0);
+
+                    return (
+                      <TableRow key={p.id} hover selected={isExpanded}>
+                        <TableCell sx={{ fontWeight: 600 }}>{p.name}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={t(`management.projectType.${p.type}`)}
+                            size="small"
+                            color={p.type === 'customer' ? 'primary' : p.type === 'research' ? 'warning' : 'default'}
+                          />
+                        </TableCell>
+                        <TableCell>{p.cost_item ?? '—'}</TableCell>
+                        <TableCell>
+                          {p.owner_name ?? p.owner_email ?? '—'}
+                          {isOwner && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
+                        </TableCell>
+                        <TableCell align="center">
+                          <Button
+                            size="small"
+                            variant={isExpanded ? 'contained' : 'outlined'}
+                            onClick={() => setExpandedProjectId(isExpanded ? null : p.id)}
+                          >
+                            {t('management.subprojectsCount', { count: subCount })}
                           </Button>
                         </TableCell>
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                          <Tooltip title={t('common.edit')}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={role !== 'admin' && !isOwner}
+                                aria-label={t('common.edit')}
+                                onClick={() => openEditProject(p)}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title={t('common.delete')}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                disabled={role !== 'admin' && !isOwner}
+                                aria-label={t('common.delete')}
+                                onClick={() =>
+                                  setConfirmDialog({
+                                    title: t('management.deleteProject'),
+                                    message: t('management.deleteProjectConfirm'),
+                                    onConfirm: () => handleDeleteProject(p.id),
+                                  })
+                                }
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        </TableCell>
                       </TableRow>
-                    ))}
-                    {pSubs.length === 0 && (
-                      <TableRow><TableCell colSpan={5}>{t('management.noSubprojects')}</TableCell></TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </Box>
-            );
-          })()}
-        </Box>
-      )}
+                    );
+                  })}
+                  {projects.length === 0 && !loading && (
+                    <TableEmptyRow colSpan={6} icon={<WorkspacesIcon fontSize="inherit" />} title={t('management.noProjects')} />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
 
-      {/* ========================================================================= */}
-      {/* DIALOG: CREATE / EDIT TEAM                                                */}
-      {/* ========================================================================= */}
+            {expandedProjectId && (() => {
+              const currentProj = projects.find((p) => p.id === expandedProjectId);
+              if (!currentProj) return null;
+              const pSubs = subprojectsByProject[currentProj.id] ?? [];
+              const canSub = canManageSubprojects(currentProj);
+
+              return (
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 1 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                      {t('management.subprojectsOf', { name: currentProj.name })}
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled={!canSub}
+                      startIcon={<AddIcon fontSize="small" />}
+                      onClick={() => openCreateSubproject(currentProj)}
+                    >
+                      {t('management.addSubproject')}
+                    </Button>
+                  </Box>
+                  {!canSub && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      {t('management.subprojectsOwnerOnly')}
+                    </Typography>
+                  )}
+
+                  <TableContainer sx={{ bgcolor: 'background.paper' }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>{t('management.subprojectName')}</TableCell>
+                          <TableCell>{t('approvals.col.type')}</TableCell>
+                          <TableCell>{t('management.costItem')}</TableCell>
+                          <TableCell>{t('management.owner')}</TableCell>
+                          <TableCell align="right">{t('common.actions')}</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {pSubs.map((s) => (
+                          <TableRow key={s.id} hover>
+                            <TableCell sx={{ fontWeight: 500 }}>{s.name}</TableCell>
+                            <TableCell><Chip label={t(`management.subprojectType.${s.type}`)} size="small" variant="outlined" /></TableCell>
+                            <TableCell>{s.cost_item ?? '—'}</TableCell>
+                            <TableCell>
+                              {s.owner_name ?? s.owner_email ?? '—'}
+                              {s.owner_user_id === session.userId && <Chip label={t('management.you')} size="small" color="success" sx={{ ml: 1 }} />}
+                            </TableCell>
+                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                              <Tooltip title={t('common.edit')}>
+                                <span>
+                                  <IconButton size="small" disabled={!canSub} aria-label={t('common.edit')} onClick={() => openEditSubproject(s)}>
+                                    <EditIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title={t('common.delete')}>
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    disabled={!canSub}
+                                    aria-label={t('common.delete')}
+                                    onClick={() =>
+                                      setConfirmDialog({
+                                        title: t('management.deleteSubproject'),
+                                        message: t('management.deleteSubprojectConfirm', { name: s.name }),
+                                        onConfirm: () => handleDeleteSubproject(s),
+                                      })
+                                    }
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {pSubs.length === 0 && (
+                          <TableEmptyRow colSpan={5} icon={<WorkspacesIcon fontSize="inherit" />} title={t('management.noSubprojects')} />
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              );
+            })()}
+          </Box>
+        )}
+      </Paper>
+
       <Dialog open={teamDialogOpen} onClose={() => setTeamDialogOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>{editingTeam ? t('management.editTeam') : t('management.createTeam')}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-          <TextField
-            label={t('management.teamName')}
-            value={teamName}
-            onChange={(e) => setTeamName(e.target.value)}
-            size="small"
-            required
-            autoFocus
-            sx={{ mt: 1 }}
-          />
-          <TextField
-            label={t('management.description')}
-            value={teamDesc}
-            onChange={(e) => setTeamDesc(e.target.value)}
-            size="small"
-            multiline
-            rows={2}
-          />
-          {canEditTeamLead(editingTeam) && (
-            <TextField
-              select
-              label={t('management.teamLead')}
-              value={teamLeadId}
-              onChange={(e) => setTeamLeadId(e.target.value)}
-              size="small"
-              helperText={t('management.teamLeadHelper')}
-            >
-              <MenuItem value=""><em>{t('common.none')}</em></MenuItem>
-              {members.map((m) => (<MenuItem key={m.user_id} value={m.user_id}>{m.display_name} ({m.email})</MenuItem>))}
-            </TextField>
-          )}
-          {!editingTeam && !canEditTeamLead(editingTeam) && (
-            <Typography variant="caption" color="text.secondary">
-              {t('management.youWillBeLead')}
-            </Typography>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setTeamDialogOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="contained" onClick={handleSaveTeam} disabled={!teamName.trim()}>{t('common.save')}</Button>
-        </DialogActions>
+        <Box
+          component="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSaveTeam();
+          }}
+        >
+          <DialogTitle>{editingTeam ? t('management.editTeam') : t('management.createTeam')}</DialogTitle>
+          <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+            <TextField label={t('management.teamName')} value={teamName} onChange={(e) => setTeamName(e.target.value)} size="small" required autoFocus sx={{ mt: 1 }} />
+            <TextField label={t('management.description')} value={teamDesc} onChange={(e) => setTeamDesc(e.target.value)} size="small" multiline rows={2} />
+            {canEditTeamLead(editingTeam) && (
+              <TextField
+                select
+                label={t('management.teamLead')}
+                value={teamLeadId}
+                onChange={(e) => setTeamLeadId(e.target.value)}
+                size="small"
+                helperText={t('management.teamLeadHelper')}
+              >
+                <MenuItem value=""><em>{t('common.none')}</em></MenuItem>
+                {members.map((m) => (<MenuItem key={m.user_id} value={m.user_id}>{m.display_name} ({m.email})</MenuItem>))}
+              </TextField>
+            )}
+            {!editingTeam && !canEditTeamLead(editingTeam) && (
+              <Typography variant="caption" color="text.secondary">{t('management.youWillBeLead')}</Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setTeamDialogOpen(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" variant="contained" disabled={!teamName.trim()}>{t('common.save')}</Button>
+          </DialogActions>
+        </Box>
       </Dialog>
 
-      {/* ========================================================================= */}
-      {/* DIALOG: MANAGE TEAM MEMBERS                                               */}
-      {/* ========================================================================= */}
       <Dialog open={!!selectedTeam} onClose={() => setSelectedTeam(null)} fullWidth maxWidth="sm">
         <DialogTitle>{t('management.teamMembersOf', { name: selectedTeam?.name ?? '' })}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
@@ -941,40 +837,42 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
           )}
 
           <Typography variant="subtitle2">{t('management.currentMembers', { count: teamMembers.length })}</Typography>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('teamHours.member')}</TableCell>
-                <TableCell align="right" />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {teamMembers.map((tm) => (
-                <TableRow key={tm.membership_id}>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{tm.display_name}</Typography>
-                    <Typography variant="caption" color="text.secondary">{tm.email}</Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Button
-                      size="small"
-                      color="error"
-                      disabled={!selectedTeam || !canManageTeamMembers(selectedTeam)}
-                      onClick={() => handleRemoveTeamMember(tm.membership_id)}
-                    >
-                      {t('common.remove')}
-                    </Button>
-                  </TableCell>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('teamHours.member')}</TableCell>
+                  <TableCell align="right" />
                 </TableRow>
-              ))}
-              {teamMembers.length === 0 && (
-                <TableRow><TableCell colSpan={2}>{t('teamHours.noMembers')}</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHead>
+              <TableBody>
+                {teamMembers.map((tm) => (
+                  <TableRow key={tm.membership_id}>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>{tm.display_name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{tm.email}</Typography>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        color="error"
+                        disabled={!selectedTeam || !canManageTeamMembers(selectedTeam)}
+                        onClick={() => void handleRemoveTeamMember(tm.membership_id)}
+                      >
+                        {t('common.remove')}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {teamMembers.length === 0 && (
+                  <TableRow><TableCell colSpan={2}>{t('teamHours.noMembers')}</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
           {selectedTeam && canManageTeamMembers(selectedTeam) && (
-            <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Box sx={{ mt: 1, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
               <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('management.addMember')}</Typography>
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <TextField
@@ -992,7 +890,7 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
                       <MenuItem key={m.id} value={m.id}>{m.display_name} ({m.email})</MenuItem>
                     ))}
                 </TextField>
-                <Button variant="contained" size="small" disabled={!addMemberId} onClick={handleAddTeamMember}>
+                <Button variant="contained" size="small" disabled={!addMemberId} onClick={() => void handleAddTeamMember()}>
                   {t('common.add')}
                 </Button>
               </Box>
@@ -1004,133 +902,81 @@ export default function Management({ session, orgId, role, authHeaders, onDataCh
         </DialogActions>
       </Dialog>
 
-      {/* ========================================================================= */}
-      {/* DIALOG: CREATE / EDIT PROJECT                                             */}
-      {/* ========================================================================= */}
       <Dialog open={projectDialogOpen} onClose={() => setProjectDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>{editingProject ? t('management.editProject') : t('management.createProject')}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-          <TextField
-            label={t('management.projectName')}
-            value={projectName}
-            onChange={(e) => setProjectName(e.target.value)}
-            size="small"
-            required
-            autoFocus
-            sx={{ mt: 1 }}
-          />
-          <TextField
-            select
-            label={t('approvals.col.type')}
-            value={projectType}
-            onChange={(e) => setProjectType(e.target.value as any)}
-            size="small"
-          >
-            <MenuItem value="internal">{t('management.projectType.internal')}</MenuItem>
-            <MenuItem value="customer">{t('management.projectType.customer')}</MenuItem>
-            <MenuItem value="research">{t('management.projectType.research')}</MenuItem>
-          </TextField>
-          <TextField
-            label={t('management.costItem')}
-            value={projectCost}
-            onChange={(e) => setProjectCost(e.target.value)}
-            size="small"
-            placeholder={t('management.costItemPlaceholder', { example: 'COST-101' })}
-          />
-          <TextField
-            select
-            label={t('management.projectOwner')}
-            value={projectOwner}
-            onChange={(e) => setProjectOwner(e.target.value)}
-            size="small"
-          >
-            {members.map((m) => (
-              <MenuItem key={m.user_id} value={m.user_id}>
-                {m.display_name} ({m.email}) {m.user_id === session.userId ? `(${t('management.you')})` : ''}
-              </MenuItem>
-            ))}
-          </TextField>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setProjectDialogOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="contained" onClick={handleSaveProject} disabled={!projectName.trim()}>{t('common.save')}</Button>
-        </DialogActions>
+        <Box
+          component="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSaveProject();
+          }}
+        >
+          <DialogTitle>{editingProject ? t('management.editProject') : t('management.createProject')}</DialogTitle>
+          <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+            <TextField label={t('management.projectName')} value={projectName} onChange={(e) => setProjectName(e.target.value)} size="small" required autoFocus sx={{ mt: 1 }} />
+            <TextField select label={t('approvals.col.type')} value={projectType} onChange={(e) => setProjectType(e.target.value as ProjectItem['type'])} size="small">
+              <MenuItem value="internal">{t('management.projectType.internal')}</MenuItem>
+              <MenuItem value="customer">{t('management.projectType.customer')}</MenuItem>
+              <MenuItem value="research">{t('management.projectType.research')}</MenuItem>
+            </TextField>
+            <TextField label={t('management.costItem')} value={projectCost} onChange={(e) => setProjectCost(e.target.value)} size="small" placeholder={t('management.costItemPlaceholder', { example: 'COST-101' })} />
+            <TextField select label={t('management.projectOwner')} value={projectOwner} onChange={(e) => setProjectOwner(e.target.value)} size="small">
+              {members.map((m) => (
+                <MenuItem key={m.user_id} value={m.user_id}>
+                  {m.display_name} ({m.email}) {m.user_id === session.userId ? `(${t('management.you')})` : ''}
+                </MenuItem>
+              ))}
+            </TextField>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setProjectDialogOpen(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" variant="contained" disabled={!projectName.trim()}>{t('common.save')}</Button>
+          </DialogActions>
+        </Box>
       </Dialog>
 
-      {/* ========================================================================= */}
-      {/* DIALOG: CREATE / EDIT SUBPROJECT                                          */}
-      {/* ========================================================================= */}
       <Dialog open={subprojectDialogOpen} onClose={() => setSubprojectDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>{editingSubproject ? t('management.editSubproject') : t('management.addSubproject')}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-          <TextField
-            label={t('management.subprojectName')}
-            value={subprojectName}
-            onChange={(e) => setSubprojectName(e.target.value)}
-            size="small"
-            required
-            autoFocus
-            sx={{ mt: 1 }}
-          />
-          <TextField
-            select
-            label={t('approvals.col.type')}
-            value={subprojectType}
-            onChange={(e) => setSubprojectType(e.target.value as any)}
-            size="small"
-          >
-            <MenuItem value="phase">{t('management.subprojectType.phase')}</MenuItem>
-            <MenuItem value="work_package">{t('management.subprojectType.work_package')}</MenuItem>
-            <MenuItem value="task">{t('management.subprojectType.task')}</MenuItem>
-          </TextField>
-          <TextField
-            label={t('management.costItem')}
-            value={subprojectCost}
-            onChange={(e) => setSubprojectCost(e.target.value)}
-            size="small"
-            placeholder={t('management.costItemPlaceholder', { example: 'COST-102' })}
-          />
-          <TextField
-            select
-            label={t('management.subprojectOwner')}
-            value={subprojectOwner}
-            onChange={(e) => setSubprojectOwner(e.target.value)}
-            size="small"
-          >
-            {members.map((m) => (
-              <MenuItem key={m.user_id} value={m.user_id}>
-                {m.display_name} ({m.email}) {m.user_id === session.userId ? `(${t('management.you')})` : ''}
-              </MenuItem>
-            ))}
-          </TextField>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSubprojectDialogOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="contained" onClick={handleSaveSubproject} disabled={!subprojectName.trim()}>{t('common.save')}</Button>
-        </DialogActions>
+        <Box
+          component="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSaveSubproject();
+          }}
+        >
+          <DialogTitle>{editingSubproject ? t('management.editSubproject') : t('management.addSubproject')}</DialogTitle>
+          <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+            <TextField label={t('management.subprojectName')} value={subprojectName} onChange={(e) => setSubprojectName(e.target.value)} size="small" required autoFocus sx={{ mt: 1 }} />
+            <TextField select label={t('approvals.col.type')} value={subprojectType} onChange={(e) => setSubprojectType(e.target.value as SubprojectItem['type'])} size="small">
+              <MenuItem value="phase">{t('management.subprojectType.phase')}</MenuItem>
+              <MenuItem value="work_package">{t('management.subprojectType.work_package')}</MenuItem>
+              <MenuItem value="task">{t('management.subprojectType.task')}</MenuItem>
+            </TextField>
+            <TextField label={t('management.costItem')} value={subprojectCost} onChange={(e) => setSubprojectCost(e.target.value)} size="small" placeholder={t('management.costItemPlaceholder', { example: 'COST-102' })} />
+            <TextField select label={t('management.subprojectOwner')} value={subprojectOwner} onChange={(e) => setSubprojectOwner(e.target.value)} size="small">
+              {members.map((m) => (
+                <MenuItem key={m.user_id} value={m.user_id}>
+                  {m.display_name} ({m.email}) {m.user_id === session.userId ? `(${t('management.you')})` : ''}
+                </MenuItem>
+              ))}
+            </TextField>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setSubprojectDialogOpen(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" variant="contained" disabled={!subprojectName.trim()}>{t('common.save')}</Button>
+          </DialogActions>
+        </Box>
       </Dialog>
 
-      <Dialog open={!!confirmDialog} onClose={() => setConfirmDialog(null)}>
-        <DialogTitle>{confirmDialog?.title ?? t('app.confirm')}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>{confirmDialog?.message}</DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDialog(null)}>{t('common.cancel')}</Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={async () => {
-              const action = confirmDialog?.onConfirm;
-              setConfirmDialog(null);
-              if (action) await action();
-            }}
-          >
-            {t('common.delete')}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Paper>
+      <ConfirmDialog
+        open={!!confirmDialog}
+        title={confirmDialog?.title ?? t('app.confirm')}
+        message={confirmDialog?.message ?? ''}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmDialog(null)}
+        onConfirm={() => {
+          if (confirmDialog) return confirmDialog.onConfirm();
+        }}
+      />
+    </Box>
   );
 }
-

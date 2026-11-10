@@ -1,14 +1,30 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  LinearProgress,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { useI18n, type TFunction } from './i18n';
+import { formatLocaleDate } from './localeFormat';
+import { PageHeader, TableEmptyRow } from './components';
+import { PaymentsIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
-// The forward-only finance pipeline once a report is approved — mirrors ExpenseReportsController's PIPELINE.
 const PIPELINE = ['approved', 'submitted_processing', 'processing_finished', 'request_payment', 'finished'] as const;
 type PipelineStatus = (typeof PIPELINE)[number];
 
-/** Translated stage name; an unknown status is shown as-is. */
 function stageLabel(status: string, t: TFunction): string {
   return (PIPELINE as readonly string[]).includes(status) ? t(`expenseProcessing.stage.${status}`) : status;
 }
@@ -32,8 +48,6 @@ interface ExpenseProcessingProps {
   authHeaders: () => Promise<Record<string, string>>;
 }
 
-// The queue statuses shown here — every stage except the terminal "finished" one, which has
-// nothing left to advance and so belongs in history, not an action queue.
 const QUEUE_STATUSES: PipelineStatus[] = ['approved', 'submitted_processing', 'processing_finished', 'request_payment'];
 
 export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcessingProps) {
@@ -62,7 +76,7 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
   }
 
   useEffect(() => {
-    reload();
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -89,60 +103,61 @@ export default function ExpenseProcessing({ orgId, authHeaders }: ExpenseProcess
   }
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('expenseProcessing.title')}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('expenseProcessing.subtitle')}
-      </Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('expenseProcessing.title')} subtitle={t('expenseProcessing.subtitle')} />
 
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mb: 2 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
 
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('teamHours.member')}</TableCell>
-            <TableCell>{t('expenseProcessing.stage')}</TableCell>
-            <TableCell>{t('expenseProcessing.submitted')}</TableCell>
-            <TableCell>{t('approvals.note')}</TableCell>
-            <TableCell align="right">{t('common.actions')}</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((row) => {
-            const next = nextStage(row.status);
-            return (
-              <TableRow key={row.id} hover>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{row.user_display_name}</Typography>
-                  <Typography variant="caption" color="text.secondary">{row.user_email}</Typography>
-                </TableCell>
-                <TableCell><Chip label={stageLabel(row.status, t)} size="small" /></TableCell>
-                <TableCell>{row.date_submitted ? new Date(`${row.date_submitted.slice(0, 10)}T00:00:00`).toLocaleDateString(locale) : '—'}</TableCell>
-                <TableCell>
-                  <TextField
-                    size="small"
-                    value={notes[row.id] ?? ''}
-                    onChange={(e) => setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))}
-                    fullWidth
-                  />
-                </TableCell>
-                <TableCell align="right">
-                  {next && (
-                    <Button size="small" variant="contained" onClick={() => advance(row.id)}>
-                      {t('expenseProcessing.advanceTo', { stage: stageLabel(next, t) })}
-                    </Button>
-                  )}
-                </TableCell>
+      <Paper sx={{ p: 2 }}>
+        {loading && <LinearProgress sx={{ mb: 2 }} />}
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('teamHours.member')}</TableCell>
+                <TableCell>{t('expenseProcessing.stage')}</TableCell>
+                <TableCell>{t('expenseProcessing.submitted')}</TableCell>
+                <TableCell>{t('approvals.note')}</TableCell>
+                <TableCell align="right">{t('common.actions')}</TableCell>
               </TableRow>
-            );
-          })}
-          {rows.length === 0 && (
-            <TableRow><TableCell colSpan={5}>{t('expenseProcessing.empty')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </Paper>
+            </TableHead>
+            <TableBody>
+              {rows.map((row) => {
+                const next = nextStage(row.status);
+                return (
+                  <TableRow key={row.id} hover>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>{row.user_display_name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{row.user_email}</Typography>
+                    </TableCell>
+                    <TableCell><Chip label={stageLabel(row.status, t)} size="small" color={row.status === 'approved' ? 'success' : 'info'} /></TableCell>
+                    <TableCell>{row.date_submitted ? formatLocaleDate(row.date_submitted, locale) : '—'}</TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        value={notes[row.id] ?? ''}
+                        onChange={(e) => setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                        fullWidth
+                      />
+                    </TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      {next && (
+                        <Button size="small" variant="contained" onClick={() => void advance(row.id)}>
+                          {t('expenseProcessing.advanceTo', { stage: stageLabel(next, t) })}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {rows.length === 0 && (
+                <TableEmptyRow colSpan={5} icon={<PaymentsIcon fontSize="inherit" />} title={t('expenseProcessing.empty')} />
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+    </Box>
   );
 }

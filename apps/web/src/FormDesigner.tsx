@@ -57,6 +57,13 @@ import {
   type TextProp,
 } from './formDesign';
 import type { DesignError, FormDesigner } from './designMode';
+import {
+  ArrowDownwardIcon,
+  ArrowUpwardIcon,
+  CloseIcon,
+  DragIndicatorIcon,
+  RestartAltIcon,
+} from './icons';
 
 /** Width of the side panel on screens wide enough to show it next to the form. */
 export const DESIGN_PANEL_WIDTH = 420;
@@ -96,7 +103,9 @@ function PropRow({ designer, field, prop, label, children }: { designer: FormDes
         <Chip size="small" variant={source === 'code' ? 'outlined' : 'filled'} color={source === 'org' ? 'primary' : source === 'global' ? 'secondary' : 'default'} label={t(`design.source.${source}`)} />
         <Tooltip title={t('design.reset')}>
           <span>
-            <IconButton size="small" aria-label={t('design.reset')} disabled={!setHere} onClick={() => designer.update((l) => setFieldProp(l, field.key, prop, undefined))}>↺</IconButton>
+            <IconButton size="small" aria-label={t('design.reset')} disabled={!setHere} onClick={() => designer.update((l) => setFieldProp(l, field.key, prop, undefined))}>
+              <RestartAltIcon fontSize="small" />
+            </IconButton>
           </span>
         </Tooltip>
       </Box>
@@ -378,8 +387,12 @@ function StructureList({ designer }: { designer: FormDesigner }) {
             sx={{ bgcolor: 'action.hover', borderRadius: 1 }}
           >
             <ListItemText primary={resolveText(g.texts.caption, g.caption, locale, t)} slotProps={{ primary: { variant: 'subtitle2' } }} />
-            <IconButton size="small" aria-label={t('design.moveUp')} disabled={gi === 0} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeGroup(form, l, g.key, -1)); }}>▲</IconButton>
-            <IconButton size="small" aria-label={t('design.moveDown')} disabled={gi === form.groups.length - 1} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeGroup(form, l, g.key, 1)); }}>▼</IconButton>
+            <IconButton size="small" aria-label={t('design.moveUp')} disabled={gi === 0} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeGroup(form, l, g.key, -1)); }}>
+              <ArrowUpwardIcon fontSize="small" />
+            </IconButton>
+            <IconButton size="small" aria-label={t('design.moveDown')} disabled={gi === form.groups.length - 1} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeGroup(form, l, g.key, 1)); }}>
+              <ArrowDownwardIcon fontSize="small" />
+            </IconButton>
           </ListItemButton>
           {formFields(form, g.key).map((f, fi, all) => (
             <ListItemButton
@@ -393,14 +406,18 @@ function StructureList({ designer }: { designer: FormDesigner }) {
               onClick={() => designer.select(f.key)}
               sx={{ pl: 1, opacity: dragged === f.key ? 0.4 : 1 }}
             >
-              <Box component="span" aria-hidden sx={{ cursor: 'grab', color: 'text.disabled', mr: 1 }}>⠿</Box>
+              <DragIndicatorIcon fontSize="small" sx={{ cursor: 'grab', color: 'text.disabled', mr: 1 }} />
               <ListItemText
                 primary={resolveText(f.texts.caption, f.caption, locale, t)}
                 slotProps={{ primary: { sx: { color: f.hidden || f.retired ? 'text.disabled' : undefined, textDecoration: f.hidden || f.retired ? 'line-through' : undefined } } }}
               />
               {f.retired ? <Chip size="small" label={t('design.retired')} sx={{ mr: 0.5 }} /> : f.hidden && <Chip size="small" label={t('design.hidden')} sx={{ mr: 0.5 }} />}
-              <IconButton size="small" aria-label={t('design.moveUp')} disabled={fi === 0} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeField(form, l, f.key, -1)); }}>▲</IconButton>
-              <IconButton size="small" aria-label={t('design.moveDown')} disabled={fi === all.length - 1} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeField(form, l, f.key, 1)); }}>▼</IconButton>
+              <IconButton size="small" aria-label={t('design.moveUp')} disabled={fi === 0} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeField(form, l, f.key, -1)); }}>
+                <ArrowUpwardIcon fontSize="small" />
+              </IconButton>
+              <IconButton size="small" aria-label={t('design.moveDown')} disabled={fi === all.length - 1} onClick={(e) => { e.stopPropagation(); designer.update((l) => nudgeField(form, l, f.key, 1)); }}>
+                <ArrowDownwardIcon fontSize="small" />
+              </IconButton>
             </ListItemButton>
           ))}
         </Box>
@@ -444,7 +461,9 @@ export function FormDesignPanel({ designer }: { designer: FormDesigner }) {
     >
       <Box sx={{ display: 'flex', alignItems: 'center', px: 2, py: 1 }}>
         <Typography variant="h6" sx={{ flex: 1 }}>{t('design.title')}</Typography>
-        <IconButton aria-label={t('design.close')} onClick={designer.close}>✕</IconButton>
+        <IconButton aria-label={t('design.close')} onClick={designer.close}>
+          <CloseIcon fontSize="small" />
+        </IconButton>
       </Box>
       <Box sx={{ px: 2, pb: 1 }}>
         <ToggleButtonGroup size="small" exclusive fullWidth value={designer.scope} onChange={(_, v) => v && designer.setScope(v)}>

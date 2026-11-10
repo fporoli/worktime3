@@ -1,6 +1,25 @@
-import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
-import { useT } from './i18n';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  LinearProgress,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
+import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
+import { useI18n } from './i18n';
+import { formatDurationMinutes } from './localeFormat';
+import { PageHeader } from './components';
+import { ChevronLeftIcon, ChevronRightIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -29,6 +48,12 @@ interface ReopenRequest {
   finished: string | null;
 }
 
+interface WorkSessionRow {
+  id: string;
+  check_in: string;
+  check_out: string | null;
+}
+
 const REOPEN_ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
   'reason-required': (t) => t('timesheet.reopenReasonRequired'),
   'no-manager-to-ask': (t) => t('timesheet.reopenNoManager'),
@@ -36,13 +61,11 @@ const REOPEN_ERROR_MESSAGES: Record<string, (t: (key: string) => string) => stri
   'not-approved': (t) => t('timesheet.reopenNotApproved'),
 };
 
-/** First day of the current month, e.g. '2026-09-01'. */
 function currentPeriodStart(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-/** 'YYYY-MM-01' <-> the 'YYYY-MM' shape a month input wants. */
 function toMonthInput(periodStart: string): string {
   return periodStart.slice(0, 7);
 }
@@ -57,24 +80,15 @@ function shiftMonth(periodStart: string, delta: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-/** 'YYYY-MM-DD' -> 'DD.MM.YYYY'. */
 function toDisplayDate(isoDate: string): string {
   const [y, m, d] = isoDate.slice(0, 10).split('-');
   return `${d}.${m}.${y}`;
 }
 
-/**
- * A generic, human title for a timesheet period, e.g. '01.09.2026-01.10.2026' for September 2026 —
- * its start date through the (exclusive) start of the next month. Referenced by name
- * ("getSourceTitle") from `workflow_definitions.steps[].source_name`, so a workflow row whose source
- * is a timesheet period can show a "Corresponding object" title without Workflow/Approvals code
- * needing to know anything about timesheets.
- */
 export function getSourceTitle(periodStart: string): string {
   return `${toDisplayDate(periodStart)}-${toDisplayDate(nextMonthStart(periodStart))}`;
 }
 
-/** First day of the month after `periodStart` (a 'YYYY-MM-DD' string). */
 function nextMonthStart(periodStart: string): string {
   const [y, m] = periodStart.slice(0, 10).split('-').map(Number);
   const nextMonth = m === 12 ? 1 : m + 1;
@@ -89,8 +103,10 @@ interface TimesheetProps {
 }
 
 export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
+  const [monthEntries, setMonthEntries] = useState<Entry[]>([]);
+  const [monthWorkSessions, setMonthWorkSessions] = useState<WorkSessionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,10 +129,30 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     }
   }
 
+  async function reloadMonthSummary(targetPeriod: string) {
+    const { from, to } = periodRange('month', targetPeriod);
+    try {
+      const headers = await authHeaders();
+      const [ptRes, wtRes] = await Promise.all([
+        fetch(`${API}/organizations/${orgId}/project-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/work-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
+      ]);
+      const ptData = await ptRes.json();
+      const wtData = await wtRes.json();
+      setMonthEntries(Array.isArray(ptData?.entries) ? ptData.entries : []);
+      setMonthWorkSessions(Array.isArray(wtData?.entries) ? wtData.entries : []);
+    } catch { /* offline fallback */ }
+  }
+
   useEffect(() => {
-    reload();
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
+
+  useEffect(() => {
+    void reloadMonthSummary(period);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, userId, period]);
 
   const current = periods.find((p) => p.period_start === period);
   const status = current?.status ?? 'open';
@@ -132,7 +168,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   useEffect(() => {
     setReopenReason('');
     if (current?.id && status === 'approved') {
-      reloadReopenRequest(current.id);
+      void reloadReopenRequest(current.id);
     } else {
       setReopenRequest(null);
     }
@@ -186,113 +222,204 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     }
   }
 
+  const totalProjectMinutes = useMemo(
+    () => monthEntries.reduce((sum, e) => sum + minutes(e), 0),
+    [monthEntries],
+  );
+  const totalWorkMinutes = useMemo(
+    () =>
+      monthWorkSessions.reduce((sum, s) => {
+        if (!s.check_out) return sum;
+        return sum + Math.max(0, (new Date(s.check_out).getTime() - new Date(s.check_in).getTime()) / 60000);
+      }, 0),
+    [monthWorkSessions],
+  );
+  const projectBreakdown = useMemo(() => {
+    const map = new Map<string, { label: string; minutes: number; count: number }>();
+    for (const e of monthEntries) {
+      const label = e.project_name
+        ? e.subproject_name
+          ? `${e.project_name} / ${e.subproject_name}`
+          : e.project_name
+        : t('timesheet.unassignedProject');
+      const existing = map.get(label) ?? { label, minutes: 0, count: 0 };
+      existing.minutes += minutes(e);
+      existing.count += 1;
+      map.set(label, existing);
+    }
+    return [...map.values()].sort((a, b) => b.minutes - a.minutes);
+  }, [monthEntries, t]);
+
   const history = [...periods]
     .filter((p) => p.period_start !== period)
     .sort((a, b) => (a.period_start < b.period_start ? 1 : -1));
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-        <Typography variant="h6">{t('timesheet.title')}</Typography>
-        <Chip label={status} color={STATUS_COLOR[status]} size="small" />
-      </Box>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader
+        title={t('timesheet.title')}
+        subtitle={periodLabel('month', period, locale)}
+        end={<Chip label={t(`timesheet.status.${status}`)} color={STATUS_COLOR[status]} size="small" />}
+      />
 
-      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
       {status === 'rejected' && current?.review_note && (
-        <Alert severity="warning" sx={{ mt: 1 }}>{t('timesheet.rejected', { note: current.review_note })}</Alert>
+        <Alert severity="warning">{t('timesheet.rejected', { note: current.review_note })}</Alert>
       )}
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
+      {loading && <LinearProgress />}
 
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 2, mb: 1, flexWrap: 'wrap' }}>
-        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, -1))}>{t('timesheet.prev')}</Button>
-        <TextField
-          type="month"
-          size="small"
-          value={toMonthInput(period)}
-          onChange={(e) => e.target.value && setPeriod(fromMonthInput(e.target.value))}
-        />
-        <Button size="small" onClick={() => setPeriod((p) => shiftMonth(p, 1))}>{t('timesheet.next')}</Button>
-        {period !== currentPeriodStart() && (
-          <Button size="small" onClick={() => setPeriod(currentPeriodStart())}>{t('timesheet.thisMonth')}</Button>
-        )}
-      </Box>
-
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
-        {t('timesheet.viewing', { period: period.slice(0, 7) })}
-      </Typography>
-
-      {(status === 'open' || status === 'rejected') && (
-        <TextField
-          size="small"
-          label={t('timesheet.submitNote')}
-          placeholder={t('timesheet.submitNotePlaceholder')}
-          value={submitNote}
-          onChange={(e) => setSubmitNote(e.target.value)}
-          multiline
-          minRows={2}
-          sx={{
-            display: 'block',
-            mb: 1.5,
-            width: '100%',
-            maxWidth: 720,
-            '& textarea': { resize: 'vertical' },
-          }}
-        />
-      )}
-      <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
-        {status === 'approved' ? t('timesheet.approved') : status === 'submitted' ? t('timesheet.pending') : status === 'rejected' ? t('timesheet.resubmit') : t('timesheet.submit')}
-      </Button>
-
-      {status === 'approved' && (
-        <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-          {reopenRequest?.step_status === 'pending' ? (
-            <Typography variant="body2">{t('timesheet.reopenPending')}</Typography>
-          ) : (
-            <>
-              <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('timesheet.requestReopen')}</Typography>
-              {reopenRequest?.step_status === 'rejected' && (
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  {t('timesheet.reopenRejected', { note: reopenRequest.workflow_data.decisionNote || '—' })}
-                </Typography>
-              )}
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <TextField
-                  size="small"
-                  label={t('timesheet.reopenReason')}
-                  placeholder={t('timesheet.reopenReasonPlaceholder')}
-                  value={reopenReason}
-                  onChange={(e) => setReopenReason(e.target.value)}
-                  multiline
-                  minRows={2}
-                  sx={{ minWidth: 260, flex: 1 }}
-                />
-                <Button variant="outlined" size="small" onClick={requestReopen} disabled={requestingReopen || !reopenReason.trim()}>
-                  {t('timesheet.requestReopen')}
-                </Button>
-              </Box>
-            </>
+      <Paper sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1.5, flexWrap: 'wrap' }}>
+          <Button size="small" startIcon={<ChevronLeftIcon fontSize="small" />} onClick={() => setPeriod((p) => shiftMonth(p, -1))}>
+            {t('timesheet.prev').replace('‹ ', '')}
+          </Button>
+          <TextField
+            type="month"
+            size="small"
+            value={toMonthInput(period)}
+            onChange={(e) => e.target.value && setPeriod(fromMonthInput(e.target.value))}
+          />
+          <Button size="small" endIcon={<ChevronRightIcon fontSize="small" />} onClick={() => setPeriod((p) => shiftMonth(p, 1))}>
+            {t('timesheet.next').replace(' ›', '')}
+          </Button>
+          {period !== currentPeriodStart() && (
+            <Button size="small" onClick={() => setPeriod(currentPeriodStart())}>{t('timesheet.thisMonth')}</Button>
           )}
         </Box>
-      )}
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          {t('timesheet.viewing', { period: period.slice(0, 7) })}
+        </Typography>
+
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
+            gap: 1.5,
+            mb: 2,
+          }}
+        >
+          <Paper variant="outlined" sx={{ p: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">{t('timesheet.projectHours')}</Typography>
+            <Typography variant="h6">{formatDurationMinutes(totalProjectMinutes)}</Typography>
+          </Paper>
+          <Paper variant="outlined" sx={{ p: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">{t('timesheet.workHours')}</Typography>
+            <Typography variant="h6">{formatDurationMinutes(totalWorkMinutes)}</Typography>
+          </Paper>
+          <Paper variant="outlined" sx={{ p: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">{t('timesheet.entriesCount')}</Typography>
+            <Typography variant="h6">{monthEntries.length}</Typography>
+          </Paper>
+        </Box>
+
+        {projectBreakdown.length > 0 && (
+          <Box sx={{ mb: 2.5 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('timesheet.byProject')}</Typography>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('common.project')}</TableCell>
+                    <TableCell align="right">{t('time.entries')}</TableCell>
+                    <TableCell align="right">{t('approvals.duration')}</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {projectBreakdown.map((b) => (
+                    <TableRow key={b.label}>
+                      <TableCell>{b.label}</TableCell>
+                      <TableCell align="right">{b.count}</TableCell>
+                      <TableCell align="right">{formatDurationMinutes(b.minutes)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )}
+
+        {(status === 'open' || status === 'rejected') && (
+          <TextField
+            size="small"
+            label={t('timesheet.submitNote')}
+            placeholder={t('timesheet.submitNotePlaceholder')}
+            value={submitNote}
+            onChange={(e) => setSubmitNote(e.target.value)}
+            multiline
+            minRows={2}
+            sx={{
+              display: 'block',
+              mb: 1.5,
+              width: '100%',
+              maxWidth: 720,
+              '& textarea': { resize: 'vertical' },
+            }}
+          />
+        )}
+        <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
+          {status === 'approved' ? t('timesheet.approved') : status === 'submitted' ? t('timesheet.pending') : status === 'rejected' ? t('timesheet.resubmit') : t('timesheet.submit')}
+        </Button>
+
+        {status === 'approved' && (
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+            {reopenRequest?.step_status === 'pending' ? (
+              <Typography variant="body2">{t('timesheet.reopenPending')}</Typography>
+            ) : (
+              <>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('timesheet.requestReopen')}</Typography>
+                {reopenRequest?.step_status === 'rejected' && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    {t('timesheet.reopenRejected', { note: reopenRequest.workflow_data.decisionNote || '—' })}
+                  </Typography>
+                )}
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <TextField
+                    size="small"
+                    label={t('timesheet.reopenReason')}
+                    placeholder={t('timesheet.reopenReasonPlaceholder')}
+                    value={reopenReason}
+                    onChange={(e) => setReopenReason(e.target.value)}
+                    multiline
+                    minRows={2}
+                    sx={{ minWidth: 260, flex: 1 }}
+                  />
+                  <Button variant="outlined" size="small" onClick={requestReopen} disabled={requestingReopen || !reopenReason.trim()}>
+                    {t('timesheet.requestReopen')}
+                  </Button>
+                </Box>
+              </>
+            )}
+          </Box>
+        )}
+      </Paper>
 
       {history.length > 0 && (
-        <>
-          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>{t('timesheet.history')}</Typography>
-          <Table size="small">
-            <TableHead><TableRow><TableCell>{t('time.period')}</TableCell><TableCell>{t('timesheet.status')}</TableCell><TableCell>{t('timesheet.note')}</TableCell></TableRow></TableHead>
-            <TableBody>
-              {history.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>{p.period_start.slice(0, 7)}</TableCell>
-                  <TableCell><Chip label={p.status} size="small" color={STATUS_COLOR[p.status]} /></TableCell>
-                  <TableCell>{p.review_note ?? '—'}</TableCell>
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('timesheet.history')}</Typography>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('time.period')}</TableCell>
+                  <TableCell>{t('timesheet.status')}</TableCell>
+                  <TableCell>{t('timesheet.note')}</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </>
+              </TableHead>
+              <TableBody>
+                {history.map((p) => (
+                  <TableRow key={p.id} hover>
+                    <TableCell>{p.period_start.slice(0, 7)}</TableCell>
+                    <TableCell><Chip label={t(`timesheet.status.${p.status}`)} size="small" color={STATUS_COLOR[p.status]} /></TableCell>
+                    <TableCell>{p.review_note ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       )}
-    </Paper>
+    </Box>
   );
 }

@@ -144,10 +144,33 @@ export function ConfigField({ field, value, editing, onChange, options, error, d
 
   if (!editing || field.readOnly) {
     const shown = displayValue(field, value, locale, options, t('common.yes'), t('common.no'));
+    const missingRequired = !shown && !!field.required;
     content = (
       <Box sx={widthSx(field)}>
         <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{shown || t('common.notSet')}</Typography>
+        {shown ? (
+          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{shown}</Typography>
+        ) : missingRequired ? (
+          <Tooltip title={t('fields.requiredMissing')}>
+            <Typography
+              variant="body2"
+              component="span"
+              sx={{
+                display: 'inline-block',
+                px: 0.75,
+                py: 0.1,
+                borderRadius: 1,
+                bgcolor: (th) => (th.palette.mode === 'dark' ? 'rgba(245, 158, 11, 0.18)' : 'rgba(245, 158, 11, 0.16)'),
+                color: 'warning.main',
+                fontWeight: 600,
+              }}
+            >
+              —
+            </Typography>
+          </Tooltip>
+        ) : (
+          <Typography variant="body2" color="text.disabled">—</Typography>
+        )}
       </Box>
     );
   } else {
@@ -202,7 +225,7 @@ export function ConfigField({ field, value, editing, onChange, options, error, d
             helperText={errorText}
             sx={widthSx(field)}
           >
-            <MenuItem value=""><em>{t('common.notSet')}</em></MenuItem>
+            <MenuItem value=""><em>{t('common.none')}</em></MenuItem>
             {(options ?? []).map((o) => (<MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>))}
           </TextField>
         );

@@ -4,29 +4,37 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
   LinearProgress,
   MenuItem,
   Paper,
-  Select,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from '@mui/material';
-import { useT } from './i18n';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import dayjs, { type Dayjs } from 'dayjs';
+import { useI18n } from './i18n';
+import { formatFileSize, formatLocaleDate } from './localeFormat';
+import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { BeachAccessIcon, DeleteIcon, DownloadIcon, UploadIcon, VisibilityIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 type Status = 'pending' | 'approved' | 'rejected';
 
-/** Built-in absence types — mirrors apps/api/src/absence-types.ts's DEFAULT_ABSENCE_TYPES, the
- * fallback used when an org hasn't customized its static_data (entity="absences",
- * enum_name="absence_type") row. */
 const DEFAULT_ABSENCE_TYPES = ['vacation', 'military_service', 'accident', 'compensation', 'school', 'sickness', 'other'];
 
 interface AbsenceRow {
@@ -55,18 +63,11 @@ const STATUS_COLOR: Record<Status, 'default' | 'warning' | 'success' | 'error'> 
   rejected: 'error',
 };
 
-/** 'YYYY-MM-DD' -> 'DD.MM.YYYY'. */
 function toDisplayDate(isoDate: string): string {
   const [y, m, d] = isoDate.slice(0, 10).split('-');
   return `${d}.${m}.${y}`;
 }
 
-/**
- * A generic, human title for a vacation request. Referenced by name
- * ("getAbsenceTitle") from `workflow_definitions.steps[].source_name`, so a
- * workflow row whose source is an absence can show a title without
- * Workflow/Approvals code needing to know anything about absences.
- */
 export function getAbsenceTitle(row: { date_start: string; date_end: string }): string {
   return row.date_start === row.date_end ? toDisplayDate(row.date_start) : `${toDisplayDate(row.date_start)}–${toDisplayDate(row.date_end)}`;
 }
@@ -78,7 +79,7 @@ interface AbsencesProps {
 }
 
 export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [requests, setRequests] = useState<AbsenceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,8 +92,12 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
   const [absenceTypes, setAbsenceTypes] = useState<string[]>(DEFAULT_ABSENCE_TYPES);
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [viewingDocumentFor, setViewingDocumentFor] = useState<string | null>(null);
+
+  const [viewingRow, setViewingRow] = useState<AbsenceRow | null>(null);
   const [viewingDocument, setViewingDocument] = useState<DocumentMeta | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [confirmDeleteDocId, setConfirmDeleteDocId] = useState<string | null>(null);
 
   const isSingleDay = !!dateStart && dateStart === dateEnd;
 
@@ -114,12 +119,12 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
       const row = Array.isArray(data) ? data.find((r) => r.enum_name === 'absence_type') : null;
       const keys = row?.values && typeof row.values === 'object' ? Object.keys(row.values) : null;
       if (keys && keys.length > 0) setAbsenceTypes(keys);
-    } catch { /* offline fallback keeps the built-in defaults */ }
+    } catch { /* offline fallback */ }
   }
 
   useEffect(() => {
-    reload();
-    loadAbsenceTypes();
+    void reload();
+    void loadAbsenceTypes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
@@ -127,7 +132,19 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
     if (!isSingleDay) setHalfDay(false);
   }, [isSingleDay]);
 
-  /** Human label for an absence type — a known key gets its translation, an org-added custom key just shows as-is. */
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  function closeDocumentDialog() {
+    setViewingRow(null);
+    setViewingDocument(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+  }
+
   function typeLabel(type: string): string {
     const known = DEFAULT_ABSENCE_TYPES.includes(type);
     return known ? t(`absences.type.${type}`) : type;
@@ -200,13 +217,25 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
     }
   }
 
-  async function viewDocument(id: string) {
-    setViewingDocumentFor(id);
+  async function viewDocument(row: AbsenceRow) {
+    setViewingRow(row);
     setViewingDocument(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/absences/${id}/document`, { headers: await authHeaders() });
-      const data = await res.json();
-      if (data) setViewingDocument(data);
+      const headers = await authHeaders();
+      const res = await fetch(`${API}/organizations/${orgId}/absences/${row.id}/document`, { headers });
+      const data: DocumentMeta | null = await res.json();
+      if (data) {
+        setViewingDocument(data);
+        if (data.mime_type.startsWith('image/') || data.mime_type === 'application/pdf') {
+          const fileRes = await fetch(`${API}/absences/${row.id}/document`, { headers });
+          const blob = await fileRes.blob();
+          setPreviewUrl(URL.createObjectURL(blob));
+        }
+      }
     } catch { /* offline fallback */ }
   }
 
@@ -223,91 +252,200 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
     } catch { /* offline fallback */ }
   }
 
+  async function deleteDocument(absenceId: string) {
+    setError(null);
+    try {
+      const res = await fetch(`${API}/absences/${absenceId}/document`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(t('absences.deleteDocumentFailed', { error: data.error ?? t('common.unknownError') }));
+        return;
+      }
+      closeDocumentDialog();
+      setSuccess(t('absences.documentDeleted'));
+      await reload();
+    } catch {
+      setError(t('common.cannotReachApi'));
+    }
+  }
+
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('absences.title')}</Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('absences.title')} />
 
-      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
 
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', mt: 2, mb: 2 }}>
-        <TextField label={t('absences.dateFrom')} type="date" size="small" value={dateStart} onChange={(e) => setDateStart(e.target.value)} InputLabelProps={{ shrink: true }} />
-        <TextField label={t('absences.dateTo')} type="date" size="small" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} InputLabelProps={{ shrink: true }} />
-        <Select size="small" value={absenceType} onChange={(e) => setAbsenceType(e.target.value)} sx={{ minWidth: 160 }}>
-          {absenceTypes.map((type) => (
-            <MenuItem key={type} value={type}>{typeLabel(type)}</MenuItem>
-          ))}
-        </Select>
-        {isSingleDay && (
-          <ToggleButtonGroup value={halfDay ? 'half' : 'full'} exclusive onChange={(_, v) => v && setHalfDay(v === 'half')} size="small">
-            <ToggleButton value="full">{t('absences.dayType.full')}</ToggleButton>
-            <ToggleButton value="half">{t('absences.dayType.half')}</ToggleButton>
-          </ToggleButtonGroup>
-        )}
-        <TextField label={t('time.comment')} size="small" value={note} onChange={(e) => setNote(e.target.value)} sx={{ minWidth: 220, flex: 1 }} />
-        <Button variant="outlined" size="small" component="label">
-          {file ? file.name : t('absences.attachDocument')}
-          <input ref={fileInputRef} type="file" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        </Button>
-        <Button variant="contained" size="small" onClick={submit}>{t('absences.request')}</Button>
-      </Box>
-
-      <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('absences.myRequests')}</Typography>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('absences.dateFrom')}</TableCell>
-            <TableCell>{t('absences.dateTo')}</TableCell>
-            <TableCell>{t('absences.type')}</TableCell>
-            <TableCell>{t('timesheet.status')}</TableCell>
-            <TableCell>{t('time.comment')}</TableCell>
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {requests.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell>{toDisplayDate(r.date_start)}</TableCell>
-              <TableCell>{toDisplayDate(r.date_end)}</TableCell>
-              <TableCell>
-                <Chip label={typeLabel(r.absence_type)} size="small" variant="outlined" />
-                {r.half_day && <Chip label={t('absences.dayType.half')} size="small" sx={{ ml: 0.5 }} />}
-              </TableCell>
-              <TableCell><Chip label={t(`absences.status.${r.status}`)} size="small" color={STATUS_COLOR[r.status]} /></TableCell>
-              <TableCell>{r.status === 'rejected' && r.review_note ? r.review_note : (r.note ?? '')}</TableCell>
-              <TableCell align="right">
-                {r.document_id && (
-                  <Button size="small" onClick={() => viewDocument(r.id)} sx={{ mr: 1 }}>{t('absences.documents')}</Button>
-                )}
-                {r.status === 'pending' && (
-                  <Button size="small" color="error" onClick={() => cancel(r.id)}>{t('absences.cancel')}</Button>
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-          {requests.length === 0 && (
-            <TableRow><TableCell colSpan={6}>{t('time.noEntries')}</TableCell></TableRow>
+      <Paper
+        component="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        sx={{ p: 2 }}
+      >
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <DatePicker
+            label={t('absences.dateFrom')}
+            value={dateStart ? dayjs(dateStart) : null}
+            onChange={(d: Dayjs | null) => {
+              const next = d && d.isValid() ? d.format('YYYY-MM-DD') : '';
+              setDateStart(next);
+              if (next && !dateEnd) setDateEnd(next);
+            }}
+            slotProps={{ textField: { size: 'small', sx: { minWidth: 160 } } }}
+          />
+          <DatePicker
+            label={t('absences.dateTo')}
+            value={dateEnd ? dayjs(dateEnd) : null}
+            minDate={dateStart ? dayjs(dateStart) : undefined}
+            onChange={(d: Dayjs | null) => setDateEnd(d && d.isValid() ? d.format('YYYY-MM-DD') : '')}
+            slotProps={{ textField: { size: 'small', sx: { minWidth: 160 } } }}
+          />
+          <TextField
+            select
+            size="small"
+            label={t('absences.type')}
+            value={absenceType}
+            onChange={(e) => setAbsenceType(e.target.value)}
+            sx={{ minWidth: 170 }}
+          >
+            {absenceTypes.map((type) => (
+              <MenuItem key={type} value={type}>{typeLabel(type)}</MenuItem>
+            ))}
+          </TextField>
+          {isSingleDay && (
+            <ToggleButtonGroup value={halfDay ? 'half' : 'full'} exclusive onChange={(_, v) => v && setHalfDay(v === 'half')} size="small">
+              <ToggleButton value="full">{t('absences.dayType.full')}</ToggleButton>
+              <ToggleButton value="half">{t('absences.dayType.half')}</ToggleButton>
+            </ToggleButtonGroup>
           )}
-        </TableBody>
-      </Table>
+          <TextField label={t('time.comment')} size="small" value={note} onChange={(e) => setNote(e.target.value)} sx={{ minWidth: 220, flex: 1 }} />
+          <Button variant="outlined" size="small" component="label" startIcon={<UploadIcon fontSize="small" />} sx={{ height: 40 }}>
+            {file ? file.name : t('absences.attachDocument')}
+            <input ref={fileInputRef} type="file" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          </Button>
+          <Button type="submit" variant="contained" sx={{ height: 40 }}>{t('absences.request')}</Button>
+        </Box>
+      </Paper>
 
-      {viewingDocumentFor && (
-        <Box sx={{ mt: 2, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="subtitle2">{t('absences.documents')}</Typography>
-            <Button size="small" onClick={() => setViewingDocumentFor(null)}>×</Button>
-          </Box>
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('absences.myRequests')}</Typography>
+        {loading && <LinearProgress sx={{ mb: 1 }} />}
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('absences.dateFrom')}</TableCell>
+                <TableCell>{t('absences.dateTo')}</TableCell>
+                <TableCell>{t('absences.type')}</TableCell>
+                <TableCell>{t('timesheet.status')}</TableCell>
+                <TableCell>{t('time.comment')}</TableCell>
+                <TableCell align="right">{t('common.actions')}</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {requests.map((r) => (
+                <TableRow key={r.id} hover>
+                  <TableCell>{formatLocaleDate(r.date_start, locale)}</TableCell>
+                  <TableCell>{formatLocaleDate(r.date_end, locale)}</TableCell>
+                  <TableCell>
+                    <Chip label={typeLabel(r.absence_type)} size="small" variant="outlined" />
+                    {r.half_day && <Chip label={t('absences.dayType.half')} size="small" sx={{ ml: 0.5 }} />}
+                  </TableCell>
+                  <TableCell><Chip label={t(`absences.status.${r.status}`)} size="small" color={STATUS_COLOR[r.status]} /></TableCell>
+                  <TableCell>{r.status === 'rejected' && r.review_note ? r.review_note : (r.note || '—')}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    {r.document_id && (
+                      <Tooltip title={t('absences.documents')}>
+                        <IconButton size="small" aria-label={t('absences.documents')} onClick={() => void viewDocument(r)}>
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {r.status === 'pending' && (
+                      <Tooltip title={t('absences.cancel')}>
+                        <IconButton size="small" color="error" aria-label={t('absences.cancel')} onClick={() => setConfirmCancelId(r.id)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {requests.length === 0 && (
+                <TableEmptyRow colSpan={6} icon={<BeachAccessIcon fontSize="inherit" />} title={t('time.noEntries')} />
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <Dialog open={!!viewingRow} onClose={closeDocumentDialog} fullWidth maxWidth="sm">
+        <DialogTitle>{t('absences.documents')}</DialogTitle>
+        <DialogContent dividers>
           {viewingDocument ? (
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
-              <Typography variant="body2">{viewingDocument.file_name}</Typography>
-              <Button size="small" onClick={() => downloadDocument(viewingDocumentFor, viewingDocument)}>{t('absences.download')}</Button>
+            <Box sx={{ display: 'grid', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{viewingDocument.file_name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {t('absences.fileSize', { size: formatFileSize(viewingDocument.size_bytes, locale) })} · {new Date(viewingDocument.created_at).toLocaleString(locale)}
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DownloadIcon fontSize="small" />}
+                  onClick={() => viewingRow && void downloadDocument(viewingRow.id, viewingDocument)}
+                >
+                  {t('absences.download')}
+                </Button>
+              </Box>
+              {previewUrl && viewingDocument.mime_type.startsWith('image/') && (
+                <Box component="img" src={previewUrl} alt={viewingDocument.file_name} sx={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain', borderRadius: 1 }} />
+              )}
+              {previewUrl && viewingDocument.mime_type === 'application/pdf' && (
+                <Box component="iframe" src={previewUrl} title={viewingDocument.file_name} sx={{ width: '100%', height: 380, border: 1, borderColor: 'divider', borderRadius: 1 }} />
+              )}
             </Box>
           ) : (
             <Typography variant="body2" color="text.secondary">{t('absences.noDocuments')}</Typography>
           )}
-        </Box>
-      )}
-    </Paper>
+        </DialogContent>
+        <DialogActions>
+          {viewingRow?.status === 'pending' && viewingDocument && (
+            <Button color="error" onClick={() => setConfirmDeleteDocId(viewingRow.id)}>
+              {t('absences.deleteDocument')}
+            </Button>
+          )}
+          <Button onClick={closeDocumentDialog}>{t('common.close')}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!confirmCancelId}
+        title={t('absences.cancelTitle')}
+        message={t('absences.cancelConfirm')}
+        confirmLabel={t('absences.cancel')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmCancelId(null)}
+        onConfirm={() => {
+          if (confirmCancelId) return cancel(confirmCancelId);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDeleteDocId}
+        title={t('absences.deleteDocument')}
+        message={t('absences.deleteDocumentConfirm')}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmDeleteDocId(null)}
+        onConfirm={() => {
+          if (confirmDeleteDocId) return deleteDocument(confirmDeleteDocId);
+        }}
+      />
+    </Box>
   );
 }

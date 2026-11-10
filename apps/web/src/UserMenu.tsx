@@ -20,6 +20,18 @@ import {
 import type { Session } from './Login';
 import { LOCALES, useT, type Locale } from './i18n';
 import AboutDialog from './AboutDialog';
+import {
+  ArrowDropDownIcon,
+  CheckIcon,
+  DarkModeIcon,
+  DesignServicesIcon,
+  InfoOutlinedIcon,
+  LightModeIcon,
+  LogoutIcon,
+  SettingsIcon,
+  SwapHorizIcon,
+} from './icons';
+import { useThemeMode } from './theme';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -51,6 +63,7 @@ interface SearchUser {
 
 export default function UserMenu({ session, authHeaders, currentOrgId, canSwitchUser, canDesign, designMode, onDesignModeChange, adminSession, onSwitchSession, onReturnToAdmin, onLogout, onLocaleChange, onSettingsChange }: UserMenuProps) {
   const t = useT();
+  const { mode, toggleMode } = useThemeMode();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedLocale, setSelectedLocale] = useState<Locale>((session.locale as Locale) ?? 'en');
@@ -165,7 +178,7 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
         <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>
           {session.displayName}
         </Typography>
-        <Box component="span" aria-hidden sx={{ fontSize: 10, opacity: 0.8 }}>▾</Box>
+        <ArrowDropDownIcon fontSize="small" sx={{ opacity: 0.85, ml: -0.5 }} />
       </Button>
 
       <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={() => setAnchorEl(null)}>
@@ -174,17 +187,44 @@ export default function UserMenu({ session, authHeaders, currentOrgId, canSwitch
           <Typography variant="caption" color="text.secondary">{session.email}</Typography>
         </Box>
         <Divider />
-        <MenuItem onClick={openSettings}>{t('usermenu.settings')}</MenuItem>
-        <MenuItem onClick={() => { setAnchorEl(null); setAboutOpen(true); }}>{t('usermenu.information')}</MenuItem>
+        <MenuItem onClick={openSettings}>
+          <ListItemIcon sx={{ minWidth: 32 }}><SettingsIcon fontSize="small" /></ListItemIcon>
+          {t('usermenu.settings')}
+        </MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); setAboutOpen(true); }}>
+          <ListItemIcon sx={{ minWidth: 32 }}><InfoOutlinedIcon fontSize="small" /></ListItemIcon>
+          {t('usermenu.information')}
+        </MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); toggleMode(); }}>
+          <ListItemIcon sx={{ minWidth: 32 }}>
+            {mode === 'dark' ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
+          </ListItemIcon>
+          {mode === 'dark' ? t('usermenu.themeLight') : t('usermenu.themeDark')}
+        </MenuItem>
         {canDesign && (
           <MenuItem onClick={() => { setAnchorEl(null); onDesignModeChange(!designMode); }}>
-            <ListItemIcon sx={{ minWidth: 28 }}>{designMode ? '✓' : ''}</ListItemIcon>
+            <ListItemIcon sx={{ minWidth: 32 }}>
+              {designMode ? <CheckIcon fontSize="small" color="primary" /> : <DesignServicesIcon fontSize="small" />}
+            </ListItemIcon>
             {t('design.menu')}
           </MenuItem>
         )}
-        {canSwitchUser && <MenuItem onClick={openSwitchUser}>{t('usermenu.switchUser')}…</MenuItem>}
-        {adminSession && <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>{t('usermenu.returnToAccount')}</MenuItem>}
-        <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>{t('usermenu.logout')}</MenuItem>
+        {canSwitchUser && (
+          <MenuItem onClick={openSwitchUser}>
+            <ListItemIcon sx={{ minWidth: 32 }}><SwapHorizIcon fontSize="small" /></ListItemIcon>
+            {t('usermenu.switchUser')}…
+          </MenuItem>
+        )}
+        {adminSession && (
+          <MenuItem onClick={() => { setAnchorEl(null); onReturnToAdmin(); }}>
+            <ListItemIcon sx={{ minWidth: 32 }}><SwapHorizIcon fontSize="small" color="warning" /></ListItemIcon>
+            {t('usermenu.returnToAccount')}
+          </MenuItem>
+        )}
+        <MenuItem onClick={() => { setAnchorEl(null); onLogout(); }}>
+          <ListItemIcon sx={{ minWidth: 32 }}><LogoutIcon fontSize="small" /></ListItemIcon>
+          {t('usermenu.logout')}
+        </MenuItem>
       </Menu>
 
       <AboutDialog

@@ -1,13 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Box, Button, Chip, LinearProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material';
-import { useT } from './i18n';
-import { subCategoryLabel, type ExpenseRow } from './Expenses';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  LinearProgress,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import { useI18n } from './i18n';
+import { formatLocaleDate, formatLocaleNumber } from './localeFormat';
+import { PageHeader, TableEmptyRow } from './components';
+import { AddIcon, DeleteIcon, DownloadIcon, FolderCopyIcon, ReceiptLongIcon, VisibilityIcon } from './icons';
+import type { ExpenseRow } from './Expenses';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 interface StaticDataRow {
   enum_name: string;
   values: Record<string, string>;
+  translation?: Record<string, Record<string, string>>;
 }
 
 const STATUSES = [
@@ -16,7 +41,6 @@ const STATUSES = [
 ] as const;
 type Status = (typeof STATUSES)[number];
 
-/** In-progress/reopened-for-correction — the only statuses a report's own builder may still edit. */
 const EDITABLE_STATUSES: readonly Status[] = ['in_preparation', 'rejected'];
 
 interface ReportRow {
@@ -37,20 +61,25 @@ const STATUS_COLOR: Record<Status, 'default' | 'warning' | 'success' | 'error' |
   finished: 'success',
 };
 
-/** 'YYYY-MM-DD...' -> 'DD.MM.YYYY'. */
 function toDisplayDate(iso: string): string {
   const [y, m, d] = iso.slice(0, 10).split('-');
   return `${d}.${m}.${y}`;
 }
 
-/**
- * A generic, human title for an expense report. Referenced by name ("getExpenseReportTitle")
- * from `workflow_definitions.steps[].source_name`, so a workflow row whose source is an expense
- * report can show a "Corresponding object" title without Workflow/Approvals code needing to know
- * anything about expenses.
- */
 export function getExpenseReportTitle(report: { date_submitted: string | null }): string {
   return report.date_submitted ? toDisplayDate(report.date_submitted) : '—';
+}
+
+function totalsByCurrency(rows: ExpenseRow[], locale: string): string {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    const val = Number(r.value);
+    if (!Number.isFinite(val)) continue;
+    totals.set(r.currency, (totals.get(r.currency) ?? 0) + val);
+  }
+  return [...totals.entries()]
+    .map(([currency, sum]) => `${formatLocaleNumber(Math.round(sum * 100) / 100, locale)} ${currency}`)
+    .join(' + ');
 }
 
 interface ExpenseReportsProps {
@@ -60,16 +89,22 @@ interface ExpenseReportsProps {
 }
 
 export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseReportsProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [items, setItems] = useState<ExpenseRow[]>([]);
   const [unmapped, setUnmapped] = useState<ExpenseRow[]>([]);
   const [categories, setCategories] = useState<Record<string, string>>({});
   const [subCategories, setSubCategories] = useState<Record<string, string>>({});
+  const [catTranslations, setCatTranslations] = useState<Record<string, Record<string, string>>>({});
+  const [subCatTranslations, setSubCatTranslations] = useState<Record<string, Record<string, string>>>({});
   const [submitNote, setSubmitNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [inspectingReport, setInspectingReport] = useState<ReportRow | null>(null);
+  const [inspectingItems, setInspectingItems] = useState<ExpenseRow[]>([]);
+  const [inspectingLoading, setInspectingLoading] = useState(false);
 
   async function reloadReports() {
     setLoading(true);
@@ -87,25 +122,29 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
       const res = await fetch(`${API}/organizations/${orgId}/static-data/expenses`, { headers: await authHeaders() });
       const data: StaticDataRow[] = await res.json();
       if (!Array.isArray(data)) return;
-      setCategories(data.find((r) => r.enum_name === 'expense_category')?.values ?? {});
-      setSubCategories(data.find((r) => r.enum_name === 'expense_subcategory')?.values ?? {});
+      const catRow = data.find((r) => r.enum_name === 'expense_category');
+      const subRow = data.find((r) => r.enum_name === 'expense_subcategory');
+      setCategories(catRow?.values ?? {});
+      setCatTranslations(catRow?.translation ?? {});
+      setSubCategories(subRow?.values ?? {});
+      setSubCatTranslations(subRow?.translation ?? {});
     } catch { /* offline fallback */ }
   }
 
   function categoryLabel(row: ExpenseRow): string {
-    const cat = categories[row.category] ?? row.category;
-    const sub = subCategoryLabel(subCategories, row.category, row.sub_category);
-    return sub ? `${cat} / ${sub}` : cat;
+    const cat = catTranslations[locale]?.[row.category] ?? categories[row.category] ?? row.category;
+    if (!row.sub_category) return cat;
+    const subKey = `${row.category}$${row.sub_category}`;
+    const sub = subCatTranslations[locale]?.[subKey] ?? subCategories[subKey] ?? row.sub_category;
+    return `${cat} / ${sub}`;
   }
 
   useEffect(() => {
-    reloadReports();
-    reloadStaticData();
+    void reloadReports();
+    void reloadStaticData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
-  // The one report still open for editing, if any — a report is an explicit, user-curated bundle,
-  // so there's at most one "in progress" at a time (a rejected one is reopened for correction, not replaced).
   const draft = useMemo(() => reports.find((r) => EDITABLE_STATUSES.includes(r.status)) ?? null, [reports]);
   const history = useMemo(() => reports.filter((r) => r.id !== draft?.id).sort((a, b) => (a.date_submitted ?? '') < (b.date_submitted ?? '') ? 1 : -1), [reports, draft]);
 
@@ -129,7 +168,7 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
   }
 
   useEffect(() => {
-    reloadDraftDetail();
+    void reloadDraftDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id]);
 
@@ -166,7 +205,12 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
     if (!draft) return;
     setError(null);
     try {
-      await fetch(`${API}/expense-reports/${draft.id}/items/${expenseId}`, { method: 'DELETE', headers: await authHeaders() });
+      const res = await fetch(`${API}/expense-reports/${draft.id}/items/${expenseId}`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (data.ok === false) {
+        setError(t('expenseReports.attachFailed', { error: data.error ?? 'unknown error' }));
+        return;
+      }
       await reloadDraftDetail();
     } catch {
       setError(t('expenseReports.attachFailedOffline'));
@@ -196,109 +240,229 @@ export default function ExpenseReports({ orgId, userId, authHeaders }: ExpenseRe
     }
   }
 
+  async function inspectHistoryReport(report: ReportRow) {
+    setInspectingReport(report);
+    setInspectingItems([]);
+    setInspectingLoading(true);
+    try {
+      const res = await fetch(`${API}/expense-reports/${report.id}/items`, { headers: await authHeaders() });
+      const data = await res.json();
+      setInspectingItems(Array.isArray(data) ? data : []);
+    } catch {
+      setInspectingItems([]);
+    } finally {
+      setInspectingLoading(false);
+    }
+  }
+
+  async function downloadReceipt(expenseId: string) {
+    try {
+      const res = await fetch(`${API}/expenses/${expenseId}/document`, { headers: await authHeaders() });
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'payslip';
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* offline fallback */ }
+  }
+
+  const draftTotals = useMemo(() => totalsByCurrency(items, locale), [items, locale]);
+  const inspectTotals = useMemo(() => totalsByCurrency(inspectingItems, locale), [inspectingItems, locale]);
+
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('expenseReports.title')}</Typography>
-      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('expenseReports.title')} />
 
-      {!draft ? (
-        <Box sx={{ mt: 2 }}>
-          <Button variant="contained" onClick={createReport}>{t('expenseReports.newReport')}</Button>
-        </Box>
-      ) : (
-        <Box sx={{ mt: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-            <Typography variant="subtitle1">{t('expenseReports.draft')}</Typography>
-            <Chip label={t(`expenseReports.status.${draft.status}`)} color={STATUS_COLOR[draft.status]} size="small" />
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress />}
+
+      <Paper sx={{ p: 2 }}>
+        {!draft ? (
+          <Button variant="contained" startIcon={<AddIcon fontSize="small" />} onClick={createReport}>{t('expenseReports.newReport')}</Button>
+        ) : (
+          <Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                <Typography variant="h6">{t('expenseReports.draft')}</Typography>
+                {draftTotals && (
+                  <Chip size="small" color="primary" variant="outlined" label={t('expenseReports.total', { value: draftTotals })} />
+                )}
+              </Box>
+              <Chip label={t(`expenseReports.status.${draft.status}`)} color={STATUS_COLOR[draft.status]} size="small" />
+            </Box>
+            {draft.status === 'rejected' && draft.review_note && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>{t('expenseReports.rejected', { note: draft.review_note })}</Alert>
+            )}
+
+            <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('expenseReports.itemsInReport', { count: items.length })}</Typography>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('time.date')}</TableCell>
+                    <TableCell>{t('expenses.category')}</TableCell>
+                    <TableCell align="right">{t('expenses.value')}</TableCell>
+                    <TableCell align="right" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {items.map((e) => (
+                    <TableRow key={e.id} hover>
+                      <TableCell>{formatLocaleDate(e.expense_date, locale)}</TableCell>
+                      <TableCell>{categoryLabel(e)}</TableCell>
+                      <TableCell align="right">{formatLocaleNumber(Number(e.value), locale)} {e.currency}</TableCell>
+                      <TableCell align="right">
+                        <Tooltip title={t('expenseReports.remove')}>
+                          <IconButton size="small" color="error" aria-label={t('expenseReports.remove')} onClick={() => void detach(e.id)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {items.length === 0 && (
+                    <TableEmptyRow colSpan={4} icon={<FolderCopyIcon fontSize="inherit" />} title={t('expenseReports.noItemsYet')} />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <Typography variant="subtitle2" sx={{ mt: 2.5, mb: 1 }}>{t('expenseReports.availableExpenses', { count: unmapped.length })}</Typography>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('time.date')}</TableCell>
+                    <TableCell>{t('expenses.category')}</TableCell>
+                    <TableCell align="right">{t('expenses.value')}</TableCell>
+                    <TableCell align="right" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {unmapped.map((e) => (
+                    <TableRow key={e.id} hover>
+                      <TableCell>{formatLocaleDate(e.expense_date, locale)}</TableCell>
+                      <TableCell>{categoryLabel(e)}</TableCell>
+                      <TableCell align="right">{formatLocaleNumber(Number(e.value), locale)} {e.currency}</TableCell>
+                      <TableCell align="right">
+                        <Button size="small" startIcon={<AddIcon fontSize="small" />} onClick={() => void attach(e.id)}>{t('expenseReports.add')}</Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {unmapped.length === 0 && (
+                    <TableEmptyRow colSpan={4} icon={<ReceiptLongIcon fontSize="inherit" />} title={t('expenseReports.noUnmappedExpenses')} />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <TextField
+              size="small"
+              label={t('expenseReports.submitNote')}
+              value={submitNote}
+              onChange={(e) => setSubmitNote(e.target.value)}
+              multiline
+              minRows={2}
+              sx={{ mt: 2, mb: 1.5, display: 'block', width: '100%', maxWidth: 720, '& textarea': { resize: 'vertical' } }}
+            />
+            <Button variant="contained" onClick={submit} disabled={items.length === 0}>{t('expenseReports.submit')}</Button>
           </Box>
-          {draft.status === 'rejected' && draft.review_note && (
-            <Alert severity="warning" sx={{ mt: 1 }}>{t('expenseReports.rejected', { note: draft.review_note })}</Alert>
-          )}
-
-          <Typography variant="body2" sx={{ mt: 2, mb: 1 }}>{t('expenseReports.itemsInReport', { count: items.length })}</Typography>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('time.date')}</TableCell>
-                <TableCell>{t('expenses.category')}</TableCell>
-                <TableCell align="right">{t('expenses.value')}</TableCell>
-                <TableCell align="right" />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {items.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
-                  <TableCell>{categoryLabel(e)}</TableCell>
-                  <TableCell align="right">{e.value} {e.currency}</TableCell>
-                  <TableCell align="right">
-                    <Button size="small" onClick={() => detach(e.id)}>{t('expenseReports.remove')}</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {items.length === 0 && (
-                <TableRow><TableCell colSpan={4}>{t('expenseReports.noItemsYet')}</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-
-          <Typography variant="body2" sx={{ mt: 2, mb: 1 }}>{t('expenseReports.availableExpenses', { count: unmapped.length })}</Typography>
-          <Table size="small">
-            <TableBody>
-              {unmapped.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
-                  <TableCell>{categoryLabel(e)}</TableCell>
-                  <TableCell align="right">{e.value} {e.currency}</TableCell>
-                  <TableCell align="right">
-                    <Button size="small" onClick={() => attach(e.id)}>{t('expenseReports.add')}</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {unmapped.length === 0 && (
-                <TableRow><TableCell colSpan={4}>{t('expenseReports.noUnmappedExpenses')}</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-
-          <TextField
-            size="small"
-            label={t('expenseReports.submitNote')}
-            value={submitNote}
-            onChange={(e) => setSubmitNote(e.target.value)}
-            multiline
-            minRows={2}
-            sx={{ mt: 2, mb: 1, display: 'block', width: '100%', maxWidth: 720, '& textarea': { resize: 'vertical' } }}
-          />
-          <Button variant="contained" onClick={submit} disabled={items.length === 0}>{t('expenseReports.submit')}</Button>
-        </Box>
-      )}
+        )}
+      </Paper>
 
       {history.length > 0 && (
-        <>
-          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>{t('expenseReports.history')}</Typography>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('time.date')}</TableCell>
-                <TableCell>{t('expenseReports.statusLabel')}</TableCell>
-                <TableCell>{t('timesheet.note')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {history.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>{r.date_submitted ? toDisplayDate(r.date_submitted) : '—'}</TableCell>
-                  <TableCell><Chip label={t(`expenseReports.status.${r.status}`)} size="small" color={STATUS_COLOR[r.status]} /></TableCell>
-                  <TableCell>{r.review_note ?? '—'}</TableCell>
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('expenseReports.history')}</Typography>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('time.date')}</TableCell>
+                  <TableCell>{t('expenseReports.statusLabel')}</TableCell>
+                  <TableCell>{t('timesheet.note')}</TableCell>
+                  <TableCell align="right" />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </>
+              </TableHead>
+              <TableBody>
+                {history.map((r) => (
+                  <TableRow key={r.id} hover>
+                    <TableCell>{r.date_submitted ? formatLocaleDate(r.date_submitted, locale) : '—'}</TableCell>
+                    <TableCell><Chip label={t(`expenseReports.status.${r.status}`)} size="small" color={STATUS_COLOR[r.status]} /></TableCell>
+                    <TableCell>{r.review_note ?? '—'}</TableCell>
+                    <TableCell align="right">
+                      <Button size="small" startIcon={<VisibilityIcon fontSize="small" />} onClick={() => void inspectHistoryReport(r)}>
+                        {t('expenseReports.inspect')}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       )}
-    </Paper>
+
+      <Dialog open={!!inspectingReport} onClose={() => setInspectingReport(null)} fullWidth maxWidth="md">
+        <DialogTitle>
+          {t('expenseReports.reportDetails', {
+            date: inspectingReport?.date_submitted ? formatLocaleDate(inspectingReport.date_submitted, locale) : '—',
+          })}
+        </DialogTitle>
+        <DialogContent dividers>
+          {inspectingLoading && <LinearProgress sx={{ mb: 2 }} />}
+          {inspectingReport && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+              <Chip label={t(`expenseReports.status.${inspectingReport.status}`)} size="small" color={STATUS_COLOR[inspectingReport.status]} />
+              {inspectTotals && <Chip label={t('expenseReports.total', { value: inspectTotals })} size="small" color="primary" variant="outlined" />}
+            </Box>
+          )}
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('common.date')}</TableCell>
+                  <TableCell>{t('expenses.category')}</TableCell>
+                  <TableCell align="right">{t('expenses.value')}</TableCell>
+                  <TableCell>{t('common.project')}</TableCell>
+                  <TableCell>{t('common.comment')}</TableCell>
+                  <TableCell align="right" />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {inspectingItems.map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell>{formatLocaleDate(e.expense_date, locale)}</TableCell>
+                    <TableCell>{categoryLabel(e)}</TableCell>
+                    <TableCell align="right">{formatLocaleNumber(Number(e.value), locale)} {e.currency}</TableCell>
+                    <TableCell>{e.project_name ?? '—'}</TableCell>
+                    <TableCell>{e.comment ?? '—'}</TableCell>
+                    <TableCell align="right">
+                      {e.document_id && (
+                        <Tooltip title={t('approvals.receipt')}>
+                          <IconButton size="small" onClick={() => void downloadReceipt(e.id)}>
+                            <DownloadIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {inspectingItems.length === 0 && !inspectingLoading && (
+                  <TableRow><TableCell colSpan={6}>{t('approvals.noExpenses')}</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInspectingReport(null)}>{t('common.close')}</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   );
 }

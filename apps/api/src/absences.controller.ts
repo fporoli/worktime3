@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, OnModuleInit, Param, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { and, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
 import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Response } from 'express';
@@ -18,13 +18,20 @@ import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './document
 const STATUSES = ['pending', 'approved', 'rejected'] as const;
 type Status = (typeof STATUSES)[number];
 
-/** The org's allowed absence_type keys — its own static_data override if set, else the built-in defaults. */
+/** The org's allowed absence_type keys — its own static_data override if set, else global (`organization_id IS NULL`), else built-in defaults. */
 async function resolveAbsenceTypes(db: Db, orgId: string): Promise<Set<string>> {
-  const [row] = await db
-    .select({ values: static_data.values })
+  const rows = await db
+    .select({ organization_id: static_data.organization_id, values: static_data.values })
     .from(static_data)
-    .where(and(eq(static_data.organization_id, orgId), eq(static_data.entity, 'absences'), eq(static_data.enum_name, 'absence_type')));
-  if (row?.values && typeof row.values === 'object') return new Set(Object.keys(row.values as Record<string, unknown>));
+    .where(
+      and(
+        or(eq(static_data.organization_id, orgId), isNull(static_data.organization_id)),
+        eq(static_data.entity, 'absences'),
+        eq(static_data.enum_name, 'absence_type'),
+      ),
+    );
+  const picked = rows.find((r) => r.organization_id === orgId) ?? rows.find((r) => r.organization_id === null);
+  if (picked?.values && typeof picked.values === 'object') return new Set(Object.keys(picked.values as Record<string, unknown>));
   return new Set(DEFAULT_ABSENCE_TYPES);
 }
 

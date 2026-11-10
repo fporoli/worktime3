@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
@@ -8,11 +8,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  InputAdornment,
   LinearProgress,
   Paper,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
@@ -20,10 +22,13 @@ import {
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 import { useI18n, type TFunction } from './i18n';
+import { formatDurationMinutes, formatFileSize, formatLocaleDate, formatLocaleNumber } from './localeFormat';
 import { getSourceTitle } from './Timesheet';
 import { getExpenseReportTitle } from './ExpenseReports';
 import { getAbsenceTitle } from './Absences';
 import type { ExpenseRow } from './Expenses';
+import { PageHeader, TableEmptyRow } from './components';
+import { CheckCircleIcon, DownloadIcon, SearchIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -64,7 +69,12 @@ interface AbsenceDocumentRow {
   created_at: string;
 }
 
-/** Translated absence type; an org-defined type with no dictionary entry falls back to "military_service" -> "Military service". */
+interface StaticDataRow {
+  enum_name: string;
+  values: Record<string, string>;
+  translation?: Record<string, Record<string, string>>;
+}
+
 function formatAbsenceType(type: string, t: TFunction): string {
   const key = `absences.type.${type}`;
   const translated = t(key);
@@ -73,7 +83,6 @@ function formatAbsenceType(type: string, t: TFunction): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/** A workflow row assigned to the caller — generic across every workflow_definitions type. */
 interface ActionItem {
   id: string;
   source_table: string;
@@ -81,16 +90,13 @@ interface ActionItem {
   workflow_data: { reason?: string; note?: string; decisionNote?: string | null };
   started: string | null;
   definition_name: string;
-  /** Human label for the kind of record this workflow concerns, e.g. "Timesheet Period" — from the step's `source`. */
   source: string | null;
-  /** Which formatter in `SOURCE_TITLE_FNS` renders this record's title — from the step's `source_name`. */
   source_name: string | null;
   timesheet_period: PeriodRow | null;
   expense_report: ExpenseReportRow | null;
   absence: AbsenceRow | null;
 }
 
-/** Friendly label for a workflow_definitions name — unrecognized ones just show as-is, so new workflow types need no frontend change to appear. */
 function actionItemLabel(definitionName: string, t: TFunction): string {
   if (definitionName === 'approve timesheet') return t('approvals.kind.timesheet');
   if (definitionName === 'reopen approved timesheet') return t('approvals.kind.reopen');
@@ -103,18 +109,12 @@ function actionItemDetail(item: ActionItem): string {
   return item.workflow_data.reason || item.workflow_data.note || '—';
 }
 
-/**
- * Registry of `source_name` -> title formatter, keyed by the name a workflow_definitions step
- * configures. Lets a new source type show a "Corresponding object" title with no change here —
- * only a new entry in this map once its formatter exists.
- */
 const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
   getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
   getExpenseReportTitle: (item) => (item.expense_report ? getExpenseReportTitle(item.expense_report) : null),
   getAbsenceTitle: (item) => (item.absence ? getAbsenceTitle(item.absence) : null),
 };
 
-/** "<source> <formatted title>", e.g. "Timesheet Period 01.09.2026-01.10.2026" — or just the source, or '—' if neither is configured. */
 function correspondingObject(item: ActionItem): string {
   if (!item.source) return '—';
   const fn = item.source_name ? SOURCE_TITLE_FNS[item.source_name] : undefined;
@@ -126,9 +126,10 @@ interface ApprovalsProps {
   orgId: string;
   role: 'admin' | 'manager' | 'user';
   authHeaders: () => Promise<Record<string, string>>;
+  onChanged?: () => void;
 }
 
-export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) {
+export default function Approvals({ orgId, role, authHeaders, onChanged }: ApprovalsProps) {
   const { t, locale } = useI18n();
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [approved, setApproved] = useState<PeriodRow[]>([]);
@@ -151,16 +152,47 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   const [inspectingReportLoading, setInspectingReportLoading] = useState(false);
   const [inspectingReportError, setInspectingReportError] = useState<string | null>(null);
 
+  const [categories, setCategories] = useState<Record<string, string>>({});
+  const [subCategories, setSubCategories] = useState<Record<string, string>>({});
+  const [catTranslations, setCatTranslations] = useState<Record<string, Record<string, string>>>({});
+  const [subCatTranslations, setSubCatTranslations] = useState<Record<string, Record<string, string>>>({});
+
   const [inspectingAbsence, setInspectingAbsence] = useState<AbsenceRow | null>(null);
   const [absenceDocument, setAbsenceDocument] = useState<AbsenceDocumentRow | null>(null);
+  const [absencePreviewUrl, setAbsencePreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => () => {
+    if (absencePreviewUrl) URL.revokeObjectURL(absencePreviewUrl);
+  }, [absencePreviewUrl]);
+
+  function closeAbsenceDialog() {
+    setInspectingAbsence(null);
+    setAbsenceDocument(null);
+    if (absencePreviewUrl) {
+      URL.revokeObjectURL(absencePreviewUrl);
+      setAbsencePreviewUrl(null);
+    }
+  }
 
   async function viewAbsenceDocument(absence: AbsenceRow) {
     setInspectingAbsence(absence);
     setAbsenceDocument(null);
+    if (absencePreviewUrl) {
+      URL.revokeObjectURL(absencePreviewUrl);
+      setAbsencePreviewUrl(null);
+    }
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/absences/${absence.id}/document`, { headers: await authHeaders() });
-      const data = await res.json();
-      if (data) setAbsenceDocument(data);
+      const headers = await authHeaders();
+      const res = await fetch(`${API}/organizations/${orgId}/absences/${absence.id}/document`, { headers });
+      const data: AbsenceDocumentRow | null = await res.json();
+      if (data) {
+        setAbsenceDocument(data);
+        if (data.mime_type.startsWith('image/') || data.mime_type === 'application/pdf') {
+          const fileRes = await fetch(`${API}/absences/${absence.id}/document`, { headers });
+          const blob = await fileRes.blob();
+          setAbsencePreviewUrl(URL.createObjectURL(blob));
+        }
+      }
     } catch { /* offline fallback */ }
   }
 
@@ -234,21 +266,31 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   async function reload() {
     setLoading(true);
     try {
-      const [iRes, aRes] = await Promise.all([
-        fetch(`${API}/workflows/assigned-to-me`, { headers: await authHeaders() }),
-        fetch(`${API}/organizations/${orgId}/timesheet-periods?status=approved`, { headers: await authHeaders() }),
+      const headers = await authHeaders();
+      const [iRes, aRes, sRes] = await Promise.all([
+        fetch(`${API}/workflows/assigned-to-me`, { headers }),
+        fetch(`${API}/organizations/${orgId}/timesheet-periods?status=approved`, { headers }),
+        fetch(`${API}/organizations/${orgId}/static-data/expenses`, { headers }),
       ]);
-      const i = await iRes.json();
-      const a = await aRes.json();
+      const [i, a, s] = await Promise.all([iRes.json(), aRes.json(), sRes.json()]);
       if (Array.isArray(i)) setActionItems(i);
       if (Array.isArray(a)) setApproved(a);
+      if (Array.isArray(s)) {
+        const rows = s as StaticDataRow[];
+        const cat = rows.find((r) => r.enum_name === 'expense_category');
+        const sub = rows.find((r) => r.enum_name === 'expense_subcategory');
+        setCategories(cat?.values ?? {});
+        setCatTranslations(cat?.translation ?? {});
+        setSubCategories(sub?.values ?? {});
+        setSubCatTranslations(sub?.translation ?? {});
+      }
     } catch { /* offline fallback */ } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    reload();
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -261,6 +303,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       if (!data.ok) { setError(t('approvals.approveFailedWith', { error: data.error ?? t('common.unknownError') })); return; }
       setSuccess(t('approvals.approved'));
       await reload();
+      onChanged?.();
     } catch {
       setError(t('approvals.approveFailed'));
     }
@@ -281,6 +324,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       setRejectingId(null);
       setNote('');
       await reload();
+      onChanged?.();
     } catch {
       setError(t('approvals.declineFailed'));
     }
@@ -298,10 +342,31 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
       }
       setSuccess(t('approvals.reopened'));
       await reload();
+      onChanged?.();
     } catch {
       setError(t('approvals.reopenFailed'));
     }
   }
+
+  function categoryLabel(row: ExpenseRow): string {
+    const cat = catTranslations[locale]?.[row.category] ?? categories[row.category] ?? row.category;
+    if (!row.sub_category) return cat;
+    const subKey = `${row.category}$${row.sub_category}`;
+    const sub = subCatTranslations[locale]?.[subKey] ?? subCategories[subKey] ?? row.sub_category;
+    return `${cat} / ${sub}`;
+  }
+
+  const reportTotalLabel = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const e of inspectingExpenses) {
+      const v = Number(e.value);
+      if (!Number.isFinite(v)) continue;
+      totals.set(e.currency, (totals.get(e.currency) ?? 0) + v);
+    }
+    return [...totals.entries()]
+      .map(([currency, sum]) => `${formatLocaleNumber(Math.round(sum * 100) / 100, locale)} ${currency}`)
+      .join(' + ');
+  }, [inspectingExpenses, locale]);
 
   const filteredActionItems = actionItems.filter((item) => {
     const q = search.trim().toLowerCase();
@@ -324,114 +389,132 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
   });
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6">{t('approvals.title')}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('approvals.subtitle')}
-      </Typography>
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <PageHeader title={t('approvals.title')} subtitle={t('approvals.subtitle')} />
 
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mb: 2 }} />}
+      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
+      {loading && <LinearProgress />}
 
-      <TextField
-        size="small"
-        placeholder={t('approvals.searchPlaceholder')}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        sx={{ mb: 2, maxWidth: 320, display: 'block' }}
-      />
+      <Paper sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, mb: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            {search.trim()
+              ? t('approvals.actionItemsFiltered', { count: filteredActionItems.length, total: actionItems.length })
+              : t('approvals.actionItems', { count: filteredActionItems.length })}
+          </Typography>
+          <TextField
+            size="small"
+            placeholder={t('approvals.searchPlaceholder')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ minWidth: { xs: '100%', sm: 300 } }}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" color="action" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </Box>
 
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>
-        {search.trim()
-          ? t('approvals.actionItemsFiltered', { count: filteredActionItems.length, total: actionItems.length })
-          : t('approvals.actionItems', { count: filteredActionItems.length })}
-      </Typography>
-      <Table size="small" sx={{ mb: 3 }}>
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('teamHours.member')}</TableCell>
-            <TableCell>{t('approvals.col.type')}</TableCell>
-            <TableCell>{t('approvals.col.object')}</TableCell>
-            <TableCell>{t('audit.col.details')}</TableCell>
-            <TableCell align="right">{t('common.actions')}</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {filteredActionItems.map((item) => (
-            <Fragment key={item.id}>
-              <TableRow hover>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
-                  <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
-                </TableCell>
-                <TableCell><Chip label={actionItemLabel(item.definition_name, t)} size="small" variant="outlined" /></TableCell>
-                <TableCell>
-                  {correspondingObject(item)}
-                  {item.absence && (
-                    <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
-                      <Chip label={formatAbsenceType(item.absence.absence_type, t)} size="small" variant="outlined" />
-                      {item.absence.half_day && <Chip label={t('approvals.halfDay')} size="small" />}
-                    </Box>
-                  )}
-                </TableCell>
-                <TableCell>{actionItemDetail(item)}</TableCell>
-                <TableCell align="right">
-                  {item.timesheet_period && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(item.timesheet_period!, item.id)}>{t('approvals.inspect')}</Button>
-                  )}
-                  {item.expense_report && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspectReport(item.expense_report!, item.id)}>{t('approvals.inspect')}</Button>
-                  )}
-                  {item.absence?.document_id && (
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => viewAbsenceDocument(item.absence!)}>{t('approvals.documents')}</Button>
-                  )}
-                  <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => approveItem(item.id)}>{t('approvals.approve')}</Button>
-                  <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>{t('approvals.reject')}</Button>
-                </TableCell>
-              </TableRow>
-              {rejectingId === item.id && (
-                <TableRow>
-                  <TableCell colSpan={5} sx={{ bgcolor: 'action.hover' }}>
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                      <TextField size="small" label={t('approvals.note')} value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
-                      <Button size="small" color="error" variant="contained" onClick={() => rejectItem(item.id)}>{t('approvals.confirmReject')}</Button>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )}
-            </Fragment>
-          ))}
-          {filteredActionItems.length === 0 && (
-            <TableRow><TableCell colSpan={5}>{actionItems.length === 0 ? t('approvals.nothingPending') : t('approvals.noMatch')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
-
-      {role === 'admin' && (
-        <>
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>{t('approvals.approvedList', { count: approved.length })}</Typography>
+        <TableContainer>
           <Table size="small">
             <TableHead>
-              <TableRow><TableCell>{t('teamHours.member')}</TableCell><TableCell>{t('time.period')}</TableCell><TableCell align="right">{t('common.actions')}</TableCell></TableRow>
+              <TableRow>
+                <TableCell>{t('teamHours.member')}</TableCell>
+                <TableCell>{t('approvals.col.type')}</TableCell>
+                <TableCell>{t('approvals.col.object')}</TableCell>
+                <TableCell>{t('audit.col.details')}</TableCell>
+                <TableCell align="right">{t('common.actions')}</TableCell>
+              </TableRow>
             </TableHead>
             <TableBody>
-              {approved.map((p) => (
-                <TableRow key={p.id} hover>
-                  <TableCell>{p.user_display_name}</TableCell>
-                  <TableCell>{p.period_start.slice(0, 7)}</TableCell>
-                  <TableCell align="right">
-                    <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => inspect(p, null)}>{t('approvals.inspect')}</Button>
-                    <Button size="small" onClick={() => reopen(p.id)}>{t('approvals.reopen')}</Button>
-                  </TableCell>
-                </TableRow>
+              {filteredActionItems.map((item) => (
+                <Fragment key={item.id}>
+                  <TableRow hover>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
+                      <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
+                    </TableCell>
+                    <TableCell><Chip label={actionItemLabel(item.definition_name, t)} size="small" variant="outlined" /></TableCell>
+                    <TableCell>
+                      {correspondingObject(item)}
+                      {item.absence && (
+                        <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+                          <Chip label={formatAbsenceType(item.absence.absence_type, t)} size="small" variant="outlined" />
+                          {item.absence.half_day && <Chip label={t('approvals.halfDay')} size="small" />}
+                        </Box>
+                      )}
+                    </TableCell>
+                    <TableCell>{actionItemDetail(item)}</TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      {item.timesheet_period && (
+                        <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void inspect(item.timesheet_period!, item.id)}>{t('approvals.inspect')}</Button>
+                      )}
+                      {item.expense_report && (
+                        <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void inspectReport(item.expense_report!, item.id)}>{t('approvals.inspect')}</Button>
+                      )}
+                      {item.absence?.document_id && (
+                        <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void viewAbsenceDocument(item.absence!)}>{t('approvals.documents')}</Button>
+                      )}
+                      <Button size="small" variant="contained" sx={{ mr: 1 }} onClick={() => void approveItem(item.id)}>{t('approvals.approve')}</Button>
+                      <Button size="small" color="error" onClick={() => setRejectingId(rejectingId === item.id ? null : item.id)}>{t('approvals.reject')}</Button>
+                    </TableCell>
+                  </TableRow>
+                  {rejectingId === item.id && (
+                    <TableRow>
+                      <TableCell colSpan={5} sx={{ bgcolor: 'action.hover' }}>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                          <TextField size="small" label={t('approvals.note')} value={note} onChange={(e) => setNote(e.target.value)} fullWidth />
+                          <Button size="small" color="error" variant="contained" onClick={() => void rejectItem(item.id)}>{t('approvals.confirmReject')}</Button>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               ))}
-              {approved.length === 0 && (
-                <TableRow><TableCell colSpan={3}>{t('approvals.noneYet')}</TableCell></TableRow>
+              {filteredActionItems.length === 0 && (
+                <TableEmptyRow
+                  colSpan={5}
+                  icon={<CheckCircleIcon fontSize="inherit" />}
+                  title={actionItems.length === 0 ? t('approvals.nothingPending') : t('approvals.noMatch')}
+                />
               )}
             </TableBody>
           </Table>
-        </>
+        </TableContainer>
+      </Paper>
+
+      {role === 'admin' && (
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('approvals.approvedList', { count: approved.length })}</Typography>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow><TableCell>{t('teamHours.member')}</TableCell><TableCell>{t('time.period')}</TableCell><TableCell align="right">{t('common.actions')}</TableCell></TableRow>
+              </TableHead>
+              <TableBody>
+                {approved.map((p) => (
+                  <TableRow key={p.id} hover>
+                    <TableCell>{p.user_display_name}</TableCell>
+                    <TableCell>{p.period_start.slice(0, 7)}</TableCell>
+                    <TableCell align="right">
+                      <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void inspect(p, null)}>{t('approvals.inspect')}</Button>
+                      <Button size="small" onClick={() => void reopen(p.id)}>{t('approvals.reopen')}</Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {approved.length === 0 && (
+                  <TableEmptyRow colSpan={3} icon={<CheckCircleIcon fontSize="inherit" />} title={t('approvals.noneYet')} />
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       )}
 
       <Dialog open={!!inspectingPeriod} onClose={() => setInspectingPeriod(null)} maxWidth="md" fullWidth>
@@ -449,7 +532,7 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
                 {inspectingPeriod.user_email}
               </Typography>
               <Chip
-                label={`${t('approvals.total')}: ${Math.floor(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) / 60)}h ${Math.round(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0) % 60)}m`}
+                label={`${t('approvals.total')}: ${formatDurationMinutes(inspectingEntries.reduce((sum, e) => sum + minutes(e), 0))}`}
                 color="primary"
                 variant="outlined"
               />
@@ -458,37 +541,36 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
           {inspectingEntries.length === 0 && !inspectingLoading ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noEntries')}</Typography>
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>{t('common.date')}</TableCell>
-                  <TableCell>{t('time.time')}</TableCell>
-                  <TableCell align="right">{t('approvals.duration')}</TableCell>
-                  <TableCell>{t('common.project')}</TableCell>
-                  <TableCell>{t('common.subproject')}</TableCell>
-                  <TableCell>{t('common.comment')}</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {inspectingEntries.map((e) => {
-                  const m = Math.round(minutes(e));
-                  const h = Math.floor(m / 60);
-                  const rem = m % 60;
-                  const startTime = new Date(e.start_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-                  const endTime = new Date(e.end_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-                  return (
-                    <TableRow key={e.id}>
-                      <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
-                      <TableCell>{`${startTime} – ${endTime}`}</TableCell>
-                      <TableCell align="right">{`${h}h ${rem}m`}</TableCell>
-                      <TableCell>{e.project_name ?? '—'}</TableCell>
-                      <TableCell>{e.subproject_name ?? '—'}</TableCell>
-                      <TableCell>{e.comment ?? '—'}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('common.date')}</TableCell>
+                    <TableCell>{t('time.time')}</TableCell>
+                    <TableCell align="right">{t('approvals.duration')}</TableCell>
+                    <TableCell>{t('common.project')}</TableCell>
+                    <TableCell>{t('common.subproject')}</TableCell>
+                    <TableCell>{t('common.comment')}</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {inspectingEntries.map((e) => {
+                    const startTime = new Date(e.start_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                    const endTime = new Date(e.end_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                    return (
+                      <TableRow key={e.id}>
+                        <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
+                        <TableCell>{`${startTime} – ${endTime}`}</TableCell>
+                        <TableCell align="right">{formatDurationMinutes(minutes(e))}</TableCell>
+                        <TableCell>{e.project_name ?? '—'}</TableCell>
+                        <TableCell>{e.subproject_name ?? '—'}</TableCell>
+                        <TableCell>{e.comment ?? '—'}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </DialogContent>
         <DialogActions>
@@ -528,39 +610,46 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
           {inspectingReportError && <Alert severity="error" sx={{ mb: 2 }}>{inspectingReportError}</Alert>}
           {inspectingReportLoading && <LinearProgress sx={{ mb: 2 }} />}
           {inspectingReport && (
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{inspectingReport.user_email}</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+              <Typography variant="body2" color="text.secondary">{inspectingReport.user_email}</Typography>
+              {reportTotalLabel && (
+                <Chip label={`${t('approvals.total')}: ${reportTotalLabel}`} color="primary" variant="outlined" />
+              )}
+            </Box>
           )}
           {inspectingExpenses.length === 0 && !inspectingReportLoading ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noExpenses')}</Typography>
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>{t('common.date')}</TableCell>
-                  <TableCell>{t('approvals.category')}</TableCell>
-                  <TableCell align="right">{t('approvals.value')}</TableCell>
-                  <TableCell>{t('common.project')}</TableCell>
-                  <TableCell>{t('common.subproject')}</TableCell>
-                  <TableCell>{t('common.comment')}</TableCell>
-                  <TableCell />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {inspectingExpenses.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell>{e.expense_date.slice(0, 10)}</TableCell>
-                    <TableCell>{e.category}{e.sub_category ? ` / ${e.sub_category}` : ''}</TableCell>
-                    <TableCell align="right">{e.value} {e.currency}</TableCell>
-                    <TableCell>{e.project_name ?? '—'}</TableCell>
-                    <TableCell>{e.subproject_name ?? '—'}</TableCell>
-                    <TableCell>{e.comment ?? '—'}</TableCell>
-                    <TableCell align="right">
-                      {e.document_id && <Button size="small" onClick={() => downloadExpenseDocument(e.id)}>{t('approvals.receipt')}</Button>}
-                    </TableCell>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t('common.date')}</TableCell>
+                    <TableCell>{t('approvals.category')}</TableCell>
+                    <TableCell align="right">{t('approvals.value')}</TableCell>
+                    <TableCell>{t('common.project')}</TableCell>
+                    <TableCell>{t('common.subproject')}</TableCell>
+                    <TableCell>{t('common.comment')}</TableCell>
+                    <TableCell />
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {inspectingExpenses.map((e) => (
+                    <TableRow key={e.id}>
+                      <TableCell>{formatLocaleDate(e.expense_date, locale)}</TableCell>
+                      <TableCell>{categoryLabel(e)}</TableCell>
+                      <TableCell align="right">{formatLocaleNumber(Number(e.value), locale)} {e.currency}</TableCell>
+                      <TableCell>{e.project_name ?? '—'}</TableCell>
+                      <TableCell>{e.subproject_name ?? '—'}</TableCell>
+                      <TableCell>{e.comment ?? '—'}</TableCell>
+                      <TableCell align="right">
+                        {e.document_id && <Button size="small" onClick={() => void downloadExpenseDocument(e.id)}>{t('approvals.receipt')}</Button>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </DialogContent>
         <DialogActions>
@@ -592,24 +681,44 @@ export default function Approvals({ orgId, role, authHeaders }: ApprovalsProps) 
         </DialogActions>
       </Dialog>
 
-      <Dialog open={!!inspectingAbsence} onClose={() => setInspectingAbsence(null)} maxWidth="sm" fullWidth>
+      <Dialog open={!!inspectingAbsence} onClose={closeAbsenceDialog} maxWidth="sm" fullWidth>
         <DialogTitle>
           {inspectingAbsence ? t('approvals.evidenceFor', { name: inspectingAbsence.user_display_name }) : t('approvals.evidence')}
         </DialogTitle>
         <DialogContent dividers>
           {absenceDocument ? (
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
-              <Typography variant="body2">{absenceDocument.file_name}</Typography>
-              <Button size="small" onClick={() => downloadAbsenceDocument(inspectingAbsence!.id, absenceDocument)}>{t('approvals.download')}</Button>
+            <Box sx={{ display: 'grid', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{absenceDocument.file_name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {t('absences.fileSize', { size: formatFileSize(absenceDocument.size_bytes, locale) })} · {new Date(absenceDocument.created_at).toLocaleString(locale)}
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DownloadIcon fontSize="small" />}
+                  onClick={() => inspectingAbsence && void downloadAbsenceDocument(inspectingAbsence.id, absenceDocument)}
+                >
+                  {t('approvals.download')}
+                </Button>
+              </Box>
+              {absencePreviewUrl && absenceDocument.mime_type.startsWith('image/') && (
+                <Box component="img" src={absencePreviewUrl} alt={absenceDocument.file_name} sx={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain', borderRadius: 1 }} />
+              )}
+              {absencePreviewUrl && absenceDocument.mime_type === 'application/pdf' && (
+                <Box component="iframe" src={absencePreviewUrl} title={absenceDocument.file_name} sx={{ width: '100%', height: 380, border: 1, borderColor: 'divider', borderRadius: 1 }} />
+              )}
             </Box>
           ) : (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>{t('approvals.noDocument')}</Typography>
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setInspectingAbsence(null)}>{t('common.close')}</Button>
+          <Button onClick={closeAbsenceDialog}>{t('common.close')}</Button>
         </DialogActions>
       </Dialog>
-    </Paper>
+    </Box>
   );
 }

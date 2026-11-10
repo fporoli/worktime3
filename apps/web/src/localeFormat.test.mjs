@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatLocaleDate, formatLocaleNumber, parseLocaleNumber } from './localeFormat.ts';
+import {
+  formatDurationMinutes,
+  formatFileSize,
+  formatLocaleDate,
+  formatLocaleNumber,
+  formatSignedMinutes,
+  parseLocaleNumber,
+} from './localeFormat.ts';
 
 test('empty input is null, garbage is undefined', () => {
   assert.equal(parseLocaleNumber('', 'de'), null);
@@ -58,4 +65,13 @@ test('dates are shown in the language, without shifting the day', () => {
   assert.equal(formatLocaleDate('2026-03-01', 'en'), '3/1/2026');
   assert.equal(formatLocaleDate('2026-03-01', 'fr'), '01/03/2026');
   assert.equal(formatLocaleDate('not a date', 'de'), 'not a date');
+});
+
+test('duration and file size formatting helpers', () => {
+  assert.equal(formatDurationMinutes(0), '0h 00m');
+  assert.equal(formatDurationMinutes(65), '1h 05m');
+  assert.equal(formatSignedMinutes(90), '+1h 30m');
+  assert.equal(formatSignedMinutes(-65), '-1h 05m');
+  assert.equal(formatFileSize(512, 'en'), '512 B');
+  assert.equal(formatFileSize(1536, 'en'), '1.5 KB');
 });

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Container, Divider, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Container, Divider, IconButton, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import { ensureSsoInit, keycloak, startSsoLogin } from './auth';
 import { LOCALES, useI18n } from './i18n';
+import { DarkModeIcon, LightModeIcon } from './icons';
+import { useThemeMode } from './theme';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 const SHOW_DEMO_ACCOUNTS = import.meta.env.VITE_SHOW_DEMO_ACCOUNTS !== 'false';
@@ -101,7 +103,14 @@ async function post(path: string, body: unknown) {
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void }) {
   const { t, locale, setLocale } = useI18n();
-  const [mode, setMode] = useState<Mode>('login');
+  const { mode: themeMode, toggleMode } = useThemeMode();
+  const [mode, setMode] = useState<Mode>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('invite') ? 'invite' : 'login';
+    } catch {
+      return 'login';
+    }
+  });
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -197,7 +206,10 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(180deg, #eef2fb 0%, #f5f6fa 320px)',
+        background: (th) =>
+          th.palette.mode === 'dark'
+            ? 'linear-gradient(180deg, #0f172a 0%, #0b1120 320px)'
+            : 'linear-gradient(180deg, #eef2fb 0%, #f5f6fa 320px)',
         py: 6,
       }}
     >
@@ -218,21 +230,37 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         >
           W
         </Box>
-        <Typography variant="h5" sx={{ fontWeight: 700 }}>Worktime</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>{t('appbar.title')}</Typography>
       </Box>
       <Container maxWidth="xs" disableGutters>
       <Paper elevation={2} sx={{ p: 4, borderRadius: 3 }}>
-        <Tabs value={mode} onChange={(_, v) => setMode(v)} variant="fullWidth" sx={{ mb: 3 }}>
-          <Tab value="login" label={t('login.tab.login')} onClick={() => setMode('login')} />
-          <Tab value="register" label={t('login.tab.register')} onClick={() => setMode('register')} />
-          <Tab value="invite" label={t('login.tab.invite')} onClick={() => setMode('invite')} />
-          <Tab value="reset" label={t('login.tab.reset')} onClick={() => setMode('reset')} />
+        <Tabs
+          value={mode}
+          onChange={(_, v) => {
+            setMode(v);
+            setError(null);
+            setNotice(null);
+          }}
+          variant="fullWidth"
+          sx={{ mb: 3 }}
+        >
+          <Tab value="login" label={t('login.tab.login')} />
+          <Tab value="register" label={t('login.tab.register')} />
+          <Tab value="invite" label={t('login.tab.invite')} />
+          <Tab value="reset" label={t('login.tab.reset')} />
         </Tabs>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {notice && <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert>}
 
         {mode === 'login' && (
-          <Box sx={{ display: 'grid', gap: 2 }}>
+          <Box
+            component="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitLogin(email, password);
+            }}
+            sx={{ display: 'grid', gap: 2 }}
+          >
             <Button variant="outlined" disabled={busy || ssoChecking} onClick={() => startSsoLogin()}>
               {ssoChecking ? t('login.ssoChecking') : t('login.ssoButton')}
             </Button>
@@ -241,7 +269,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
             </Divider>
             <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
             <TextField label={t('login.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
-            <Button variant="contained" disabled={busy} onClick={() => submitLogin(email, password)}>{t('login.submit')}</Button>
+            <Button type="submit" variant="contained" disabled={busy}>{t('login.submit')}</Button>
             {SHOW_DEMO_ACCOUNTS && (
               <>
                 <Divider />
@@ -259,31 +287,47 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
         )}
 
         {mode === 'register' && (
-          <Box sx={{ display: 'grid', gap: 2 }}>
+          <Box
+            component="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                const data = await post('/auth/register', { email, displayName, password });
+                if (!data.ok) fail(data.error ?? 'request-failed');
+                const session = data as Session;
+                saveSession(session);
+                onLoggedIn(session);
+              });
+            }}
+            sx={{ display: 'grid', gap: 2 }}
+          >
             <Typography variant="body2" color="text.secondary">
               {t('login.registerHint')}
             </Typography>
             <TextField label={t('login.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
             <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
             <TextField label={t('login.newPasswordMin')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
-            <Button
-              variant="contained"
-              disabled={busy}
-              onClick={() => run(async () => {
-                const data = await post('/auth/register', { email, displayName, password });
-                if (!data.ok) fail(data.error ?? 'request-failed');
-                const session = data as Session;
-                saveSession(session);
-                onLoggedIn(session);
-              })}
-            >
+            <Button type="submit" variant="contained" disabled={busy}>
               {t('login.registerSubmit')}
             </Button>
           </Box>
         )}
 
         {mode === 'invite' && (
-          <Box sx={{ display: 'grid', gap: 2 }}>
+          <Box
+            component="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                const data = await post('/auth/invitations/accept', { token, displayName, password });
+                if (!data.ok) fail(data.error ?? 'request-failed');
+                const session = data as Session;
+                saveSession(session);
+                onLoggedIn(session);
+              });
+            }}
+            sx={{ display: 'grid', gap: 2 }}
+          >
             <Typography variant="body2" color="text.secondary">
               {t('login.inviteHint')}
               {SHOW_DEMO_ACCOUNTS && <> {t('login.inviteDemo', { token: DEMO_INVITE_TOKEN, email: 'invited@acme.com' })}</>}
@@ -291,45 +335,43 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
             <TextField label={t('login.inviteToken')} value={token} onChange={(e) => setToken(e.target.value)} size="small" />
             <TextField label={t('login.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} size="small" autoComplete="name" />
             <TextField label={t('login.newPasswordMin')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="new-password" />
-            <Button
-              variant="contained"
-              disabled={busy}
-              onClick={() => run(async () => {
-                const data = await post('/auth/invitations/accept', { token, displayName, password });
-                if (!data.ok) fail(data.error ?? 'request-failed');
-                const session = data as Session;
-                saveSession(session);
-                onLoggedIn(session);
-              })}
-            >
+            <Button type="submit" variant="contained" disabled={busy}>
               {t('login.inviteSubmit')}
             </Button>
           </Box>
         )}
 
         {mode === 'reset' && (
-          <Box sx={{ display: 'grid', gap: 2 }}>
-            <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
-            <TextField label={t('login.resetPasswordMin')} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} size="small" autoComplete="new-password" />
-            <Button
-              variant="contained"
-              disabled={busy}
-              onClick={() => run(async () => {
+          <Box
+            component="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
                 await post('/auth/reset', { email, newPassword });
                 setNotice(t('login.resetDone'));
-              })}
-            >
+              });
+            }}
+            sx={{ display: 'grid', gap: 2 }}
+          >
+            <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
+            <TextField label={t('login.resetPasswordMin')} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} size="small" autoComplete="new-password" />
+            <Button type="submit" variant="contained" disabled={busy}>
               {t('login.resetSubmit')}
             </Button>
           </Box>
         )}
       </Paper>
-      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1, mt: 2 }}>
         {LOCALES.map((l) => (
           <Button key={l.code} size="small" disabled={l.code === locale} onClick={() => setLocale(l.code)} sx={{ textTransform: 'none' }}>
             {l.label}
           </Button>
         ))}
+        <Tooltip title={themeMode === 'dark' ? t('usermenu.themeLight') : t('usermenu.themeDark')}>
+          <IconButton size="small" onClick={toggleMode} aria-label={themeMode === 'dark' ? t('usermenu.themeLight') : t('usermenu.themeDark')}>
+            {themeMode === 'dark' ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
+          </IconButton>
+        </Tooltip>
       </Box>
       </Container>
     </Box>

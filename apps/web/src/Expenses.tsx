@@ -5,22 +5,27 @@ import {
   Button,
   Chip,
   Collapse,
+  IconButton,
   LinearProgress,
-  MenuItem,
   Paper,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import dayjs from 'dayjs';
 import { EXPENSE_FORM, validateFields } from '@worktime3/shared/fields';
 import { useI18n } from './i18n';
+import { formatLocaleDate, formatLocaleNumber } from './localeFormat';
 import { ConfigFieldGroup, useGroupTitle, type FieldOption } from './ConfigField';
 import { FieldDesignScope, useFormTemplate } from './designMode';
 import { DESIGN_PANEL_WIDTH, FormDesignPanel } from './FormDesigner';
+import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { DeleteIcon, DownloadIcon, EditIcon, ExpandLessIcon, ExpandMoreIcon, ReceiptLongIcon, UploadIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -35,13 +40,6 @@ interface StaticDataRow {
   translation: Record<string, Record<string, string>>;
 }
 
-/**
- * `expense_subcategory` static_data keys are "<category key>$<sub-category key>" (e.g.
- * "travel$taxi"), so one enum can serve every category's sub-categories while still letting the
- * UI filter down to just the options under whichever category is selected. The `expenses.sub_category`
- * column itself stores only the plain sub-key ("taxi") — the "$" scoping is a static_data-only
- * convention, not part of the domain data.
- */
 function subCategoryOptions(subCategories: Record<string, string>, category: string): Array<{ key: string; label: string }> {
   const prefix = `${category}$`;
   return Object.entries(subCategories)
@@ -72,14 +70,9 @@ export interface ExpenseRow {
   expense_report_id: string | null;
   expense_report_status: string | null;
   document_id: string | null;
-  /** Values of custom fields (field templates), by key. */
   data?: Record<string, unknown> | null;
 }
 
-/**
- * The form's values, keyed like the `expense` form in the field registry (and the API body):
- * strings for text, dates and choices, numbers (or null) for the amounts.
- */
 type ExpenseValues = Record<string, unknown>;
 
 function emptyForm(defaultCurrency: string): ExpenseValues {
@@ -121,6 +114,10 @@ function formFromRow(row: ExpenseRow): ExpenseValues {
   };
 }
 
+function isRowLocked(row: ExpenseRow): boolean {
+  return !!row.expense_report_id && row.expense_report_status !== 'in_preparation' && row.expense_report_status !== 'rejected';
+}
+
 const ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
   'expense-mapped': (t) => t('expenses.mappedCannotDelete'),
   'forbidden': (t) => t('expenses.forbidden'),
@@ -144,7 +141,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   const [values, setValues] = useState<ExpenseValues>(emptyForm(''));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  // `form` renders (the draft preview while designing); saves are checked against the saved template.
   const { form, savedForm, designer } = useFormTemplate(orgId, EXPENSE_FORM, authHeaders);
   const additionalTitle = useGroupTitle(form, 'additional');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -152,6 +148,8 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAdditional, setShowAdditional] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [confirmRemoveDocId, setConfirmRemoveDocId] = useState<string | null>(null);
 
   async function reload() {
     setLoading(true);
@@ -178,7 +176,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     } catch { /* offline fallback */ }
   }
 
-  /** `values` is the enum's base-language label; `translation[locale]` overrides it when set. */
   function categoryLabel(key: string): string {
     return categoryTranslations[locale]?.[key] ?? categories[key] ?? key;
   }
@@ -189,8 +186,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     return subCategoryTranslations[locale]?.[key] ?? subCategories[key] ?? subCategory;
   }
 
-  /** The org's default currency — pre-fills a new expense's `originalCurrency`, which in turn
-   * defaults `currency` to match (see `updateField`) until the user diverges them themselves. */
   async function loadDefaultCurrency() {
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, { headers: await authHeaders() });
@@ -208,12 +203,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     } catch { /* offline fallback */ }
   }
 
-  /**
-   * Always re-fetches (no "already cached" skip) — a project's subproject list can change
-   * elsewhere (Management) at any time, and an empty result is a valid, truthy `[]` that a
-   * cache-presence check can't tell apart from "not fetched yet". Called on project selection
-   * and again whenever the subproject dropdown is opened, so it can't go stale mid-session.
-   */
   async function loadSubprojects(pid: string) {
     if (!pid) return;
     try {
@@ -224,20 +213,18 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   }
 
   useEffect(() => {
-    reload();
-    reloadStaticData();
-    reloadProjects();
-    loadDefaultCurrency();
+    void reload();
+    void reloadStaticData();
+    void reloadProjects();
+    void loadDefaultCurrency();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, userId]);
 
   function updateField(key: string, value: unknown) {
     setValues((prev) => {
       const next = { ...prev, [key]: value };
-      // A sub-choice belongs to its parent: reset it when the parent changes.
       if (key === 'category') next.subCategory = '';
       if (key === 'projectId') next.subprojectId = '';
-      // `currency` follows `originalCurrency` until the user gives it its own value.
       if (key === 'originalCurrency' && prev.currency === prev.originalCurrency) next.currency = value;
       return next;
     });
@@ -246,12 +233,11 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
       const { [key]: _, ...rest } = prev;
       return rest;
     });
-    if (key === 'projectId' && typeof value === 'string' && value) loadSubprojects(value);
+    if (key === 'projectId' && typeof value === 'string' && value) void loadSubprojects(value);
   }
 
   function showFieldErrors(list: { field: string; rule: string }[]) {
     setFieldErrors(Object.fromEntries(list.map((e) => [e.field, e.rule])));
-    // Open "Additional data" when one of its fields needs fixing.
     if (list.some((e) => form.fields.find((f) => f.key === e.field)?.group === 'additional')) setShowAdditional(true);
     setError(t('home.fixFieldErrors'));
   }
@@ -263,7 +249,6 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     setShowAdditional(false);
   }
 
-  /** Validates against the org's template, then creates (no `editingId`) or updates the expense. */
   async function save() {
     setError(null);
     setSuccess(null);
@@ -287,6 +272,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         return;
       }
       resetForm();
+      setSuccess(t('expenses.saved'));
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -305,6 +291,8 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
         setError(ERROR_MESSAGES[data.error]?.(t) ?? t('expenses.saveFailed', { error: data.error ?? 'unknown error' }));
         return;
       }
+      if (editingId === id) resetForm();
+      setSuccess(t('expenses.removed'));
       await reload();
     } catch {
       setError(t('expenses.saveFailedOffline'));
@@ -314,18 +302,36 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
   async function uploadPayslip(id: string, file: File) {
     setError(null);
     setSuccess(null);
-    const form = new FormData();
-    form.append('file', file);
+    const body = new FormData();
+    body.append('file', file);
     try {
-      const res = await fetch(`${API}/expenses/${id}/document`, { method: 'POST', headers: await authHeaders(), body: form });
+      const res = await fetch(`${API}/expenses/${id}/document`, { method: 'POST', headers: await authHeaders(), body });
       const data = await res.json();
       if (!data.ok) {
         setError(t('expenses.uploadFailed', { error: data.error ?? 'unknown error' }));
         return;
       }
+      setSuccess(t('expenses.uploadSuccess'));
       await reload();
     } catch {
       setError(t('expenses.uploadFailed', { error: 'offline' }));
+    }
+  }
+
+  async function removePayslip(id: string) {
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`${API}/expenses/${id}/document`, { method: 'DELETE', headers: await authHeaders() });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(t('expenses.removePayslipFailed', { error: data.error ?? t('common.unknownError') }));
+        return;
+      }
+      setSuccess(t('expenses.payslipRemoved'));
+      await reload();
+    } catch {
+      setError(t('expenses.saveFailedOffline'));
     }
   }
 
@@ -349,7 +355,7 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
     setValues(formFromRow(row));
     setFieldErrors({});
     setShowAdditional(true);
-    if (row.project_id) loadSubprojects(row.project_id);
+    if (row.project_id) void loadSubprojects(row.project_id);
   }
 
   const category = String(values.category ?? '');
@@ -370,87 +376,164 @@ export default function Expenses({ orgId, userId, authHeaders }: ExpensesProps) 
 
   return (
     <FieldDesignScope designer={designer}>
-    {designer && <FormDesignPanel designer={designer} />}
-    <Paper sx={{ p: 2, mr: designer ? { md: `${DESIGN_PANEL_WIDTH}px` } : 0 }}>
-      <Typography variant="h6">{t('expenses.title')}</Typography>
-      {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSuccess(null)}>{success}</Alert>}
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
+      {designer && <FormDesignPanel designer={designer} />}
+      <Box sx={{ display: 'grid', gap: 2, mr: designer ? { md: `${DESIGN_PANEL_WIDTH}px` } : 0 }}>
+        <PageHeader title={t('expenses.title')} />
 
-      <Typography variant="subtitle1" sx={{ mt: 2 }}>{editingId ? t('expenses.editExpense') : t('expenses.logExpense')}</Typography>
-      <Box sx={{ mt: 1.5 }}>
-        <ConfigFieldGroup group="expense" {...groupProps} />
+        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
+
+        <Paper
+          component="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+          sx={{ p: 2 }}
+        >
+          <Typography variant="h6">{editingId ? t('expenses.editExpense') : t('expenses.logExpense')}</Typography>
+          <Box sx={{ mt: 1.5 }}>
+            <ConfigFieldGroup group="expense" {...groupProps} />
+          </Box>
+
+          <Button
+            type="button"
+            size="small"
+            onClick={() => setShowAdditional((v) => !v)}
+            aria-expanded={showAdditional}
+            startIcon={showAdditional || designer ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+            sx={{ mt: 1.5, px: 0 }}
+          >
+            {additionalTitle}
+          </Button>
+          <Collapse in={showAdditional || !!designer}>
+            <Box sx={{ mt: 1.5 }}>
+              <ConfigFieldGroup group="additional" {...groupProps} />
+            </Box>
+          </Collapse>
+          <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
+            <Button type="submit" variant="contained" disabled={saving}>{editingId ? t('expenses.save') : t('time.add')}</Button>
+            {editingId && <Button onClick={resetForm} disabled={saving}>{t('expenses.cancel')}</Button>}
+          </Box>
+        </Paper>
+
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('expenses.entries')}</Typography>
+          {loading && <LinearProgress sx={{ mb: 1 }} />}
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('time.date')}</TableCell>
+                  <TableCell>{t('expenses.category')}</TableCell>
+                  <TableCell align="right">{t('expenses.value')}</TableCell>
+                  <TableCell>{t('time.project')}</TableCell>
+                  <TableCell>{t('time.subproject')}</TableCell>
+                  <TableCell>{t('expenses.report')}</TableCell>
+                  <TableCell align="right">{t('common.actions')}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {entries.map((row) => {
+                  const locked = isRowLocked(row);
+                  const numVal = Number(row.value);
+                  const formattedVal = Number.isFinite(numVal) ? formatLocaleNumber(numVal, locale) : row.value;
+                  return (
+                    <TableRow key={row.id} hover>
+                      <TableCell>{formatLocaleDate(row.expense_date, locale)}</TableCell>
+                      <TableCell>{categoryLabel(row.category)}{row.sub_category ? ` / ${translatedSubCategoryLabel(row.category, row.sub_category) ?? row.sub_category}` : ''}</TableCell>
+                      <TableCell align="right">{formattedVal} {row.currency}</TableCell>
+                      <TableCell>{row.project_name ?? '—'}</TableCell>
+                      <TableCell>{row.subproject_name ?? '—'}</TableCell>
+                      <TableCell>
+                        {row.expense_report_id ? (
+                          <Chip
+                            size="small"
+                            color={row.expense_report_status === 'approved' || row.expense_report_status === 'finished' ? 'success' : row.expense_report_status === 'rejected' ? 'error' : 'default'}
+                            label={t('expenses.inReport', {
+                              status: row.expense_report_status ? t(`expenseReports.status.${row.expense_report_status}`) : '',
+                            })}
+                          />
+                        ) : (
+                          <Chip size="small" variant="outlined" label={t('expenses.unmapped')} />
+                        )}
+                      </TableCell>
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        {row.document_id ? (
+                          <>
+                            <Tooltip title={t('expenses.download')}>
+                              <IconButton size="small" aria-label={t('expenses.payslip')} onClick={() => void downloadPayslip(row.id)}>
+                                <DownloadIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            {!locked && (
+                              <Tooltip title={t('expenses.removePayslip')}>
+                                <IconButton size="small" color="error" aria-label={t('expenses.removePayslip')} onClick={() => setConfirmRemoveDocId(row.id)}>
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </>
+                        ) : (
+                          <Tooltip title={locked ? t('expenses.lockedTooltip') : t('expenses.attachPayslip')}>
+                            <span>
+                              <IconButton size="small" component="label" disabled={locked} aria-label={t('expenses.attachPayslip')}>
+                                <UploadIcon fontSize="small" />
+                                <input type="file" hidden disabled={locked} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPayslip(row.id, f); }} />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        )}
+                        <Tooltip title={locked ? t('expenses.lockedTooltip') : t('time.edit')}>
+                          <span>
+                            <IconButton size="small" disabled={locked} aria-label={t('time.edit')} onClick={() => startEdit(row)}>
+                              <EditIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title={row.expense_report_id ? t('expenses.mappedCannotDelete') : t('time.remove')}>
+                          <span>
+                            <IconButton size="small" color="error" disabled={!!row.expense_report_id} aria-label={t('time.remove')} onClick={() => setConfirmRemoveId(row.id)}>
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {entries.length === 0 && (
+                  <TableEmptyRow colSpan={7} icon={<ReceiptLongIcon fontSize="inherit" />} title={t('expenses.noEntries')} />
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       </Box>
 
-      <Typography
-        component="button"
-        type="button"
-        onClick={() => setShowAdditional((v) => !v)}
-        variant="body2"
-        color="primary"
-        sx={{ mt: 1.5, background: 'none', border: 'none', p: 0, cursor: 'pointer', fontWeight: 600 }}
-      >
-        {showAdditional || designer ? '▾' : '▸'} {additionalTitle}
-      </Typography>
-      {/* Open while designing, so every field can be selected. */}
-      <Collapse in={showAdditional || !!designer}>
-        <Box sx={{ mt: 1.5 }}>
-          <ConfigFieldGroup group="additional" {...groupProps} />
-        </Box>
-      </Collapse>
-      <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
-        <Button variant="contained" onClick={save} disabled={saving}>{editingId ? t('expenses.save') : t('time.add')}</Button>
-        {editingId && <Button onClick={resetForm} disabled={saving}>{t('expenses.cancel')}</Button>}
-      </Box>
+      <ConfirmDialog
+        open={!!confirmRemoveId}
+        title={t('expenses.deleteTitle')}
+        message={t('expenses.deleteConfirm')}
+        confirmLabel={t('time.remove')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmRemoveId(null)}
+        onConfirm={() => {
+          if (confirmRemoveId) return remove(confirmRemoveId);
+        }}
+      />
 
-      <Typography variant="subtitle1" sx={{ mt: 3 }}>{t('expenses.entries')}</Typography>
-      <Table size="small" sx={{ mt: 1 }}>
-        <TableHead>
-          <TableRow>
-            <TableCell>{t('time.date')}</TableCell>
-            <TableCell>{t('expenses.category')}</TableCell>
-            <TableCell align="right">{t('expenses.value')}</TableCell>
-            <TableCell>{t('time.project')}</TableCell>
-            <TableCell>{t('time.subproject')}</TableCell>
-            <TableCell>{t('expenses.report')}</TableCell>
-            <TableCell align="right" />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {entries.map((row) => (
-            <TableRow key={row.id} hover>
-              <TableCell>{row.expense_date.slice(0, 10)}</TableCell>
-              <TableCell>{categoryLabel(row.category)}{row.sub_category ? ` / ${translatedSubCategoryLabel(row.category, row.sub_category) ?? row.sub_category}` : ''}</TableCell>
-              <TableCell align="right">{row.value} {row.currency}</TableCell>
-              <TableCell>{row.project_name ?? '—'}</TableCell>
-              <TableCell>{row.subproject_name ?? '—'}</TableCell>
-              <TableCell>
-                {row.expense_report_id ? (
-                  <Chip size="small" label={t('expenses.inReport', { status: row.expense_report_status ?? '' })} />
-                ) : (
-                  <Chip size="small" variant="outlined" label={t('expenses.unmapped')} />
-                )}
-              </TableCell>
-              <TableCell align="right">
-                {row.document_id ? (
-                  <Button size="small" onClick={() => downloadPayslip(row.id)}>{t('expenses.payslip')}</Button>
-                ) : (
-                  <Button size="small" component="label">
-                    {t('expenses.attachPayslip')}
-                    <input type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPayslip(row.id, f); }} />
-                  </Button>
-                )}
-                <Button size="small" onClick={() => startEdit(row)}>{t('time.edit')}</Button>
-                <Button size="small" color="error" onClick={() => remove(row.id)}>{t('time.remove')}</Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {entries.length === 0 && (
-            <TableRow><TableCell colSpan={7}>{t('expenses.noEntries')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </Paper>
+      <ConfirmDialog
+        open={!!confirmRemoveDocId}
+        title={t('expenses.removePayslip')}
+        message={t('expenses.removePayslipConfirm')}
+        confirmLabel={t('common.remove')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmRemoveDocId(null)}
+        onConfirm={() => {
+          if (confirmRemoveDocId) return removePayslip(confirmRemoveDocId);
+        }}
+      />
     </FieldDesignScope>
   );
 }
