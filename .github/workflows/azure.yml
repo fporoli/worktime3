@@ -1,4 +1,5 @@
 name: azure
+run-name: 'azure: ${{ inputs.action }} (tag ${{ inputs.image_tag }})'
 # One entry point for everything the deploy identity may do on Azure: pick an action and run.
 # Each action is a phase of infra/azure/provision.sh. Config comes from the `azure` GitHub
 # Environment (set by `provision.sh secrets`). The base and github phases stay on a laptop:
@@ -27,6 +28,32 @@ jobs:
       group: worktime3-azure-deploy
       cancel-in-progress: false
     steps:
+      # Inputs go through env, never straight into the script, so they can't inject shell.
+      - name: Show parameters
+        env:
+          ACTION: ${{ inputs.action }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          SEED: ${{ inputs.seed }}
+          CONFIRM: ${{ inputs.confirm }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PG_SERVER_NAME: ${{ vars.AZURE_PG_SERVER_NAME }}
+          LOCATION: ${{ vars.AZURE_LOCATION }}
+        run: |
+          {
+            echo "### azure: $ACTION"
+            echo '```'
+            echo "environment     azure"
+            echo "action          $ACTION"
+            echo "image_tag       $IMAGE_TAG"
+            echo "seed            $SEED"
+            echo "confirm         $CONFIRM"
+            echo "resource group  $RESOURCE_GROUP"
+            echo "pg server       $PG_SERVER_NAME"
+            echo "location        $LOCATION"
+            echo "ref             $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+            echo "actor           $GITHUB_ACTOR"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v7
       - uses: azure/login@v3
         with:
@@ -60,5 +87,7 @@ jobs:
           SMTP_SECURE: ${{ vars.SMTP_SECURE }}
         run: |
           for phase in $PHASES; do
+            echo "::group::provision.sh $phase"
             bash infra/azure/provision.sh "$phase"
+            echo "::endgroup::"
           done

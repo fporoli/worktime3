@@ -1,4 +1,5 @@
 name: vps
+run-name: 'vps: ${{ inputs.action }} on ${{ inputs.environment }} (tag ${{ inputs.image_tag }})'
 # The only way anything reaches the VPS. Ships the repo's deploy files from this checkout over
 # SSH and runs infra/vps/remote.sh there, so the server holds no git checkout and no
 # hand-maintained config. One GitHub Environment = one instance: pick it in `environment`
@@ -32,6 +33,34 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     steps:
+      # Inputs go through env, never straight into the script, so they can't inject shell.
+      - name: Show parameters
+        env:
+          ACTION: ${{ inputs.action }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          WEB_SUB: ${{ vars.WEB_SUB }}
+          API_SUB: ${{ vars.API_SUB }}
+          AUTH_SUB: ${{ vars.AUTH_SUB }}
+          PG_PORT: ${{ vars.PG_PORT }}
+        run: |
+          {
+            echo "### vps: $ACTION on $ENVIRONMENT"
+            echo '```'
+            echo "environment   $ENVIRONMENT"
+            echo "action        $ACTION"
+            echo "image_tag     $IMAGE_TAG"
+            echo "confirmation  $CONFIRMATION"
+            echo "vps host      $VPS_HOST"
+            echo "hostnames     $WEB_SUB / $API_SUB / $AUTH_SUB .$DOMAIN"
+            echo "pg port       $PG_PORT"
+            echo "ref           $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+            echo "actor         $GITHUB_ACTOR"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Only main may deploy
         if: github.ref != 'refs/heads/main'
         run: echo "Run this workflow from main." && exit 1
@@ -86,6 +115,7 @@ jobs:
           envs: ACTION,ENVIRONMENT,DOMAIN,MAIL_SUB,PORTAINER_SUB,WEB_SUB,API_SUB,AUTH_SUB,SHOW_DEMO_ACCOUNTS,GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,REPO,POSTGRES_PASSWORD,KEYCLOAK_ADMIN,KEYCLOAK_ADMIN_PASSWORD,API_JWT_SECRET,PG_PORT,SMTP_HOST,SMTP_PORT,SMTP_FROM,SMTP_USER,SMTP_PASSWORD,SMTP_SECURE
           script: |
             set -eu
+            echo "remote.sh $ACTION, environment $ENVIRONMENT, image tag $IMAGE_TAG"
             rm -rf /tmp/worktime3-release/src
             mkdir -p /tmp/worktime3-release/src
             tar xzf /tmp/worktime3-release/release.tgz -C /tmp/worktime3-release/src
