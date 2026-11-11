@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { Public, type AuthenticatedRequest } from './jwt.guard';
 import { mintLocalToken } from './jwt';
@@ -28,6 +28,39 @@ export function isValidEmail(email: unknown): boolean {
 
 export function isValidPassword(password: unknown): boolean {
   return typeof password === 'string' && password.length >= 8;
+}
+
+export interface DemoAccount {
+  name: string;
+  user: string;
+  password: string;
+}
+
+/**
+ * Login-screen demo accounts from the global `static_data` row (entity `login`, enum
+ * `demo_accounts`). Each value is a JSON string `{name, user, password}`; keys give the order.
+ * Malformed entries are skipped rather than failing the login screen.
+ */
+export function parseDemoAccounts(values: unknown): DemoAccount[] {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return [];
+  const out: DemoAccount[] = [];
+  for (const key of Object.keys(values).sort()) {
+    const raw = (values as Record<string, unknown>)[key];
+    let parsed: unknown = raw;
+    if (typeof raw === 'string') {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+    }
+    if (!parsed || typeof parsed !== 'object') continue;
+    const { name, user, password } = parsed as Record<string, unknown>;
+    if (typeof name !== 'string' || typeof user !== 'string' || typeof password !== 'string') continue;
+    if (!name.trim() || !user.trim()) continue;
+    out.push({ name: name.trim(), user: user.trim(), password });
+  }
+  return out;
 }
 
 /** Slug base for a workspace derived from an email local part. */
@@ -187,6 +220,20 @@ export class AuthController {
   }
 
   /** Local login: verifies the password identity and returns the session. */
+  /** Demo accounts for the login screen dropdown. Only seeded databases define them; otherwise empty. */
+  @Public()
+  @Get('demo-accounts')
+  async demoAccounts() {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, accounts: [] };
+    const [row] = await db
+      .select({ values: static_data.values })
+      .from(static_data)
+      .where(and(isNull(static_data.organization_id), eq(static_data.entity, 'login'), eq(static_data.enum_name, 'demo_accounts')))
+      .limit(1);
+    return { ok: true, accounts: parseDemoAccounts(row?.values) };
+  }
+
   @Public()
   @Post('login')
   async login(@Body() body: { email: string; password: string }) {

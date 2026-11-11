@@ -273,9 +273,13 @@ npm run db:seed
 
 ### Demo accounts
 
-Local dev builds show demo login buttons for the seeded users `admin@acme.com`,
-`marta@acme.com` (manager) and `ulla@acme.com` (user), password `dev1234`.
-On the VPS the buttons are controlled per instance by the `SHOW_DEMO_ACCOUNTS`
+Each seeded `<name>@acme.com` user's password is `<name>` (e.g.
+`admin@acme.com` / `admin`). Local dev builds show a demo-account dropdown on the
+login screen with Admin, Manager (Marta) and User (Ulla); picking one signs in.
+Its entries are global static data (entity `login`, enum `demo_accounts`; each
+value a JSON string `{"name","user","password"}`), served by the public
+`GET /api/v1/auth/demo-accounts`.
+On the VPS the dropdown is controlled per instance by the `SHOW_DEMO_ACCOUNTS`
 variable (default `false`); the Azure image always shows them. The accounts
 exist only after a seed (`reset-seed` on the VPS). Otherwise provision real
 Keycloak accounts; the realm import does not create users.

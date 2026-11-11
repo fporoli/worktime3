@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
 import { desc, eq } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, isOrgAdmin } from './access';
+import { callerUserId, can } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { audit_logs, users } from './db/schema';
 
@@ -15,7 +15,7 @@ export class AuditController {
     if (!db) return [];
     if (!orgId) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !(await isOrgAdmin(db, orgId, callerId))) return [];
+    if (!callerId || !(await can(db, orgId, callerId, 'nav.audit', 'see'))) return [];
     return db
       .select({
         id: audit_logs.id,

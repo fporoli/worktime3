@@ -17,16 +17,13 @@ import {
   Typography,
 } from '@mui/material';
 import { useI18n } from './i18n';
+import { assignableRoles, roleLabel, type OrgRole } from './roleLabel';
 import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
 import { ContentCopyIcon, MailIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
-interface RoleOption {
-  id: string;
-  name: string;
-  description?: string | null;
-}
+type RoleOption = OrgRole;
 
 interface InvitationItem {
   id: string;
@@ -64,10 +61,10 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
 
   async function reloadRoles() {
     try {
-      const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/roles`, { headers: await authHeaders() });
       const data = await res.json();
-      if (Array.isArray(data)) {
-        const assignable = data.filter((r) => r.name !== 'owner');
+      if (Array.isArray(data?.roles)) {
+        const assignable = assignableRoles(data.roles as OrgRole[]);
         setRoles(assignable);
         if (!roleId && assignable.length > 0) {
           const defaultRole = assignable.find((r) => r.name === 'member') ?? assignable[0];
@@ -197,7 +194,7 @@ export default function Invitations({ orgId, authHeaders }: InvitationsProps) {
             sx={{ minWidth: 160 }}
           >
             {roles.map((r) => (
-              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+              <MenuItem key={r.id} value={r.id}>{roleLabel(r, locale)}</MenuItem>
             ))}
           </TextField>
           <Button type="submit" variant="contained" disabled={!email.trim() || !roleId}>

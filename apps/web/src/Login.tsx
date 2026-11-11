@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Container, Divider, IconButton, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, Container, Divider, IconButton, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import { ensureSsoInit, keycloak, startSsoLogin } from './auth';
 import { LOCALES, useI18n } from './i18n';
 import { DarkModeIcon, LightModeIcon } from './icons';
@@ -67,12 +67,12 @@ export function clearSession() {
   localStorage.removeItem(SESSION_KEY);
 }
 
-const DEMO_ACCOUNTS = [
-  { email: 'admin@acme.com', labelKey: 'login.demo.admin' },
-  { email: 'marta@acme.com', labelKey: 'login.demo.manager' },
-  { email: 'ulla@acme.com', labelKey: 'login.demo.user' },
-];
-const DEMO_PASSWORD = 'dev1234';
+/** A login-screen demo button, configured in global static data (`login` / `demo_accounts`). */
+interface DemoAccount {
+  name: string;
+  user: string;
+  password: string;
+}
 const DEMO_INVITE_TOKEN = 'dev-invite-0001';
 
 /** API error codes with their own message; the text is `login.error.<code>` in the dictionaries. */
@@ -126,6 +126,22 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ssoChecking, setSsoChecking] = useState(true);
+  const [demoAccounts, setDemoAccounts] = useState<DemoAccount[]>([]);
+
+  // Demo accounts come from the API (seeded databases only); none configured -> no section.
+  useEffect(() => {
+    if (!SHOW_DEMO_ACCOUNTS) return;
+    let cancelled = false;
+    fetch(`${API}/auth/demo-accounts`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.accounts)) setDemoAccounts(data.accounts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // After a Keycloak redirect back to us, finish the login: sync the user, keep the SSO token.
   useEffect(() => {
@@ -270,17 +286,28 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (s: Session) => void
             <TextField label={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} size="small" autoComplete="email" />
             <TextField label={t('login.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} size="small" autoComplete="current-password" />
             <Button type="submit" variant="contained" disabled={busy}>{t('login.submit')}</Button>
-            {SHOW_DEMO_ACCOUNTS && (
+            {SHOW_DEMO_ACCOUNTS && demoAccounts.length > 0 && (
               <>
                 <Divider />
-                <Typography variant="caption" color="text.secondary">{t('login.demoAccounts', { password: DEMO_PASSWORD })}</Typography>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {DEMO_ACCOUNTS.map((a) => (
-                    <Button key={a.email} variant="outlined" size="small" disabled={busy} onClick={() => submitLogin(a.email, DEMO_PASSWORD)}>
-                      {t(a.labelKey)}
-                    </Button>
+                {/* Picking an account signs in right away. */}
+                <TextField
+                  select
+                  size="small"
+                  label={t('login.demoAccounts')}
+                  value=""
+                  disabled={busy}
+                  onChange={(e) => {
+                    const account = demoAccounts.find((a) => a.user === e.target.value);
+                    if (account) void submitLogin(account.user, account.password);
+                  }}
+                >
+                  {demoAccounts.map((a) => (
+                    <MenuItem key={a.user} value={a.user}>
+                      {a.name}
+                      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>{a.user}</Typography>
+                    </MenuItem>
                   ))}
-                </Box>
+                </TextField>
               </>
             )}
           </Box>

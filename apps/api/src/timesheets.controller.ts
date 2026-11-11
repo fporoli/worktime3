@@ -1,7 +1,7 @@
 import { Body, Controller, Get, OnModuleInit, Param, Post, Query, Req } from '@nestjs/common';
 import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, membershipManagerId } from './access';
+import { callerUserId, canEditBeyondOwn, canSeeUserData, isManagerOf, isOrgMember, listableUserIds, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { timesheet_periods, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
@@ -76,16 +76,15 @@ export class TimesheetsController implements OnModuleInit {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return [];
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     const conditions: SQL[] = [eq(timesheet_periods.organization_id, orgId)];
     if (userId) {
-      // Someone else's periods: admins can view anyone's; everyone else only that person's own manager.
-      if (userId !== callerId && !isAdmin && !(await isManagerOf(db, orgId, callerId, userId))) return [];
+      // Someone else's periods: their manager, or a grant reaching them (admin: everyone).
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.timesheet', userId))) return [];
       conditions.push(eq(timesheet_periods.user_id, userId));
-    } else if (!isAdmin) {
-      // No target given: your own periods, plus your direct reports' (e.g. ?status=submitted for an approval queue).
-      const reportIds = await directReportUserIds(db, orgId, callerId);
-      conditions.push(inArray(timesheet_periods.user_id, [callerId, ...reportIds]));
+    } else {
+      // No target given: own, direct reports' (e.g. ?status=submitted for an approval queue) and granted.
+      const ids = await listableUserIds(db, orgId, callerId, 'nav.timesheet');
+      if (ids !== 'all') conditions.push(inArray(timesheet_periods.user_id, ids));
     }
     if (status && (STATUSES as readonly string[]).includes(status)) {
       conditions.push(eq(timesheet_periods.status, status as Status));
@@ -233,9 +232,9 @@ export class TimesheetsController implements OnModuleInit {
       .from(timesheet_periods)
       .where(eq(timesheet_periods.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
-    // Only that person's own manager may review their period — an org admin may always override.
-    const isAdmin = await isOrgAdmin(db, period.organization_id, callerId);
-    if (!isAdmin && !(await isManagerOf(db, period.organization_id, callerId, period.user_id))) {
+    // Only that person's own manager may review their period — an approvals override (admin) may always.
+    const override = await canEditBeyondOwn(db, period.organization_id, callerId, 'nav.approvals', period.user_id);
+    if (!override && !(await isManagerOf(db, period.organization_id, callerId, period.user_id))) {
       return { ok: false, error: 'forbidden' };
     }
     if (period.status !== 'submitted') return { ok: false, error: 'not-submitted' };
@@ -260,13 +259,13 @@ export class TimesheetsController implements OnModuleInit {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const [period] = await db
-      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status })
+      .select({ organization_id: timesheet_periods.organization_id, status: timesheet_periods.status, user_id: timesheet_periods.user_id })
       .from(timesheet_periods)
       .where(eq(timesheet_periods.id, id));
     if (!period) return { ok: false, error: 'period-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, period.organization_id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!(await canEditBeyondOwn(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) return { ok: false, error: 'forbidden' };
     if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
     const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
     await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
@@ -349,7 +348,7 @@ export class TimesheetsController implements OnModuleInit {
     if (!period) return null;
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return null;
-    if (period.user_id !== callerId && !(await isOrgAdmin(db, period.organization_id, callerId))) return null;
+    if (period.user_id !== callerId && !(await canEditBeyondOwn(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) return null;
 
     const [row] = await db
       .select({

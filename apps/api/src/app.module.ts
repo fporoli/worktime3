@@ -11,7 +11,8 @@ import { WorkflowsService } from './workflows.service';
 import { AuthController } from './auth.controller';
 import { UsersController } from './users.controller';
 import { OrgsController } from './orgs.controller';
-import { RolesController } from './roles.controller';
+import { PermissionsController } from './permissions.controller';
+import { OrgRolesController, RolesController } from './roles.controller';
 import { TeamsController } from './teams.controller';
 import { ProjectsController } from './projects.controller';
 import { ProjectTimeController } from './project-time.controller';
@@ -47,7 +48,9 @@ import { DbService } from './db.service';
     BasicDataController,
     FieldsController,
     OrgsController,
+    PermissionsController,
     RolesController,
+    OrgRolesController,
     TeamsController,
     ProjectsController,
     ProjectTimeController,

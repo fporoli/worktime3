@@ -25,17 +25,14 @@ import {
 } from '@mui/material';
 import { BasicDataPanel } from './BasicDataPanel';
 import { BalanceLedger } from './BalanceLedger';
-import { useT } from './i18n';
+import { useI18n } from './i18n';
+import { assignableRoles, roleLabel, type OrgRole } from './roleLabel';
 import { PageHeader, TableEmptyRow } from './components';
 import { AccountBalanceWalletIcon, CloseIcon, PeopleIcon, PersonIcon, SearchIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
-interface RoleOption {
-  id: string;
-  name: string;
-  description?: string | null;
-}
+type RoleOption = OrgRole;
 
 interface Member {
   id: string;
@@ -53,6 +50,8 @@ interface UsersProps {
   orgId: string;
   isAdmin: boolean;
   isHr: boolean;
+  /** May open other members' personal details (section permissions beyond `own`). */
+  canAccessBasicData: boolean;
   canManage: boolean;
   authHeaders: () => Promise<Record<string, string>>;
 }
@@ -63,8 +62,8 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
   suspended: 'error',
 };
 
-export default function Users({ orgId, isAdmin, isHr, canManage, authHeaders }: UsersProps) {
-  const t = useT();
+export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, authHeaders }: UsersProps) {
+  const { t, locale } = useI18n();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [addRoleFor, setAddRoleFor] = useState<Record<string, string>>({});
@@ -74,7 +73,6 @@ export default function Users({ orgId, isAdmin, isHr, canManage, authHeaders }: 
   const [basicDataFor, setBasicDataFor] = useState<Member | null>(null);
   const [balancesFor, setBalancesFor] = useState<Member | null>(null);
 
-  const canAccessBasicData = isAdmin || isHr;
   const canViewBalances = isAdmin || canManage;
 
   async function reloadMembers() {
@@ -94,9 +92,9 @@ export default function Users({ orgId, isAdmin, isHr, canManage, authHeaders }: 
       return;
     }
     try {
-      const res = await fetch(`${API}/roles`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/roles`, { headers: await authHeaders() });
       const data = await res.json();
-      if (Array.isArray(data)) setRoles(data);
+      if (Array.isArray(data?.roles)) setRoles(assignableRoles(data.roles as OrgRole[]));
     } catch { /* offline demo */ }
   }
 
@@ -279,7 +277,7 @@ export default function Users({ orgId, isAdmin, isHr, canManage, authHeaders }: 
                             disabled={availableRoles.length === 0}
                           >
                             <MenuItem value=""><em>{t('common.select')}</em></MenuItem>
-                            {availableRoles.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
+                            {availableRoles.map((r) => (<MenuItem key={r.id} value={r.id}>{roleLabel(r, locale)}</MenuItem>))}
                           </TextField>
                           <Button size="small" onClick={() => void grantRole(m.id)} disabled={!addRoleFor[m.id]}>{t('common.add')}</Button>
                         </Box>

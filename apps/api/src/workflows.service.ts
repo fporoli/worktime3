@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from './db.service';
-import { isOrgAdmin } from './access';
+import { reachesAll } from './access';
 import { workflows, workflow_definitions, team_members, organization_memberships } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
@@ -247,8 +247,9 @@ export class WorkflowsService {
     const isTeamAssignee = workflow.assigned_to_team_id
       ? (await this.callerTeamIds(db, callerId)).includes(workflow.assigned_to_team_id)
       : false;
-    const isAdmin = organizationId ? await isOrgAdmin(db, organizationId, callerId) : false;
-    if (!isDirectAssignee && !isTeamAssignee && !isAdmin) return { ok: false, error: 'forbidden' };
+    // An approvals grant reaching everyone (admin by default) may resolve any workflow of the org.
+    const isOverride = organizationId ? await reachesAll(db, organizationId, callerId, 'nav.approvals', 'edit') : false;
+    if (!isDirectAssignee && !isTeamAssignee && !isOverride) return { ok: false, error: 'forbidden' };
     if (workflow.step_status !== 'pending') return { ok: false, error: 'not-pending' };
 
     const now = new Date().toISOString();

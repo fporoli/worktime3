@@ -50,6 +50,10 @@
     <include file="032-basicdata-full-languages-countries.sql" relativeToChangelogFile="true"/>
     <include file="033-basicdata-restrict-languages-countries.sql" relativeToChangelogFile="true"/>
     <include file="034-static-data-nullable-org.sql" relativeToChangelogFile="true"/>
+    <include file="035-permission-catalogue.sql" relativeToChangelogFile="true"/>
+    <include file="036-permission-roles-section.sql" relativeToChangelogFile="true"/>
+    <include file="037-permission-data-grants.sql" relativeToChangelogFile="true"/>
+    <include file="038-permission-management-own.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

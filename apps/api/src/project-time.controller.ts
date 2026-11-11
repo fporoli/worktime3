@@ -3,7 +3,7 @@ import { and, asc, eq, getTableColumns, gt, gte, lt, ne, type SQL } from 'drizzl
 import { DbService, type Db } from './db.service';
 import { ProjectTimeService } from './project-time.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isPeriodLocked } from './access';
+import { callerUserId, canSeeUserData, isOrgMember, isPeriodLocked, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { project_times, projects, subprojects, users } from './db/schema';
 
@@ -73,13 +73,13 @@ export class ProjectTimeController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { entries: [], summary: {} };
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     let targetUserId = userId;
     if (targetUserId && targetUserId !== callerId) {
-      if (!isAdmin && !(await isManagerOf(db, orgId, callerId, targetUserId))) {
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.time', targetUserId))) {
         return { entries: [], summary: {} };
       }
-    } else if (!targetUserId && !isAdmin) {
+    } else if (!targetUserId && !(await reachesAll(db, orgId, callerId, 'nav.time'))) {
+      // No person asked for: everyone's entries only for grants reaching all; otherwise one's own.
       targetUserId = callerId;
     }
 

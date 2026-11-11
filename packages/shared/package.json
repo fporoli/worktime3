@@ -20,6 +20,11 @@
       "source": "./src/fields.ts",
       "types": "./dist/fields.d.ts",
       "default": "./dist/fields.js"
+    },
+    "./permissions": {
+      "source": "./src/permissions.ts",
+      "types": "./dist/permissions.d.ts",
+      "default": "./dist/permissions.js"
     }
   }
 }

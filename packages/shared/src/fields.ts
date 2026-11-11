@@ -130,6 +130,23 @@ function usersColumn(key: string, column: string, order: number, extras: FieldEx
   };
 }
 
+/**
+ * Basic data's nested objects and lists (not described by the registry yet) and the group
+ * (section) each belongs to; section permissions cover them like the group's fields.
+ */
+export const BASICDATA_NESTED_KEYS_BY_GROUP: Record<string, string[]> = {
+  personalien: [],
+  address: ['bankAccounts', 'emergencyContacts'],
+  civilStatus: ['partner', 'children'],
+};
+
+/** The group (section) a basic-data key belongs to: its field's group, or the group of a nested key. */
+export function basicdataGroupOfKey(form: { fields: { key: string; group: string }[] }, key: string): string | undefined {
+  const field = form.fields.find((f) => f.key === key);
+  if (field) return field.group;
+  return Object.keys(BASICDATA_NESTED_KEYS_BY_GROUP).find((g) => BASICDATA_NESTED_KEYS_BY_GROUP[g].includes(key));
+}
+
 export const BASICDATA_FORM: FormDef = {
   id: 'basicdata',
   // Org-defined custom fields go into the org's own section, `basicdata.orgs.<orgId>`.

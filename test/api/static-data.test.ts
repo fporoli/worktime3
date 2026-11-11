@@ -30,7 +30,10 @@ function setupStaticData(opts: {
   const db = {
     execute: async (q: unknown) => {
       const text = sqlText(q);
-      if (text.includes('JOIN membership_roles')) return { rows: (opts.roles ?? []).map((name) => ({ name })) };
+      // Role names (isOrgMember) and their permissions (can()): admin holds Admin settings.
+      if (text.includes('JOIN membership_roles')) {
+        return { rows: (opts.roles ?? []).map((name) => ({ name, permission_id: name === 'admin' ? 'nav.admin:edit:all' : null })) };
+      }
       if (text.includes('is_superdeveloper')) return { rows: [{ is_superdeveloper: !!opts.superdeveloper }] };
       return { rows: [] };
     },

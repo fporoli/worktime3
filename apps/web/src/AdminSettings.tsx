@@ -14,12 +14,14 @@ import {
   LinearProgress,
   MenuItem,
   Paper,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -27,6 +29,7 @@ import {
   Typography,
 } from '@mui/material';
 import { LOCALES, useT, type Locale } from './i18n';
+import RolesPermissions from './RolesPermissions';
 import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
 import { AddIcon, BusinessIcon, ContentCopyIcon, DeleteIcon, EditIcon, PublicIcon, SearchIcon, TuneIcon } from './icons';
 
@@ -66,9 +69,34 @@ function rowKey(entity: string, enumName: string): string {
 interface AdminSettingsProps {
   orgId: string;
   authHeaders: () => Promise<Record<string, string>>;
+  /** The caller may manage roles (`section.admin.roles`): shows the Roles & permissions tab. */
+  canManageRoles: boolean;
 }
 
-export default function AdminSettings({ orgId, authHeaders }: AdminSettingsProps) {
+type AdminTab = 'staticData' | 'roles';
+
+export default function AdminSettings({ orgId, authHeaders, canManageRoles }: AdminSettingsProps) {
+  const t = useT();
+  const [tab, setTab] = useState<AdminTab>('staticData');
+  const current = canManageRoles ? tab : 'staticData';
+  return (
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      {canManageRoles && (
+        <Tabs value={current} onChange={(_, v: AdminTab) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider' }}>
+          <Tab value="staticData" label={t('staticdata.title')} />
+          <Tab value="roles" label={t('roles.title')} />
+        </Tabs>
+      )}
+      {current === 'staticData' ? (
+        <StaticDataSettings orgId={orgId} authHeaders={authHeaders} />
+      ) : (
+        <RolesPermissions orgId={orgId} authHeaders={authHeaders} />
+      )}
+    </Box>
+  );
+}
+
+function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'canManageRoles'>) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);

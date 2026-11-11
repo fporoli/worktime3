@@ -25,7 +25,7 @@ import {
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs, { type Dayjs } from 'dayjs';
-import { BASICDATA_FORM, validateFields, writableKeys, type ResolvedForm } from '@worktime3/shared/fields';
+import { BASICDATA_FORM, BASICDATA_NESTED_KEYS_BY_GROUP, validateFields, writableKeys, type ResolvedForm } from '@worktime3/shared/fields';
 import { FieldDesignScope, useFormTemplate } from './designMode';
 import { DESIGN_PANEL_WIDTH, FormDesignPanel } from './FormDesigner';
 import { useI18n } from './i18n';
@@ -92,11 +92,7 @@ interface StaticDataRow {
   translation: Record<string, Record<string, string>> | null;
 }
 
-const SECTION_NESTED_KEYS: Record<string, string[]> = {
-  personalien: [],
-  address: ['bankAccounts', 'emergencyContacts'],
-  civilStatus: ['partner', 'children'],
-};
+const SECTION_NESTED_KEYS = BASICDATA_NESTED_KEYS_BY_GROUP;
 
 /** Keys a section may save: all its writable fields for HR, only `self` ones for a change request. */
 export function sectionKeys(form: ResolvedForm, group: string, direct: boolean): string[] {
@@ -246,6 +242,13 @@ function GroupActions({ t, group }: { t: T; group: EditableGroup }) {
   );
 }
 
+/** What the caller may do with one section (GET .../basicdata `sections`). */
+interface SectionAccess {
+  see: boolean;
+  request: boolean;
+  direct: boolean;
+}
+
 export interface BasicDataPanelProps {
   orgId: string;
   userId: string;
@@ -270,6 +273,8 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
   const [companyEmail, setCompanyEmail] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingEntry | null>(null);
   const [canEditDirectly, setCanEditDirectly] = useState(false);
+  // Per-section access from the API (section permissions); null from an older API.
+  const [sections, setSections] = useState<Record<string, SectionAccess> | null>(null);
   const [staticRows, setStaticRows] = useState<StaticDataRow[]>([]);
   const [rejectNote, setRejectNote] = useState('');
   const [resolving, setResolving] = useState(false);
@@ -290,6 +295,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
         setData(body.basicdata ?? {});
         setPending(body.pending ?? null);
         setCanEditDirectly(!!body.canEditDirectly);
+        setSections(body.sections && typeof body.sections === 'object' ? body.sections : null);
         setCompanyEmail(body.companyEmail ?? null);
       }
     } catch {
@@ -332,10 +338,16 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
   const countryOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'countries'), locale), [staticRows, locale]);
   const cantonOptions = useMemo(() => SWISS_CANTONS.map((c) => ({ value: c, label: c })), []);
 
-  const groupParams = { orgId, userId, form: savedForm, data, canEditDirectly, canRequest: isSelf, authHeaders, t, onSaved: reload, setNotice };
-  const personalien = useEditableGroup({ ...groupParams, group: 'personalien' });
-  const address = useEditableGroup({ ...groupParams, group: 'address' });
-  const family = useEditableGroup({ ...groupParams, group: 'civilStatus' });
+  const access = (group: string): SectionAccess =>
+    sections?.[group] ?? { see: true, request: isSelf && !canEditDirectly, direct: canEditDirectly };
+  const groupParams = { orgId, userId, form: savedForm, data, authHeaders, t, onSaved: reload, setNotice };
+  const personalien = useEditableGroup({ ...groupParams, group: 'personalien', canEditDirectly: access('personalien').direct, canRequest: access('personalien').request });
+  const address = useEditableGroup({ ...groupParams, group: 'address', canEditDirectly: access('address').direct, canRequest: access('address').request });
+  const family = useEditableGroup({ ...groupParams, group: 'civilStatus', canEditDirectly: access('civilStatus').direct, canRequest: access('civilStatus').request });
+  const showPersonalTab = access('personalien').see || access('address').see;
+  const showFamilyTab = access('civilStatus').see;
+  const currentTab = tab === 'family' ? (showFamilyTab ? 'family' : 'personal') : showPersonalTab ? 'personal' : 'family';
+  const canResolve = sections ? Object.values(sections).some((a) => a.direct) : canEditDirectly;
 
   function switchTab(next: 'personal' | 'family') {
     setTab(next);
@@ -383,7 +395,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
       {loading && <LinearProgress sx={{ my: 1 }} />}
 
       {pending && (
-        canEditDirectly ? (
+        canResolve ? (
           <Alert severity="warning" sx={{ my: 1.5 }}>
             <Typography variant="subtitle2">{t('home.pendingReviewTitle')}</Typography>
             <Typography variant="body2" sx={{ mb: 1 }}>
@@ -401,13 +413,16 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
         )
       )}
 
-      <Tabs value={tab} onChange={(_, v) => switchTab(v)} sx={{ mb: 2 }}>
-        <Tab value="personal" label={t('home.tab.personal')} />
-        <Tab value="family" label={t('home.tab.family')} />
-      </Tabs>
+      {showPersonalTab && showFamilyTab && (
+        <Tabs value={currentTab} onChange={(_, v) => switchTab(v)} sx={{ mb: 2 }}>
+          <Tab value="personal" label={t('home.tab.personal')} />
+          <Tab value="family" label={t('home.tab.family')} />
+        </Tabs>
+      )}
 
-      {tab === 'personal' ? (
+      {currentTab === 'personal' ? (
         <Box sx={{ display: 'grid', gap: 2 }}>
+          {access('personalien').see && (
           <Box>
             <PersonalienSection
               form={form}
@@ -421,7 +436,9 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
             />
             <Box sx={{ mt: 1 }}><GroupActions t={t} group={personalien} /></Box>
           </Box>
+          )}
 
+          {access('address').see && (
           <Box>
             <AddressSection
               t={t}
@@ -436,6 +453,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
             />
             <Box sx={{ mt: 1 }}><GroupActions t={t} group={address} /></Box>
           </Box>
+          )}
         </Box>
       ) : (
         <Box>

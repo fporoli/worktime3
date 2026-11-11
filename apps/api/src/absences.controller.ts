@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Response } from 'express';
 import { DbService, type Db } from './db.service';
-import { callerUserId, directReportUserIds, isManagerOf, isOrgAdmin, isOrgMember, isOwnerAdminOrManagerOf, membershipManagerId } from './access';
+import { callerUserId, canEditBeyondOwn, canSeeUserData, isOrgMember, listableUserIds, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { absences, static_data, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
@@ -161,14 +161,14 @@ export class AbsencesController implements OnModuleInit {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return [];
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     const conditions: SQL[] = [eq(absences.organization_id, orgId)];
     if (userId) {
-      if (userId !== callerId && !isAdmin && !(await isManagerOf(db, orgId, callerId, userId))) return [];
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.absences', userId))) return [];
       conditions.push(eq(absences.user_id, userId));
-    } else if (!isAdmin) {
-      const reportIds = await directReportUserIds(db, orgId, callerId);
-      conditions.push(inArray(absences.user_id, [callerId, ...reportIds]));
+    } else {
+      // Own, direct reports', and whoever the caller's grants cover (admin: everyone).
+      const ids = await listableUserIds(db, orgId, callerId, 'nav.absences');
+      if (ids !== 'all') conditions.push(inArray(absences.user_id, ids));
     }
     if (status && (STATUSES as readonly string[]).includes(status)) {
       conditions.push(eq(absences.status, status as Status));
@@ -238,7 +238,7 @@ export class AbsencesController implements OnModuleInit {
 
     const [absence] = await db.select({ user_id: absences.user_id, organization_id: absences.organization_id, document_id: absences.document_id }).from(absences).where(eq(absences.id, id));
     if (!absence || absence.organization_id !== orgId) return { ok: false, error: 'not-found' };
-    if (absence.user_id !== callerId && !(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
+    if (absence.user_id !== callerId && !(await canEditBeyondOwn(db, orgId, callerId, 'nav.absences', absence.user_id))) return { ok: false, error: 'forbidden' };
 
     const newDocId = await this.documents.upload(db, orgId, callerId, file, { table: 'absences', id });
     await db.update(absences).set({ document_id: newDocId }).where(eq(absences.id, id));
@@ -255,7 +255,7 @@ export class AbsencesController implements OnModuleInit {
     if (!callerId) return null;
     const [absence] = await db.select({ user_id: absences.user_id, organization_id: absences.organization_id, document_id: absences.document_id }).from(absences).where(eq(absences.id, id));
     if (!absence || absence.organization_id !== orgId || !absence.document_id) return null;
-    if (!(await isOwnerAdminOrManagerOf(db, orgId, callerId, absence.user_id))) return null;
+    if (!(await canSeeUserData(db, orgId, callerId, 'nav.absences', absence.user_id))) return null;
 
     const doc = await this.documents.get(db, absence.document_id);
     if (!doc) return null;
@@ -275,7 +275,7 @@ export class AbsencesController implements OnModuleInit {
       res.status(404).json({ ok: false, error: 'not-found' });
       return;
     }
-    if (!(await isOwnerAdminOrManagerOf(db, absence.organization_id, callerId, absence.user_id))) {
+    if (!(await canSeeUserData(db, absence.organization_id, callerId, 'nav.absences', absence.user_id))) {
       res.status(403).json({ ok: false, error: 'forbidden' });
       return;
     }
@@ -299,7 +299,7 @@ export class AbsencesController implements OnModuleInit {
     const [absence] = await db.select({ user_id: absences.user_id, organization_id: absences.organization_id, status: absences.status, document_id: absences.document_id }).from(absences).where(eq(absences.id, id));
     if (!absence?.document_id) return { ok: false, error: 'not-found' };
     const isOwnerPending = absence.user_id === callerId && absence.status === 'pending';
-    if (!isOwnerPending && !(await isOrgAdmin(db, absence.organization_id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!isOwnerPending && !(await canEditBeyondOwn(db, absence.organization_id, callerId, 'nav.absences', absence.user_id))) return { ok: false, error: 'forbidden' };
 
     await db.update(absences).set({ document_id: null }).where(eq(absences.id, id));
     await this.documents.remove(db, absence.document_id);

@@ -88,10 +88,11 @@ test('AbsencesController.list permits manager querying direct report entries', a
 
 test('AbsencesController.list permits an org admin querying anyone', async () => {
   let executeCall = 0;
-  // Call 1: isOrgMember -> admin role. Call 2: isOrgAdmin -> admin role present.
+  // 1: isOrgMember. 2: isManagerOf (no manager line). 3: permissions -> admin's `nav.absences:edit:all`.
+  // 4: the target is an active member, so the `all` grant covers them.
   const mockDb = createMockDb(async () => {
     executeCall++;
-    return { rows: [{ name: 'admin' }] };
+    return { rows: [{ name: 'admin', permission_id: 'nav.absences:edit:all' }] };
   });
 
   const controller = makeController(mockDb);
@@ -99,7 +100,7 @@ test('AbsencesController.list permits an org admin querying anyone', async () =>
 
   const result = await controller.list('org-1', req, 'anyone-else');
   assert.deepEqual(result, []);
-  assert.equal(executeCall, 2);
+  assert.equal(executeCall, 4);
 });
 
 test('AbsencesController.submit rejects half-day on a multi-day range', async () => {

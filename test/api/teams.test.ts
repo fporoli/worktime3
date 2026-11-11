@@ -1,7 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { RbacService } from '../../apps/api/src/rbac.service';
-import { isOrgManagerOrAdmin, type Executor } from '../../apps/api/src/access';
 
 test('manager and admin have teams:manage permission, user does not', () => {
   const rbac = new RbacService();
@@ -30,19 +29,4 @@ test('subproject creation rules: admin can always create, manager only if owner,
   // User
   assert.equal(rbac.canCreateSubproject('user', true), false);
   assert.equal(rbac.canCreateSubproject('user', false), false);
-});
-
-test('isOrgManagerOrAdmin allows owner, admin, and manager, rejects member/guest', async () => {
-  const fakeDb = (roleName: string | null): Executor => ({
-    execute: (async () => ({
-      rows: roleName ? [{ name: roleName }] : [],
-    })) as unknown as Executor['execute'],
-  });
-
-  assert.equal(await isOrgManagerOrAdmin(fakeDb('owner'), 'org1', 'u1'), true);
-  assert.equal(await isOrgManagerOrAdmin(fakeDb('admin'), 'org1', 'u1'), true);
-  assert.equal(await isOrgManagerOrAdmin(fakeDb('manager'), 'org1', 'u1'), true);
-  assert.equal(await isOrgManagerOrAdmin(fakeDb('member'), 'org1', 'u1'), false);
-  assert.equal(await isOrgManagerOrAdmin(fakeDb('guest'), 'org1', 'u1'), false);
-  assert.equal(await isOrgManagerOrAdmin(fakeDb(null), 'org1', 'u1'), false);
 });

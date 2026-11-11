@@ -45,8 +45,12 @@ add per-environment script variants or `--env-file` flags. `db:seed` exits if
 (logged as a WARNING at startup), and every endpoint, including login, then
 returns `{ ok: true, offline: true }`. That looks like success but does nothing.
 
-Demo logins (from `seed.sql`, used by the Login screen buttons):
-`admin@acme.com`, `marta@acme.com` (manager), `ulla@acme.com` (user), password `dev1234`.
+Demo logins (from `seed.sql`): every `<name>@acme.com` user's password is `<name>`
+(`admin@acme.com` / `admin`, `marta@acme.com` / `marta`, ...). Acme reporting line:
+Alice manages Admin and Adam; Adam manages Marta, Marco and Uma; Marta manages Ulla
+(also hr); Marco manages Ueli; Uma is also developer. The Login screen's demo-account dropdown (Admin, Manager = Marta, User = Ulla)
+come from the global `static_data` row `login`/`demo_accounts` via public
+`GET auth/demo-accounts`; each value is a JSON string `{name, user, password}`.
 
 ## Tests
 
@@ -104,11 +108,24 @@ Demo logins (from `seed.sql`, used by the Login screen buttons):
   1. `const db = this.db.getDb(); if (!db) return <offline/empty shape>;`
   2. `const userId = req.user ? await callerUserId(db, req.user) : null;`
      Never trust a user id from the body or query for the caller.
-  3. Gate with `isOrgMember` / `isOrgManagerOrAdmin` / `isOrgAdmin` /
-     `isOrgHrOrAdmin` / `isOrgBillingAdmin` / `isManagerOf` /
-     `canManageTeamMembers` / `isOwnerAdminOrManagerOf` / `isOrgDeveloper` /
-     `isSuperDeveloper` as appropriate.
+  3. Gate with permissions (below) via `can` / `canSeeUserData` / `listableUserIds` /
+     `reachesAll` / `canEditBeyondOwn`, plus `isOrgMember`, `isManagerOf`, `isSuperDeveloper`.
+     Team Management uses `canManageItem` (scope `own` = teams you lead, projects you own).
+     Don't add checks on role names; `isOrgDeveloper` (form design) is the one left.
   4. Time-entry writes also check `isPeriodLocked` (submitted/approved month).
+- Permissions: ids are `<object>:<action>:<scope>` (`nav.teamHours:see:reports`,
+  `section.basicdata.personalien:edit:all`), catalogued in
+  `packages/shared/src/permissions.ts` and in Liquibase (035-037), held via
+  `membership_roles` -> `role_permissions`. Global roles (`organization_id` NULL) carry the
+  defaults (superdevelopers edit them); an org customizes a role by getting its own copy
+  (same name; memberships are moved onto it, "reset" moves them back), or creates its own
+  roles. Admin settings -> Roles & permissions (`roles.controller.ts`) manages both.
+  `edit` implies `see`; a section also requires its parent navbar entry (My data for own
+  data, Users for others'). `owner` holds everything; `admin` always keeps role management.
+  People's data: `canSeeUserData` = self, the designated manager (always), or a grant
+  covering them; admin-only overrides use `canEditBeyondOwn` (ignores everyone's `:edit:own`).
+  New navbar entries/sections need a registry entry, catalogue rows and default grants
+  (a new `NNN-permission-*.sql` changelog); the catalogue test checks those match the registry.
 - Roles are per organization. A membership can hold several roles
   (`membership_roles`). "Manager of X" means `organization_memberships.manager_user_id`,
   so approvals route to that specific manager, not to any org manager.

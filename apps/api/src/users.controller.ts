@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/c
 import { and, eq, ilike, or } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isAnyOrgAdmin, isOrgAdmin } from './access';
+import { callerUserId, isAnyOrgAdmin, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { users, user_identities, organization_memberships } from './db/schema';
 import { membershipsOf } from './auth.controller';
@@ -43,7 +43,7 @@ export class UsersController {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true, users: [] };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !orgId || !(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
+    if (!callerId || !orgId || !(await reachesAll(db, orgId, callerId, 'nav.users', 'edit'))) return { ok: false, error: 'forbidden' };
     const normalized = (query ?? '').trim();
     if (normalized.length < 2) return { ok: true, users: [] };
     const rows = await db
@@ -64,7 +64,7 @@ export class UsersController {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !body.orgId || !(await isOrgAdmin(db, body.orgId, callerId))) return { ok: false, error: 'forbidden' };
+    if (!callerId || !body.orgId || !(await reachesAll(db, body.orgId, callerId, 'nav.users', 'edit'))) return { ok: false, error: 'forbidden' };
     const [member] = await db
       .select({ id: users.id, email: users.email, displayName: users.display_name })
       .from(organization_memberships)

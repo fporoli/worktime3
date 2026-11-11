@@ -4,7 +4,7 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import { and, asc, eq, ilike, inArray } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { VersionsService } from './versions.service';
-import { isOrgMember, isOrgManagerOrAdmin, isPeriodLocked } from './access';
+import { can, isOrgMember, isPeriodLocked } from './access';
 import { project_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
 
 export interface AssistantMessage {
@@ -265,7 +265,7 @@ export class AssistantService {
   }
 
   private async getTeamHours(ctx: ToolContext, args: Record<string, unknown>) {
-    if (!(await isOrgManagerOrAdmin(ctx.db, ctx.orgId, ctx.callerId))) {
+    if (!(await can(ctx.db, ctx.orgId, ctx.callerId, 'nav.teamHours', 'see'))) {
       return { error: 'forbidden — manager or admin role required' };
     }
     const teamName = typeof args.teamName === 'string' ? args.teamName : '';

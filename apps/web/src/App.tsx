@@ -30,6 +30,7 @@ import { DesignModeNotice, DesignModeProvider, useDesignAccess } from './designM
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 import { formatDurationMinutes } from './localeFormat';
+import { grantedScopes, holdsAny, isBasicDataReviewer, seesOthersBasicData } from '@worktime3/shared/permissions';
 import {
   AutoAwesomeIcon,
   BeachAccessIcon,
@@ -162,7 +163,39 @@ function resolveRoleFlags(session: Session | null, orgId: string | null): RoleFl
   };
 }
 
-function isSectionAllowed(sec: Section, flags: RoleFlags): boolean {
+/** The permission object (packages/shared/src/permissions.ts) behind each page; `home` is always allowed. */
+const SECTION_NAV_OBJECT: Record<Exclude<Section, 'home'>, string> = {
+  myData: 'nav.myData',
+  time: 'nav.time',
+  timesheet: 'nav.timesheet',
+  workTime: 'nav.workTime',
+  absences: 'nav.absences',
+  expenses: 'nav.expenses',
+  expenseReports: 'nav.expenseReports',
+  management: 'nav.management',
+  managementProjects: 'nav.management',
+  hours: 'nav.teamHours',
+  invitations: 'nav.invitations',
+  approvals: 'nav.approvals',
+  users: 'nav.users',
+  audit: 'nav.audit',
+  admin: 'nav.admin',
+  orgSettings: 'nav.orgSettings',
+  expenseProcessing: 'nav.expenseProcessing',
+};
+
+/**
+ * Whether the caller may open a page. Uses their permissions in the current organization
+ * (GET organizations/:orgId/me/permissions); until those have loaded, or when the API is
+ * offline, falls back to the role checks the app used before permissions existed.
+ */
+function isSectionAllowed(sec: Section, flags: RoleFlags, permissions: Set<string> | null): boolean {
+  if (sec === 'home') return true;
+  if (permissions) return holdsAny(permissions, SECTION_NAV_OBJECT[sec]);
+  return isSectionAllowedByRole(sec, flags);
+}
+
+function isSectionAllowedByRole(sec: Section, flags: RoleFlags): boolean {
   switch (sec) {
     case 'home':
     case 'myData':
@@ -227,6 +260,12 @@ export default function App() {
 
   const orgId = currentOrgId;
   const flags = useMemo(() => resolveRoleFlags(session, orgId), [session, orgId]);
+  // The caller's permission ids in the current org; null until loaded (or offline). Re-fetched per org.
+  const [loadedPermissions, setPermissions] = useState<{ orgId: string; ids: Set<string> } | null>(null);
+  const permissions = loadedPermissions && loadedPermissions.orgId === orgId ? loadedPermissions.ids : null;
+  const allowed = useCallback((sec: Section) => isSectionAllowed(sec, flags, permissions), [flags, permissions]);
+  // Edits (and reviews change requests for) other people's personal details: HR/admin by default.
+  const isReviewer = permissions ? isBasicDataReviewer(permissions) : flags.isAdmin || flags.isHr;
 
   const navigate = useCallback((next: Section) => {
     setSectionState(next);
@@ -239,7 +278,7 @@ export default function App() {
   useEffect(() => {
     const onHash = () => {
       const parsed = sectionFromHash();
-      setSectionState(isSectionAllowed(parsed, flags) ? parsed : 'home');
+      setSectionState(allowed(parsed) ? parsed : 'home');
     };
     window.addEventListener('hashchange', onHash);
     window.addEventListener('popstate', onHash);
@@ -247,13 +286,13 @@ export default function App() {
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('popstate', onHash);
     };
-  }, [flags]);
+  }, [allowed]);
 
   useEffect(() => {
-    if (!isSectionAllowed(section, flags)) {
+    if (!allowed(section)) {
       navigate('home');
     }
-  }, [section, flags, navigate]);
+  }, [section, allowed, navigate]);
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     if (!session) return {};
@@ -269,6 +308,26 @@ export default function App() {
     }
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, [session]);
+
+  useEffect(() => {
+    setPermissions(null);
+    if (!session || !orgId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/organizations/${orgId}/me/permissions`, { headers: await authHeaders() });
+        const data = await res.json();
+        if (!cancelled && data?.ok && !data.offline && Array.isArray(data.permissions)) {
+          setPermissions({ orgId, ids: new Set<string>(data.permissions) });
+        }
+      } catch { /* offline: keep the role-based fallback */ }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // authHeaders changes when the SSO token refreshes; that must not drop and refetch permissions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.userId, orgId]);
 
   const designAccess = useDesignAccess(orgId, authHeaders);
   const { items: notifications, unreadCount, live: liveNotification, clearLive, markRead, markAllRead } = useNotifications(session, authHeaders);
@@ -292,7 +351,7 @@ export default function App() {
       } else {
         setApprovalsCount(0);
       }
-      if (flags.isAdmin || flags.isHr) {
+      if (isReviewer) {
         tasks.push(
           fetch(`${API}/organizations/${orgId}/basicdata/pending`, { headers })
             .then((r) => r.json())
@@ -304,7 +363,7 @@ export default function App() {
       }
       await Promise.all(tasks);
     } catch { /* offline fallback */ }
-  }, [session, orgId, flags.canManage, flags.isAdmin, flags.isHr, authHeaders]);
+  }, [session, orgId, flags.canManage, isReviewer, authHeaders]);
 
   const refreshWorkStatus = useCallback(async () => {
     if (!session) {
@@ -390,7 +449,8 @@ export default function App() {
   function switchOrg(newOrgId: string) {
     setCurrentOrgId(newOrgId);
     const nextFlags = resolveRoleFlags(session, newOrgId);
-    if (!isSectionAllowed(section, nextFlags)) navigate('home');
+    // The new org's permissions load afterwards (and re-check the page); until then, use its roles.
+    if (!isSectionAllowed(section, nextFlags, null)) navigate('home');
     if (isMobile) setMobileNavOpen(false);
   }
 
@@ -477,49 +537,47 @@ export default function App() {
     {
       header: t('nav.myWork'),
       items: [
-        { id: 'home', section: 'home', label: t('nav.home'), icon: <DashboardIcon fontSize="small" />, visible: true },
-        { id: 'time', section: 'time', label: t('nav.timeTracking'), icon: <ScheduleIcon fontSize="small" />, visible: true },
-        { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), icon: <CalendarMonthIcon fontSize="small" />, visible: true },
-        { id: 'workTime', section: 'workTime', label: t('nav.workTime'), icon: <TimerIcon fontSize="small" />, visible: true },
-        { id: 'absences', section: 'absences', label: t('nav.absences'), icon: <BeachAccessIcon fontSize="small" />, visible: true },
+        { id: 'home', section: 'home', label: t('nav.home'), icon: <DashboardIcon fontSize="small" />, visible: allowed('home') },
+        { id: 'time', section: 'time', label: t('nav.timeTracking'), icon: <ScheduleIcon fontSize="small" />, visible: allowed('time') },
+        { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), icon: <CalendarMonthIcon fontSize="small" />, visible: allowed('timesheet') },
+        { id: 'workTime', section: 'workTime', label: t('nav.workTime'), icon: <TimerIcon fontSize="small" />, visible: allowed('workTime') },
+        { id: 'absences', section: 'absences', label: t('nav.absences'), icon: <BeachAccessIcon fontSize="small" />, visible: allowed('absences') },
         {
           id: 'myData',
           section: 'myData',
           label: t('nav.myData'),
           icon: <PersonIcon fontSize="small" />,
-          visible: true,
-          badge: flags.isAdmin || flags.isHr ? hrPendingCount : 0,
+          visible: allowed('myData'),
+          badge: isReviewer ? hrPendingCount : 0,
         },
-        { id: 'expenses', section: 'expenses', label: t('nav.expenses'), icon: <ReceiptLongIcon fontSize="small" />, visible: true, dividerBefore: true },
-        { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), icon: <FolderCopyIcon fontSize="small" />, visible: true },
+        { id: 'expenses', section: 'expenses', label: t('nav.expenses'), icon: <ReceiptLongIcon fontSize="small" />, visible: allowed('expenses'), dividerBefore: true },
+        { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), icon: <FolderCopyIcon fontSize="small" />, visible: allowed('expenseReports') },
       ],
     },
     {
       header: t('nav.organization'),
       items: [
-        { id: 'hours', section: 'hours', label: t('nav.teamHours'), icon: <GroupIcon fontSize="small" />, visible: flags.canManage },
+        { id: 'hours', section: 'hours', label: t('nav.teamHours'), icon: <GroupIcon fontSize="small" />, visible: allowed('hours') },
         {
           id: 'approvals',
           section: 'approvals',
           label: t('nav.approvals'),
           icon: <CheckCircleIcon fontSize="small" />,
-          visible: flags.canManage,
+          visible: allowed('approvals'),
           badge: approvalsCount,
         },
-        { id: 'users', section: 'users', label: t('nav.users'), icon: <PeopleIcon fontSize="small" />, visible: flags.canSeeUsers },
-        { id: 'invitations', section: 'invitations', label: t('nav.invitations'), icon: <MailIcon fontSize="small" />, visible: flags.canManage, indent: true },
-        { id: 'management', section: 'management', label: t('nav.management'), icon: <WorkspacesIcon fontSize="small" />, visible: flags.canManage },
-        { id: 'management-teams', section: 'management', label: t('nav.teams'), icon: null, visible: flags.canManage, indent: true },
-        { id: 'management-projects', section: 'managementProjects', label: t('nav.managementProjects'), icon: null, visible: flags.canManage, indent: true },
+        { id: 'users', section: 'users', label: t('nav.users'), icon: <PeopleIcon fontSize="small" />, visible: allowed('users') },
+        { id: 'invitations', section: 'invitations', label: t('nav.invitations'), icon: <MailIcon fontSize="small" />, visible: allowed('invitations'), indent: true },
+        { id: 'management', section: 'management', label: t('nav.management'), icon: <WorkspacesIcon fontSize="small" />, visible: allowed('management') },
       ],
     },
     {
       header: t('nav.administration'),
       items: [
-        { id: 'orgSettings', section: 'orgSettings', label: t('nav.organizationSettings'), icon: <SettingsIcon fontSize="small" />, visible: flags.isAdmin },
-        { id: 'audit', section: 'audit', label: t('nav.auditLog'), icon: <HistoryIcon fontSize="small" />, visible: flags.isAdmin },
-        { id: 'expenseProcessing', section: 'expenseProcessing', label: t('nav.expenseProcessing'), icon: <PaymentsIcon fontSize="small" />, visible: flags.canProcessExpenses },
-        { id: 'admin', section: 'admin', label: t('nav.adminSettings'), icon: <TuneIcon fontSize="small" />, visible: flags.isAdmin },
+        { id: 'orgSettings', section: 'orgSettings', label: t('nav.organizationSettings'), icon: <SettingsIcon fontSize="small" />, visible: allowed('orgSettings') },
+        { id: 'audit', section: 'audit', label: t('nav.auditLog'), icon: <HistoryIcon fontSize="small" />, visible: allowed('audit') },
+        { id: 'expenseProcessing', section: 'expenseProcessing', label: t('nav.expenseProcessing'), icon: <PaymentsIcon fontSize="small" />, visible: allowed('expenseProcessing') },
+        { id: 'admin', section: 'admin', label: t('nav.adminSettings'), icon: <TuneIcon fontSize="small" />, visible: allowed('admin') },
       ],
     },
   ];
@@ -553,7 +611,8 @@ export default function App() {
                 <li key={n.id} style={{ listStyle: 'none' }}>
                   {n.dividerBefore && <Divider sx={{ mx: 1, my: 0.5 }} />}
                   <ListItemButton
-                    selected={section === n.section && (n.id !== 'management-teams' || section === 'management')}
+                    // The Team Management page's Projects tab has its own route but the same nav item.
+                    selected={section === n.section || (n.section === 'management' && section === 'managementProjects')}
                     onClick={() => {
                       navigate(n.section);
                       if (isMobile) setMobileNavOpen(false);
@@ -731,14 +790,14 @@ export default function App() {
                   userId={session.userId}
                   displayName={session.displayName}
                   canManage={flags.canManage}
-                  isHrOrAdmin={flags.isAdmin || flags.isHr}
+                  isHrOrAdmin={isReviewer}
                   authHeaders={authHeaders}
                   onNavigate={(target) => navigate(target)}
                   onWorkTimeChanged={() => setWorkTimeVersion((v) => v + 1)}
                   onReviewResolved={() => void refreshBadges()}
                 />
               )}
-              {section === 'myData' && orgId && (
+              {section === 'myData' && allowed('myData') && orgId && (
                 <MyData
                   orgId={orgId}
                   userId={session.userId}
@@ -746,7 +805,7 @@ export default function App() {
                   onReviewResolved={() => void refreshBadges()}
                 />
               )}
-              {section === 'time' && orgId && (
+              {section === 'time' && allowed('time') && orgId && (
                 <ProjectTime
                   orgId={orgId}
                   userId={session.userId}
@@ -755,10 +814,10 @@ export default function App() {
                   projectsVersion={projectsVersion}
                 />
               )}
-              {section === 'timesheet' && orgId && (
+              {section === 'timesheet' && allowed('timesheet') && orgId && (
                 <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
               )}
-              {section === 'workTime' && orgId && (
+              {section === 'workTime' && allowed('workTime') && orgId && (
                 <WorkTime
                   orgId={orgId}
                   userId={session.userId}
@@ -767,33 +826,38 @@ export default function App() {
                   onWorkTimeChanged={() => setWorkTimeVersion((v) => v + 1)}
                 />
               )}
-              {section === 'absences' && orgId && (
+              {section === 'absences' && allowed('absences') && orgId && (
                 <Absences orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
               )}
-              {section === 'expenses' && orgId && (
+              {section === 'expenses' && allowed('expenses') && orgId && (
                 <Expenses orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
               )}
-              {section === 'expenseReports' && orgId && (
+              {section === 'expenseReports' && allowed('expenseReports') && orgId && (
                 <ExpenseReports orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
               )}
-              {(section === 'management' || section === 'managementProjects') && flags.canManage && orgId && (
+              {(section === 'management' || section === 'managementProjects') && allowed(section) && orgId && (
                 <Management
                   session={session}
                   orgId={orgId}
-                  role={flags.displayRole}
+                  // 'admin' = edits every team and project; 'manager' = only the ones they lead/own.
+                  role={
+                    permissions
+                      ? grantedScopes(permissions, 'nav.management', 'edit').has('all') ? 'admin' : 'manager'
+                      : flags.displayRole
+                  }
                   authHeaders={authHeaders}
                   tab={section === 'managementProjects' ? 'projects' : 'teams'}
                   onTabChange={(tab) => navigate(tab === 'projects' ? 'managementProjects' : 'management')}
                   onDataChanged={() => setProjectsVersion((v) => v + 1)}
                 />
               )}
-              {section === 'hours' && flags.canManage && orgId && (
+              {section === 'hours' && allowed('hours') && orgId && (
                 <TeamHours orgId={orgId} authHeaders={authHeaders} />
               )}
-              {section === 'invitations' && flags.canManage && orgId && (
+              {section === 'invitations' && allowed('invitations') && orgId && (
                 <Invitations orgId={orgId} authHeaders={authHeaders} />
               )}
-              {section === 'approvals' && flags.canManage && orgId && (
+              {section === 'approvals' && allowed('approvals') && orgId && (
                 <Approvals
                   orgId={orgId}
                   role={flags.displayRole}
@@ -801,25 +865,30 @@ export default function App() {
                   onChanged={() => void refreshBadges()}
                 />
               )}
-              {section === 'users' && flags.canSeeUsers && orgId && (
+              {section === 'users' && allowed('users') && orgId && (
                 <Users
                   orgId={orgId}
                   isAdmin={flags.isAdmin}
                   isHr={flags.isHr}
+                  canAccessBasicData={permissions ? seesOthersBasicData(permissions) : flags.isAdmin || flags.isHr}
                   canManage={flags.canManage}
                   authHeaders={authHeaders}
                 />
               )}
-              {section === 'audit' && flags.isAdmin && orgId && (
+              {section === 'audit' && allowed('audit') && orgId && (
                 <AuditLog orgId={orgId} authHeaders={authHeaders} />
               )}
-              {section === 'admin' && flags.isAdmin && orgId && (
-                <AdminSettings orgId={orgId} authHeaders={authHeaders} />
+              {section === 'admin' && allowed('admin') && orgId && (
+                <AdminSettings
+                  orgId={orgId}
+                  authHeaders={authHeaders}
+                  canManageRoles={permissions ? holdsAny(permissions, 'section.admin.roles') : flags.isAdmin}
+                />
               )}
-              {section === 'orgSettings' && flags.isAdmin && orgId && (
+              {section === 'orgSettings' && allowed('orgSettings') && orgId && (
                 <OrganizationSettings orgId={orgId} authHeaders={authHeaders} />
               )}
-              {section === 'expenseProcessing' && flags.canProcessExpenses && orgId && (
+              {section === 'expenseProcessing' && allowed('expenseProcessing') && orgId && (
                 <ExpenseProcessing orgId={orgId} authHeaders={authHeaders} />
               )}
             </Suspense>

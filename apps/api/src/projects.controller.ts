@@ -1,8 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { asc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, isOrgManagerOrAdmin, isOrgMember, userOrgRole } from './access';
-import { RbacService } from './rbac.service';
+import { callerUserId, can, canManageItem, isOrgMember, reachesAll } from './access';
 import { VersionsService } from './versions.service';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { projects, subprojects, users } from './db/schema';
@@ -11,7 +10,6 @@ import { projects, subprojects, users } from './db/schema';
 export class ProjectsController {
   constructor(
     private readonly db: DbService,
-    private readonly rbac: RbacService,
     private readonly versions: VersionsService,
   ) {}
 
@@ -46,12 +44,16 @@ export class ProjectsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, orgId, callerId))) {
+    if (!(await can(db, orgId, callerId, 'nav.management', 'edit'))) {
       return { ok: false, error: 'forbidden' };
     }
     const name = (body.name ?? '').trim();
     if (!name) return { ok: false, error: 'name-required' };
     const ownerUserId = body.ownerUserId || callerId;
+    // Making someone else the owner needs Team Management on all projects (an `own` grant would lose it).
+    if (ownerUserId !== callerId && !(await reachesAll(db, orgId, callerId, 'nav.management', 'edit'))) {
+      return { ok: false, error: 'forbidden-owner' };
+    }
     const [project] = await db
       .insert(projects)
       .values({
@@ -81,10 +83,8 @@ export class ProjectsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const role = await userOrgRole(db, project.organization_id, callerId);
-    const isAdmin = role === 'owner' || role === 'admin';
-    const isOwner = project.owner_user_id === callerId;
-    if (!isAdmin && !(role === 'manager' && isOwner)) {
+    // Projects the caller owns (`own`), or any project (`all`).
+    if (!(await canManageItem(db, project.organization_id, callerId, [project.owner_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -110,10 +110,8 @@ export class ProjectsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const role = await userOrgRole(db, project.organization_id, callerId);
-    const isAdmin = role === 'owner' || role === 'admin';
-    const isOwner = project.owner_user_id === callerId;
-    if (!isAdmin && !(role === 'manager' && isOwner)) {
+    // Projects the caller owns (`own`), or any project (`all`).
+    if (!(await canManageItem(db, project.organization_id, callerId, [project.owner_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -175,14 +173,14 @@ export class ProjectsController {
 
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     if (!project) return { ok: false, error: 'project-not-found' };
-    const orgId = body.organizationId || project.organization_id;
+    // Always the project's own organization (never one from the body).
+    const orgId = project.organization_id;
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const role = (await userOrgRole(db, orgId, callerId)) ?? 'user';
-    const isProjectOwner = project.owner_user_id === callerId;
-    if (!this.rbac.canCreateSubproject(role, isProjectOwner)) {
+    // Subprojects of projects the caller owns (`own`), or of any project (`all`).
+    if (!(await canManageItem(db, orgId, callerId, [project.owner_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -233,12 +231,8 @@ export class ProjectsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const role = (await userOrgRole(db, subproject.organization_id, callerId)) ?? 'user';
-    const isParentProjectOwner = subproject.project_owner_user_id === callerId;
-    const isSubOwner = subproject.owner_user_id === callerId;
-    const isAdmin = role === 'owner' || role === 'admin';
-
-    if (!isAdmin && !(role === 'manager' && (isParentProjectOwner || isSubOwner))) {
+    // Subprojects the caller owns or whose project they own (`own`), or any (`all`).
+    if (!(await canManageItem(db, subproject.organization_id, callerId, [subproject.project_owner_user_id, subproject.owner_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -264,12 +258,8 @@ export class ProjectsController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
-    const role = (await userOrgRole(db, subproject.organization_id, callerId)) ?? 'user';
-    const isParentProjectOwner = subproject.project_owner_user_id === callerId;
-    const isSubOwner = subproject.owner_user_id === callerId;
-    const isAdmin = role === 'owner' || role === 'admin';
-
-    if (!isAdmin && !(role === 'manager' && (isParentProjectOwner || isSubOwner))) {
+    // Subprojects the caller owns or whose project they own (`own`), or any (`all`).
+    if (!(await canManageItem(db, subproject.organization_id, callerId, [subproject.project_owner_user_id, subproject.owner_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 

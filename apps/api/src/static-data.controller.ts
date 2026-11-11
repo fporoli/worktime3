@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/
 import { and, asc, eq, isNull, or } from 'drizzle-orm';
 import { DbService } from './db.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isOrgAdmin, isOrgMember, isSuperDeveloper } from './access';
+import { callerUserId, can, isOrgMember, isSuperDeveloper } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { static_data } from './db/schema';
 
@@ -105,7 +105,7 @@ export class StaticDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
 
     const isGlobal = body.scope === 'global';
-    const allowed = isGlobal ? await isSuperDeveloper(db, callerId) : await isOrgAdmin(db, orgId, callerId);
+    const allowed = isGlobal ? await isSuperDeveloper(db, callerId) : await can(db, orgId, callerId, 'nav.admin', 'edit');
     if (!allowed) return { ok: false, error: 'forbidden' };
 
     if (!body.entity?.trim() || !body.enumName?.trim()) return { ok: false, error: 'entity-and-enum-name-required' };
@@ -148,7 +148,7 @@ export class StaticDataController {
     const isGlobal = existing.organization_id === null;
     const allowed = isGlobal
       ? await isSuperDeveloper(db, callerId)
-      : existing.organization_id === orgId && (await isOrgAdmin(db, orgId, callerId));
+      : existing.organization_id === orgId && (await can(db, orgId, callerId, 'nav.admin', 'edit'));
     if (!allowed) return { ok: false, error: 'forbidden' };
 
     const patch: Partial<typeof static_data.$inferInsert> = {};
@@ -185,7 +185,7 @@ export class StaticDataController {
     const isGlobal = existing.organization_id === null;
     const allowed = isGlobal
       ? await isSuperDeveloper(db, callerId)
-      : existing.organization_id === orgId && (await isOrgAdmin(db, orgId, callerId));
+      : existing.organization_id === orgId && (await can(db, orgId, callerId, 'nav.admin', 'edit'));
     if (!allowed) return { ok: false, error: 'forbidden' };
 
     const scopeCond = isGlobal ? isNull(static_data.organization_id) : eq(static_data.organization_id, orgId);

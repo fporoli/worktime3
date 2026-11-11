@@ -3,7 +3,7 @@ import { and, asc, eq, getTableColumns, gte, inArray, lt, sql, type SQL } from '
 import { alias } from 'drizzle-orm/pg-core';
 import { DbService } from './db.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, canManageTeamMembers, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
+import { callerUserId, can, canManageItem, canManageTeamMembers, isOrgMember, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { teams, team_members, organization_memberships, users, roles, project_times, projects, subprojects } from './db/schema';
 
@@ -50,16 +50,16 @@ export class TeamsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, orgId, callerId))) {
+    if (!(await can(db, orgId, callerId, 'nav.management', 'edit'))) {
       return { ok: false, error: 'forbidden' };
     }
     const name = (body.name ?? '').trim();
     if (!name) return { ok: false, error: 'name-required' };
     // The creator becomes the team's lead by default, so they can manage its members
-    // right away. Only an org admin may instead hand initial leadership to someone else.
+    // right away. Only Team Management on all teams (admin) may hand initial leadership to someone else.
     let leadUserId: string | null;
     if (body.leadUserId !== undefined) {
-      if (body.leadUserId !== callerId && !(await isOrgAdmin(db, orgId, callerId))) {
+      if (body.leadUserId !== callerId && !(await reachesAll(db, orgId, callerId, 'nav.management', 'edit'))) {
         return { ok: false, error: 'forbidden-lead' };
       }
       leadUserId = body.leadUserId;
@@ -96,12 +96,9 @@ export class TeamsController {
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
+    // Teams the caller leads (`own`), or any team (`all`). That includes handing the lead to someone else.
+    if (!(await canManageItem(db, team.organization_id, callerId, [team.lead_user_id]))) {
       return { ok: false, error: 'forbidden' };
-    }
-    // Only an org admin, or the team's current lead, may reassign the lead.
-    if (body.leadUserId !== undefined && team.lead_user_id !== callerId && !(await isOrgAdmin(db, team.organization_id, callerId))) {
-      return { ok: false, error: 'forbidden-lead' };
     }
 
     const patch: Partial<typeof teams.$inferInsert> = {};
@@ -129,12 +126,15 @@ export class TeamsController {
   async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
-    const [team] = await db.select({ organization_id: teams.organization_id }).from(teams).where(eq(teams.id, id));
+    const [team] = await db
+      .select({ organization_id: teams.organization_id, lead_user_id: teams.lead_user_id })
+      .from(teams)
+      .where(eq(teams.id, id));
     if (!team) return { ok: false, error: 'team-not-found' };
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
+    if (!(await canManageItem(db, team.organization_id, callerId, [team.lead_user_id]))) {
       return { ok: false, error: 'forbidden' };
     }
 
@@ -188,7 +188,7 @@ export class TeamsController {
     if (!team) return { members: [], entries: [] };
 
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !(await isOrgManagerOrAdmin(db, team.organization_id, callerId))) {
+    if (!callerId || !(await can(db, team.organization_id, callerId, 'nav.teamHours', 'see'))) {
       return { members: [], entries: [] };
     }
 

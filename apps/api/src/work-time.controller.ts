@@ -3,7 +3,7 @@ import { and, asc, eq, getTableColumns, gte, isNull, lt } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorkTimeService } from './work-time.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isPeriodLocked } from './access';
+import { callerUserId, canSeeUserData, isOrgMember, isPeriodLocked, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { work_times } from './db/schema';
 
@@ -78,13 +78,13 @@ export class WorkTimeController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { entries: [], summary: {} };
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     let targetUserId = userId;
     if (targetUserId && targetUserId !== callerId) {
-      if (!isAdmin && !(await isManagerOf(db, orgId, callerId, targetUserId))) {
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.workTime', targetUserId))) {
         return { entries: [], summary: {} };
       }
-    } else if (!targetUserId && !isAdmin) {
+    } else if (!targetUserId && !(await reachesAll(db, orgId, callerId, 'nav.workTime'))) {
+      // No person asked for: everyone's entries only for grants reaching all; otherwise one's own.
       targetUserId = callerId;
     }
 

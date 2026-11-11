@@ -1,15 +1,7 @@
 import { Body, Controller, Delete, Get, OnModuleInit, Param, Post, Query, Req } from '@nestjs/common';
 import { and, asc, desc, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
-import {
-  callerUserId,
-  directReportUserIds,
-  isManagerOf,
-  isOrgAdmin,
-  isOrgBillingAdmin,
-  isOrgMember,
-  membershipManagerId,
-} from './access';
+import { callerUserId, can, canSeeUserData, isOrgMember, listableUserIds, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { expense_report_items, expense_reports, expenses, projects, subprojects, users } from './db/schema';
 import { AuditService } from './audit.service';
@@ -79,21 +71,20 @@ export class ExpenseReportsController implements OnModuleInit {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return [];
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
-    const isBillingAdmin = await isOrgBillingAdmin(db, orgId, callerId);
+    const processes = await can(db, orgId, callerId, 'nav.expenseProcessing', 'see');
     const statusIsFinanceStage = !!status && (STATUSES as readonly string[]).includes(status) && PIPELINE.includes(status as Status) && status !== 'approved';
     const conditions: SQL[] = [eq(expense_reports.organization_id, orgId)];
     if (userId) {
       // Someone else's reports: admins can view anyone's; everyone else only that person's own manager.
-      if (userId !== callerId && !isAdmin && !(await isManagerOf(db, orgId, callerId, userId))) return [];
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.expenseReports', userId))) return [];
       conditions.push(eq(expense_reports.user_id, userId));
-    } else if (isBillingAdmin && statusIsFinanceStage) {
+    } else if (processes && statusIsFinanceStage) {
       // The finance queue: a billing_admin (or admin) may list org-wide by finance-stage status,
       // without needing a manager relationship to every submitter.
-    } else if (!isAdmin) {
-      // No target given, not a finance-queue lookup: your own reports, plus your direct reports'.
-      const reportIds = await directReportUserIds(db, orgId, callerId);
-      conditions.push(inArray(expense_reports.user_id, [callerId, ...reportIds]));
+    } else {
+      // No target given, not a finance-queue lookup: own, direct reports' and granted (admin: everyone).
+      const ids = await listableUserIds(db, orgId, callerId, 'nav.expenseReports');
+      if (ids !== 'all') conditions.push(inArray(expense_reports.user_id, ids));
     }
     if (status && (STATUSES as readonly string[]).includes(status)) {
       conditions.push(eq(expense_reports.status, status as Status));
@@ -314,7 +305,7 @@ export class ExpenseReportsController implements OnModuleInit {
     if (!report) return { ok: false, error: 'report-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgBillingAdmin(db, report.organization_id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!(await can(db, report.organization_id, callerId, 'nav.expenseProcessing', 'edit'))) return { ok: false, error: 'forbidden' };
     const nextStatus = nextPipelineStage(report.status);
     if (!nextStatus) return { ok: false, error: 'not-advanceable' };
 
@@ -330,8 +321,6 @@ export class ExpenseReportsController implements OnModuleInit {
 
   /** Self, that person's manager, or an org admin may view a report. */
   private async mayView(db: NonNullable<ReturnType<DbService['getDb']>>, report: { organization_id: string; user_id: string }, callerId: string): Promise<boolean> {
-    if (report.user_id === callerId) return true;
-    if (await isOrgAdmin(db, report.organization_id, callerId)) return true;
-    return isManagerOf(db, report.organization_id, callerId, report.user_id);
+    return canSeeUserData(db, report.organization_id, callerId, 'nav.expenseReports', report.user_id);
   }
 }

@@ -47,17 +47,40 @@ VALUES
   ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-01-01', 'YYYY-MM-DD'))
 ON CONFLICT (organization_id, user_id) DO NOTHING;
 
--- Roles per membership (a membership can hold more than one; each of these holds exactly one for now).
+-- Acme reporting lines (organization_memberships.manager_user_id; approvals route to that person):
+--   Alice  -> Admin, Adam
+--   Adam   -> Marta, Marco, Uma
+--   Marta  -> Ulla
+--   Marco  -> Ueli
+-- An UPDATE rather than a column in the INSERT above, so re-running the seed fixes existing rows too.
+UPDATE organization_memberships m
+SET manager_user_id = v.manager_user_id::uuid
+FROM (VALUES
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'), -- Admin <- Alice
+  ('22222222-2222-2222-2222-222222222223', '22222222-2222-2222-2222-222222222222'), -- Adam  <- Alice
+  ('22222222-2222-2222-2222-222222222224', '22222222-2222-2222-2222-222222222223'), -- Marta <- Adam
+  ('22222222-2222-2222-2222-222222222225', '22222222-2222-2222-2222-222222222223'), -- Marco <- Adam
+  ('22222222-2222-2222-2222-222222222228', '22222222-2222-2222-2222-222222222223'), -- Uma   <- Adam
+  ('22222222-2222-2222-2222-222222222226', '22222222-2222-2222-2222-222222222224'), -- Ulla  <- Marta
+  ('22222222-2222-2222-2222-222222222227', '22222222-2222-2222-2222-222222222225')  -- Ueli  <- Marco
+) AS v(user_id, manager_user_id)
+WHERE m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  AND m.user_id = v.user_id::uuid;
+
+-- Roles per membership (a membership can hold more than one). Everyone who manages someone
+-- above holds the manager role; Ulla is also hr, Uma also developer.
 INSERT INTO membership_roles (membership_id, role_id)
 VALUES
-  ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', '00000000-0000-0000-0000-000000000002'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', '00000000-0000-0000-0000-000000000006'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222223', '00000000-0000-0000-0000-000000000006'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', '00000000-0000-0000-0000-000000000003'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333334', '00000000-0000-0000-0000-000000000003'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', '00000000-0000-0000-0000-000000000003'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333336', '00000000-0000-0000-0000-000000000003'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-444444444444', '00000000-0000-0000-0000-000000000003'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', '00000000-0000-0000-0000-000000000002'), -- Admin: admin
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222222', '00000000-0000-0000-0000-000000000006'), -- Alice: manager
+  ('aaaaaaaa-aaaa-aaaa-aaaa-222222222223', '00000000-0000-0000-0000-000000000006'), -- Adam: manager
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333333', '00000000-0000-0000-0000-000000000006'), -- Marta: manager
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333334', '00000000-0000-0000-0000-000000000006'), -- Marco: manager
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', '00000000-0000-0000-0000-000000000003'), -- Ulla: member
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333335', '00000000-0000-0000-0000-000000000007'), -- Ulla: hr
+  ('aaaaaaaa-aaaa-aaaa-aaaa-333333333336', '00000000-0000-0000-0000-000000000003'), -- Ueli: member
+  ('aaaaaaaa-aaaa-aaaa-aaaa-444444444444', '00000000-0000-0000-0000-000000000003'), -- Uma: member
+  ('aaaaaaaa-aaaa-aaaa-aaaa-444444444444', '00000000-0000-0000-0000-000000000008'), -- Uma: developer
   ('eeeeeeee-eeee-eeee-eeee-111111111111', '00000000-0000-0000-0000-000000000002'),
   ('eeeeeeee-eeee-eeee-eeee-222222222222', '00000000-0000-0000-0000-000000000003')
 ON CONFLICT (membership_id, role_id) DO NOTHING;
@@ -116,13 +139,32 @@ UPDATE roles SET translations = translations || '{"de":"Manager"}'::jsonb WHERE 
 UPDATE roles SET translations = translations || '{"de":"Benutzer"}'::jsonb WHERE id = '00000000-0000-0000-0000-000000000003';
 
 
--- Local password identities for the demo users (password: dev1234).
--- Lets the web login screen sign in without Keycloak.
+-- Local password identities for the demo users: the password is the email's local part
+-- (admin@acme.com / admin, adam@acme.com / adam, ...). Lets the web login screen sign in
+-- without Keycloak. DO UPDATE so re-seeding resets a changed demo password.
 INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash)
 VALUES
-  ('11111111-1111-1111-1111-111111111111', 'password', 'admin@acme.com', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
-  ('22222222-2222-2222-2222-222222222224', 'password', 'marta@acme.com', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6'),
-  ('22222222-2222-2222-2222-222222222226', 'password', 'ulla@acme.com', '$2a$10$HMj/faWgnuJJkTNdemEJOu.tCHf5D1BNsIOoop/8nm46l2lB8P.q6')
+  ('11111111-1111-1111-1111-111111111111', 'password', 'admin@acme.com', '$2a$10$gcYrx7XI8py9JpaAsobCFOmJ/o0OmzqFES7pwVIi11v/PUIPoktda'),
+  ('22222222-2222-2222-2222-222222222222', 'password', 'alice@acme.com', '$2a$10$sDt5nGnyeuRLaPxScZLTOu5Ymo5bEi5bjXcICFLrxugvZQlGiA41C'),
+  ('22222222-2222-2222-2222-222222222223', 'password', 'adam@acme.com',  '$2a$10$lMAjV/YzxNt39F5nvuD70OrVgQN7wnmj1D4uBTjb8gC5JHMWAtxAu'),
+  ('22222222-2222-2222-2222-222222222224', 'password', 'marta@acme.com', '$2a$10$5eHdX767Cv5FlZRrxcfoW.e0ev4Hrv5/bt9h3oizMn0Xar22Zs7cm'),
+  ('22222222-2222-2222-2222-222222222225', 'password', 'marco@acme.com', '$2a$10$PaOV5WVXSdHULNumYa/5Aulw.M542lTPczfZxSPPFRJl3dSAawTPC'),
+  ('22222222-2222-2222-2222-222222222226', 'password', 'ulla@acme.com',  '$2a$10$2PPuwC7fbSihPj1JprqLteAABeVc4JbtI7FsugBNEdmoLbGYC5Him'),
+  ('22222222-2222-2222-2222-222222222227', 'password', 'ueli@acme.com',  '$2a$10$JJiF5sk1UDoMJ.V4rRWDzOil.oagGttPZh9WKuSob4QsedJ7xWnyq'),
+  ('22222222-2222-2222-2222-222222222228', 'password', 'uma@acme.com',   '$2a$10$O3mA43NN4tORWX04scyVVuXR.eH1SF3KkUac5oyyBNHtUsPL537wO')
+ON CONFLICT (provider, provider_user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+
+-- Demo-account dropdown on the login screen (GET /auth/demo-accounts, public). Global row.
+-- Key = dropdown order; value = a JSON string {name, user, password}, kept a string so the
+-- Admin Settings static-data editor (flat key -> text) can still show and edit it.
+-- Only seeded databases have this row, so production login screens show no dropdown. The other
+-- demo users still sign in by typing their email and password.
+INSERT INTO static_data (organization_id, entity, enum_name, "values", translation)
+VALUES (NULL, 'login', 'demo_accounts', $wtjson${
+  "01": "{\"name\":\"Admin (Acme)\",\"user\":\"admin@acme.com\",\"password\":\"admin\"}",
+  "02": "{\"name\":\"Manager (Acme)\",\"user\":\"marta@acme.com\",\"password\":\"marta\"}",
+  "03": "{\"name\":\"User (Acme)\",\"user\":\"ulla@acme.com\",\"password\":\"ulla\"}"
+}$wtjson$::jsonb, '{}'::jsonb)
 ON CONFLICT DO NOTHING;
 
 -- Pending invitation for the login screen's "invited user" demo (token: dev-invite-0001).

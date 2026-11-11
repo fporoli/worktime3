@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Response } from 'express';
 import { DbService, type Db } from './db.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember, isOwnerAdminOrManagerOf } from './access';
+import { callerUserId, canSeeUserData, isOrgMember, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { expenses, expense_report_items, expense_reports, projects, subprojects } from './db/schema';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
@@ -127,13 +127,13 @@ export class ExpensesController {
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { entries: [] };
 
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
     let targetUserId = userId;
     if (targetUserId && targetUserId !== callerId) {
-      if (!isAdmin && !(await isManagerOf(db, orgId, callerId, targetUserId))) {
+      if (!(await canSeeUserData(db, orgId, callerId, 'nav.expenses', targetUserId))) {
         return { entries: [] };
       }
-    } else if (!targetUserId && !isAdmin) {
+    } else if (!targetUserId && !(await reachesAll(db, orgId, callerId, 'nav.expenses'))) {
+      // No person asked for: everyone's entries only for grants reaching all; otherwise one's own.
       targetUserId = callerId;
     }
 
@@ -246,7 +246,7 @@ export class ExpensesController {
     if (!callerId) return null;
     const [row] = await db.select({ user_id: expenses.user_id, organization_id: expenses.organization_id, document_id: expenses.document_id }).from(expenses).where(eq(expenses.id, id));
     if (!row?.document_id) return null;
-    if (!(await isOwnerAdminOrManagerOf(db, row.organization_id, callerId, row.user_id))) return null;
+    if (!(await canSeeUserData(db, row.organization_id, callerId, 'nav.expenses', row.user_id))) return null;
 
     const doc = await this.documents.get(db, row.document_id);
     if (!doc) return null;
@@ -266,7 +266,7 @@ export class ExpensesController {
       res.status(404).json({ ok: false, error: 'not-found' });
       return;
     }
-    if (!(await isOwnerAdminOrManagerOf(db, row.organization_id, callerId, row.user_id))) {
+    if (!(await canSeeUserData(db, row.organization_id, callerId, 'nav.expenses', row.user_id))) {
       res.status(403).json({ ok: false, error: 'forbidden' });
       return;
     }

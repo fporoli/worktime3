@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { DbService } from './db.service';
 import { BalancesService, type BalanceType } from './balances.service';
-import { callerUserId, isManagerOf, isOrgAdmin, isOrgMember } from './access';
+import { callerUserId, canEditBeyondOwn, canSeeUserData, isOrgMember } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 
 const BALANCE_TYPES: BalanceType[] = ['overtime', 'vacation'];
@@ -51,8 +51,8 @@ export class BalancesController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
     if (!body.userId || !BALANCE_TYPES.includes(body.balanceType)) return { ok: false, error: 'invalid-request' };
+    if (!(await canEditBeyondOwn(db, orgId, callerId, 'nav.absences', body.userId))) return { ok: false, error: 'forbidden' };
     if (typeof body.deltaMinutes !== 'number' || !Number.isFinite(body.deltaMinutes)) return { ok: false, error: 'invalid-delta' };
 
     await this.balances.adjust(db, orgId, body.userId, body.balanceType, body.deltaMinutes, body.note?.trim() || null, callerId);
@@ -67,8 +67,6 @@ export class BalancesController {
     userId: string | undefined,
   ): Promise<string | null> {
     if (!userId || userId === callerId) return callerId;
-    const isAdmin = await isOrgAdmin(db, orgId, callerId);
-    if (isAdmin || (await isManagerOf(db, orgId, callerId, userId))) return userId;
-    return null;
+    return (await canSeeUserData(db, orgId, callerId, 'nav.absences', userId)) ? userId : null;
   }
 }

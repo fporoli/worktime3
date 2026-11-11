@@ -2,8 +2,8 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/
 import { randomUUID } from 'node:crypto';
 import { alias } from 'drizzle-orm/pg-core';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { DbService } from './db.service';
-import { callerUserId, canManageRole, isOrgAdmin, isOrgManagerOrAdmin, isOrgMember } from './access';
+import { DbService, type Db } from './db.service';
+import { callerUserId, can, canManageRole, isOrgMember, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { sendMail } from './mailer';
 import { isValidEmail } from './auth.controller';
@@ -48,6 +48,15 @@ const FALLBACK_DEFAULT_CURRENCY = 'CHF';
 /** Default full-day vacation hours when an org hasn't set `settings.maxHoursPerDay` yet. */
 const DEFAULT_MAX_HOURS_PER_DAY = 8;
 
+/**
+ * Whether a role may be granted in organization `orgId`: a global role (`organization_id`
+ * null) unless the organization has its own copy of it, or one of the organization's roles.
+ */
+export function isRoleAssignableInOrg(role: { organization_id: string | null }, orgId: string, orgHasCopy: boolean): boolean {
+  if (role.organization_id === null) return !orgHasCopy;
+  return role.organization_id === orgId;
+}
+
 @Controller('organizations')
 export class OrgsController {
   constructor(
@@ -55,6 +64,20 @@ export class OrgsController {
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
   ) {}
+
+  /** The role exists and may be granted in this organization (see `isRoleAssignableInOrg`). */
+  private async roleAssignable(db: Db, orgId: string, roleId: string): Promise<boolean> {
+    const [role] = await db
+      .select({ name: roles.name, organization_id: roles.organization_id })
+      .from(roles)
+      .where(eq(roles.id, roleId));
+    if (!role) return false;
+    const [orgCopy] =
+      role.organization_id === null
+        ? await db.select({ id: roles.id }).from(roles).where(and(eq(roles.organization_id, orgId), eq(roles.name, role.name)))
+        : [];
+    return isRoleAssignableInOrg(role, orgId, !!orgCopy);
+  }
 
   @Get(':id')
   async get(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
@@ -75,6 +98,8 @@ export class OrgsController {
     };
   }
 
+
+
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -85,7 +110,7 @@ export class OrgsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!(await can(db, id, callerId, 'nav.orgSettings', 'edit'))) return { ok: false, error: 'forbidden' };
     if (body.name !== undefined && !body.name.trim()) return { ok: false, error: 'name-required' };
     if (body.defaultCurrency !== undefined && !/^[A-Za-z]{3}$/.test(body.defaultCurrency)) {
       return { ok: false, error: 'invalid-default-currency' };
@@ -190,7 +215,8 @@ export class OrgsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
+    // Member administration (manager line, membership settings): a Users edit grant reaching everyone.
+    if (!(await reachesAll(db, id, callerId, 'nav.users', 'edit'))) return { ok: false, error: 'forbidden' };
 
     const [membership] = await db
       .select({ user_id: organization_memberships.user_id })
@@ -236,8 +262,7 @@ export class OrgsController {
       .from(organization_memberships)
       .where(and(eq(organization_memberships.id, membershipId), eq(organization_memberships.organization_id, id)));
     if (!membership) return { ok: false, error: 'membership-not-found' };
-    const [role] = await db.select({ id: roles.id }).from(roles).where(eq(roles.id, body.roleId));
-    if (!role) return { ok: false, error: 'invalid-role' };
+    if (!(await this.roleAssignable(db, id, body.roleId))) return { ok: false, error: 'invalid-role' };
     // Only an org admin, or one of this specific role's designated admins, may hand this role out.
     if (!(await canManageRole(db, id, callerId, body.roleId))) return { ok: false, error: 'forbidden' };
     await db
@@ -293,8 +318,7 @@ export class OrgsController {
     if (!(await isOrgMember(db, id, callerId))) return { ok: false, error: 'forbidden' };
     const email = (body.email ?? '').trim().toLowerCase();
     if (!isValidEmail(email)) return { ok: false, error: 'invalid-email' };
-    const [role] = await db.select({ id: roles.id }).from(roles).where(eq(roles.id, body.roleId));
-    if (!role) return { ok: false, error: 'invalid-role' };
+    if (!(await this.roleAssignable(db, id, body.roleId))) return { ok: false, error: 'invalid-role' };
     // Only an org admin, or one of this specific role's designated admins, may onboard someone into it.
     if (!(await canManageRole(db, id, callerId, body.roleId))) return { ok: false, error: 'forbidden' };
     const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, id));
@@ -327,7 +351,7 @@ export class OrgsController {
     const db = this.db.getDb();
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !(await isOrgManagerOrAdmin(db, id, callerId))) return [];
+    if (!callerId || !(await can(db, id, callerId, 'nav.invitations', 'see'))) return [];
     return db
       .select({
         id: organization_invitations.id,
@@ -354,7 +378,7 @@ export class OrgsController {
     if (!invitation) return { ok: false, error: 'invitation-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgManagerOrAdmin(db, invitation.organization_id, callerId))) {
+    if (!(await can(db, invitation.organization_id, callerId, 'nav.invitations', 'edit'))) {
       return { ok: false, error: 'forbidden' };
     }
     if (invitation.status !== 'pending') return { ok: false, error: 'invitation-not-pending' };
@@ -374,7 +398,7 @@ export class OrgsController {
     const db = this.db.getDb();
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !(await isOrgAdmin(db, id, callerId))) return [];
+    if (!callerId || !(await can(db, id, callerId, 'nav.orgSettings', 'see'))) return [];
     return db
       .select({
         id: organization_domains.id,
@@ -397,7 +421,7 @@ export class OrgsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!(await can(db, id, callerId, 'nav.orgSettings', 'edit'))) return { ok: false, error: 'forbidden' };
     const domain = (body.domain ?? '').trim().toLowerCase();
     if (!domain) return { ok: false, error: 'domain-required' };
     const [row] = await db
@@ -425,7 +449,7 @@ export class OrgsController {
     const db = this.db.getDb();
     if (!db) return null;
     const callerId = req.user ? await callerUserId(db, req.user) : null;
-    if (!callerId || !(await isOrgAdmin(db, id, callerId))) return null;
+    if (!callerId || !(await can(db, id, callerId, 'nav.orgSettings', 'see'))) return null;
     const [org] = await db.select({ sso_config: organizations.sso_config }).from(organizations).where(eq(organizations.id, id));
     const config = org?.sso_config as Record<string, unknown> | undefined;
     if (!config || !config.protocol) return null;
@@ -448,7 +472,7 @@ export class OrgsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await isOrgAdmin(db, id, callerId))) return { ok: false, error: 'forbidden' };
+    if (!(await can(db, id, callerId, 'nav.orgSettings', 'edit'))) return { ok: false, error: 'forbidden' };
     if (!body.idpEntityId?.trim() || !body.idpSsoUrl?.trim()) return { ok: false, error: 'idp-fields-required' };
     const protocol = body.protocol;
     const idpEntityId = body.idpEntityId.trim();
