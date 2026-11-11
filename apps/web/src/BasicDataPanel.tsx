@@ -35,7 +35,7 @@ import { AddIcon, CloseIcon, DeleteIcon, EditIcon, HistoryIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
-/** ISO 3166-2:CH canton codes — a fixed list, unlike nations/countries this never needs org customization. */
+/** ISO 3166-2:CH canton codes — a fixed list, unlike countries this never needs org customization. */
 const SWISS_CANTONS = ['AG', 'AI', 'AR', 'BE', 'BL', 'BS', 'FR', 'GE', 'GL', 'GR', 'JU', 'LU', 'NE', 'NW', 'OW', 'SG', 'SH', 'SO', 'SZ', 'TG', 'TI', 'UR', 'VD', 'VS', 'ZG', 'ZH'];
 
 interface BankAccount { bank: string; iban: string }
@@ -334,7 +334,6 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
   }, [orgId, userId]);
 
   const localeOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'locales'), locale), [staticRows, locale]);
-  const nationOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'nations'), locale), [staticRows, locale]);
   const countryOptions = useMemo(() => optionsFromRow(staticRows.find((r) => r.enum_name === 'countries'), locale), [staticRows, locale]);
   const cantonOptions = useMemo(() => SWISS_CANTONS.map((c) => ({ value: c, label: c })), []);
 
@@ -432,7 +431,7 @@ export function BasicDataPanel({ orgId, userId, isSelf, embedded = false, authHe
               onChange={personalien.setDraft}
               companyEmail={companyEmail}
               localeOptions={localeOptions}
-              nationOptions={nationOptions}
+              countryOptions={countryOptions}
             />
             <Box sx={{ mt: 1 }}><GroupActions t={t} group={personalien} /></Box>
           </Box>
@@ -575,9 +574,9 @@ function DateOrTextField({
 }
 
 function PersonalienSection({
-  form, group, data, editing, onChange, companyEmail, localeOptions, nationOptions,
+  form, group, data, editing, onChange, companyEmail, localeOptions, countryOptions,
 }: {
-  form: ResolvedForm; group: EditableGroup; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; companyEmail: string | null; localeOptions: Option[]; nationOptions: Option[];
+  form: ResolvedForm; group: EditableGroup; data: BasicData; editing: boolean; onChange: (d: BasicData) => void; companyEmail: string | null; localeOptions: Option[]; countryOptions: Option[];
 }) {
   const title = useGroupTitle(form, 'personalien');
   return (
@@ -591,7 +590,7 @@ function PersonalienSection({
         values={{ ...data, companyEmail: companyEmail ?? '' }}
         editing={editing}
         onChange={(key, value) => onChange({ ...data, [key]: value })}
-        options={{ locales: localeOptions, nations: nationOptions }}
+        options={{ locales: localeOptions, countries: countryOptions }}
       />
     </Box>
   );

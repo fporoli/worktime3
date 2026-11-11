@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { alias } from 'drizzle-orm/pg-core';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -9,6 +9,7 @@ import { sendMail } from './mailer';
 import { isValidEmail } from './auth.controller';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
+import { parseBranding, validateBranding, type OrgBranding } from '@worktime3/shared/branding';
 import {
   organizations,
   organization_memberships,
@@ -52,6 +53,12 @@ const DEFAULT_MAX_HOURS_PER_DAY = 8;
  * Whether a role may be granted in organization `orgId`: a global role (`organization_id`
  * null) unless the organization has its own copy of it, or one of the organization's roles.
  */
+/** Branding as written to the audit log and version history: the logo replaced by its size. */
+export function brandingForLog(branding: OrgBranding): Record<string, unknown> {
+  const { logo, ...rest } = branding;
+  return logo ? { ...rest, logo: `<image, ${logo.length} chars>` } : rest;
+}
+
 export function isRoleAssignableInOrg(role: { organization_id: string | null }, orgId: string, orgHasCopy: boolean): boolean {
   if (role.organization_id === null) return !orgHasCopy;
   return role.organization_id === orgId;
@@ -99,6 +106,43 @@ export class OrgsController {
   }
 
 
+  /** Look and feel (colors, logo) for every member; empty when not a member or not set. */
+  @Get(':id/branding')
+  async getBranding(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, branding: {} };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId || !(await isOrgMember(db, id, callerId))) return { ok: true, branding: {} };
+    const [org] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, id));
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    return { ok: true, branding: parseBranding(settings.branding) };
+  }
+
+  /**
+   * Replaces the organization's branding (missing fields fall back to the app's defaults).
+   * Same gate as the rest of Organization settings.
+   */
+  @Put(':id/branding')
+  async setBranding(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unauthenticated' };
+    if (!(await can(db, id, callerId, 'nav.orgSettings', 'edit'))) return { ok: false, error: 'forbidden' };
+    const result = validateBranding(body);
+    if (!result.ok) return result;
+    const { branding } = result;
+    const settings =
+      Object.keys(branding).length > 0
+        ? sql`${organizations.settings} || ${JSON.stringify({ branding })}::jsonb`
+        : sql`${organizations.settings} - 'branding'`;
+    const updated = await db.update(organizations).set({ settings }).where(eq(organizations.id, id)).returning({ id: organizations.id });
+    if (updated.length === 0) return { ok: false, error: 'not-found' };
+    const logged = { settings: { branding: brandingForLog(branding) } };
+    void this.audit.record(id, callerId, 'organization.branding', 'organization', id, logged).catch(() => {});
+    void this.versions.record('organizations', id, 'update_delta', callerId, logged).catch(() => {});
+    return { ok: true, branding };
+  }
 
   @Patch(':id')
   async update(

@@ -170,7 +170,8 @@ export const BASICDATA_FORM: FormDef = {
     basicdataJson('socialSecurityNumber', 'personalien', 80),
     basicdataJson('languageCode', 'personalien', 90, { type: 'select', options: 'locales' }),
     basicdataJson('placeOfOrigin', 'personalien', 100),
-    basicdataJson('nationality', 'personalien', 110, { type: 'select', options: 'nations' }),
+    // Same country list as the address (`countries`); the separate `nations` list was merged in 039.
+    basicdataJson('nationality', 'personalien', 110, { type: 'select', options: 'countries' }),
     basicdataJson('residencePermitCode', 'personalien', 120),
     usersColumn('companyEmail', 'email', 130, { readOnly: true }),
 

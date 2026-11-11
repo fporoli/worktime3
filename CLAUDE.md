@@ -186,13 +186,18 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   revert them silently.
 - Re-resolve the user's role when they switch organizations. Never cache one
   global role.
+- Organization look and feel (header/page/sidebar colors, logo as a data URL) lives in
+  `organizations.settings.branding`, validated by `packages/shared/src/branding.ts`
+  (API and browser), served by `GET/PUT organizations/:id/branding` (edit = `nav.orgSettings`).
+  App.tsx loads it per org into `BrandingContext`; `createAppTheme(mode, branding)` applies it.
+  Seeded logos are `infra/postgres/seeds/branding/*.svg`, base64-inlined in `seed.sql`.
 
 ## Other
 
 - `packages/shared`: `index.ts` (role ids, RBAC matrix) mirrors API constants
   and is not imported yet; `fields.ts` (the field registry) is used by the web
-  app and the API. Keep `fields.ts` to erasable TypeScript (no enums) so Node
-  tests can import it. Its `exports` map has a `source` condition (the `.ts`
+  app and the API, as are `permissions.ts` and `branding.ts`. Keep these to erasable TypeScript (no enums) so Node
+  tests can import them. Its `exports` map has a `source` condition (the `.ts`
   sources, used by Vite, the web type check and all tests) and a built `dist/`
   (used by the API, which is CommonJS and loads it via `require` of ESM). The
   API's `build` script builds the shared package first.

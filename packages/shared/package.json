@@ -25,6 +25,11 @@
       "source": "./src/permissions.ts",
       "types": "./dist/permissions.d.ts",
       "default": "./dist/permissions.js"
+    },
+    "./branding": {
+      "source": "./src/branding.ts",
+      "types": "./dist/branding.d.ts",
+      "default": "./dist/branding.js"
     }
   }
 }

@@ -23,6 +23,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { useI18n, type Locale } from './i18n';
+import { useBranding } from './theme';
 import Login, { clearSession, loadSession, saveSession, type Session } from './Login';
 import { keycloak, refreshSsoToken, ssoLogout } from './auth';
 import UserMenu from './UserMenu';
@@ -326,6 +327,26 @@ export default function App() {
       cancelled = true;
     };
     // authHeaders changes when the SSO token refreshes; that must not drop and refetch permissions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.userId, orgId]);
+
+  // The organization's look and feel (theme colors, app bar logo); the default theme when signed out.
+  const { branding, setBranding } = useBranding();
+  useEffect(() => {
+    setBranding({});
+    if (!session || !orgId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/organizations/${orgId}/branding`, { headers: await authHeaders() });
+        const data = await res.json();
+        if (!cancelled && data?.ok && data.branding) setBranding(data.branding);
+      } catch { /* offline: default look */ }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Same as permissions: a token refresh must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.userId, orgId]);
 
@@ -669,21 +690,30 @@ export default function App() {
               onClick={() => navigate('home')}
               sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1, cursor: 'pointer' }}
             >
-              <Box
-                sx={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: '8px',
-                  display: { xs: 'none', sm: 'flex' },
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  bgcolor: 'rgba(255,255,255,0.18)',
-                  fontWeight: 700,
-                  fontSize: '0.9rem',
-                }}
-              >
-                W
-              </Box>
+              {branding.logo ? (
+                <Box
+                  component="img"
+                  src={branding.logo}
+                  alt={session.memberships.find((m) => m.organizationId === orgId)?.name ?? ''}
+                  sx={{ height: 36, maxWidth: 140, objectFit: 'contain', display: 'block', borderRadius: '6px' }}
+                />
+              ) : (
+                <Box
+                  sx={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '8px',
+                    display: { xs: 'none', sm: 'flex' },
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    bgcolor: 'rgba(255,255,255,0.18)',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  W
+                </Box>
+              )}
               <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('appbar.title')}</Typography>
             </Box>
 
@@ -696,7 +726,7 @@ export default function App() {
                 onClick={() => navigate('workTime')}
                 sx={{
                   bgcolor: 'rgba(255,255,255,0.18)',
-                  color: 'common.white',
+                  color: 'inherit',
                   '& .MuiChip-icon': { color: '#86efac' },
                   display: { xs: 'none', md: 'inline-flex' },
                 }}

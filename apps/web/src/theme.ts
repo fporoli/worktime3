@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
-import { alpha, createTheme } from '@mui/material';
+import { alpha, createTheme, darken } from '@mui/material';
+import { contrastTextColor, isDarkColor, type OrgBranding } from '@worktime3/shared/branding';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -12,13 +13,37 @@ export function useThemeMode() {
   return useContext(ThemeModeContext);
 }
 
+/**
+ * The current organization's look and feel. App.tsx sets it when the organization changes
+ * (GET organizations/:id/branding); main.tsx rebuilds the theme from it.
+ */
+export const BrandingContext = createContext<{ branding: OrgBranding; setBranding: (b: OrgBranding) => void }>({
+  branding: {},
+  setBranding: () => {},
+});
+
+export function useBranding() {
+  return useContext(BrandingContext);
+}
+
 const primaryLight = { main: '#1a56db', light: '#4c7bea', dark: '#0f3fa8', contrastText: '#ffffff' };
 const primaryDark = { main: '#4c7bea', light: '#7da2f2', dark: '#1a56db', contrastText: '#ffffff' };
 
-export function createAppTheme(mode: ThemeMode = 'light') {
+/** The light theme's colors that an organization's branding can replace. */
+export const DEFAULT_BRANDING_COLORS = { headerColor: primaryLight.main, backgroundColor: '#f5f6fa', sidebarColor: '#fbfbfd' } as const;
+
+/**
+ * App theme for a mode, with an organization's branding on top. The header color applies in
+ * both modes; page and sidebar colors only in light mode, where the app's text is dark.
+ */
+export function createAppTheme(mode: ThemeMode = 'light', branding: OrgBranding = {}) {
   const isDark = mode === 'dark';
   const primary = isDark ? primaryDark : primaryLight;
   const dividerColor = isDark ? '#2d3748' : '#e4e7ed';
+  const header = branding.headerColor;
+  const pageBackground = !isDark ? branding.backgroundColor : undefined;
+  const sidebar = !isDark ? branding.sidebarColor : undefined;
+  const sidebarText = sidebar && isDarkColor(sidebar) ? contrastTextColor(sidebar) : undefined;
 
   return createTheme({
     palette: {
@@ -26,7 +51,7 @@ export function createAppTheme(mode: ThemeMode = 'light') {
       primary,
       background: isDark
         ? { default: '#0b1120', paper: '#111827' }
-        : { default: '#f5f6fa', paper: '#ffffff' },
+        : { default: pageBackground ?? DEFAULT_BRANDING_COLORS.backgroundColor, paper: '#ffffff' },
       text: isDark
         ? { primary: '#f1f5f9', secondary: '#94a3b8' }
         : { primary: '#1a1f36', secondary: '#5b6474' },
@@ -57,9 +82,12 @@ export function createAppTheme(mode: ThemeMode = 'light') {
         defaultProps: { elevation: 0 },
         styleOverrides: {
           root: {
-            backgroundImage: isDark
-              ? 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)'
-              : `linear-gradient(135deg, ${primaryLight.main} 0%, ${primaryLight.dark} 100%)`,
+            backgroundImage: header
+              ? `linear-gradient(135deg, ${header} 0%, ${darken(header, 0.2)} 100%)`
+              : isDark
+                ? 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)'
+                : `linear-gradient(135deg, ${primaryLight.main} 0%, ${primaryLight.dark} 100%)`,
+            ...(header ? { backgroundColor: header, color: contrastTextColor(header) } : {}),
             borderBottom: isDark ? `1px solid ${dividerColor}` : 'none',
             boxShadow: isDark
               ? '0 1px 3px rgba(0,0,0,0.35)'
@@ -70,8 +98,18 @@ export function createAppTheme(mode: ThemeMode = 'light') {
       MuiDrawer: {
         styleOverrides: {
           paper: {
-            backgroundColor: isDark ? '#0f172a' : '#fbfbfd',
+            backgroundColor: sidebar ?? (isDark ? '#0f172a' : DEFAULT_BRANDING_COLORS.sidebarColor),
             borderRight: `1px solid ${dividerColor}`,
+            // A dark sidebar color gets light text, including group headers and the selected item.
+            ...(sidebarText
+              ? {
+                  color: sidebarText,
+                  '& .MuiListSubheader-root': { color: alpha(sidebarText, 0.7) },
+                  '& .MuiDivider-root': { borderColor: alpha(sidebarText, 0.2) },
+                  '& .MuiListItemButton-root.Mui-selected': { color: sidebarText, backgroundColor: alpha(sidebarText, 0.16) },
+                  '& .MuiListItemButton-root:hover': { backgroundColor: alpha(sidebarText, 0.1) },
+                }
+              : {}),
           },
         },
       },

@@ -193,7 +193,7 @@ export class AuthController {
         .returning({ id: organization_memberships.id });
       await tx.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
       // Seed the absence-type static data so the Vacation screen has options right away.
-      // Global user options (`locales`, `nations`, `countries` with `organization_id = null`) are inherited automatically.
+      // Global user options (`locales`, `countries` with `organization_id = null`) are inherited automatically.
       await tx.insert(static_data).values({ organization_id: org.id, ...ABSENCE_TYPE_STATIC_DATA });
       return { u, orgId: org.id, membershipId: membership.id, slug: workspaceSlug };
     });

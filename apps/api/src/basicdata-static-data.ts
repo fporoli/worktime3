@@ -80,19 +80,19 @@ function buildLocaleStaticData() {
   };
 }
 
-function buildCountryStaticData(enumName: 'nations' | 'countries') {
+/** Countries, for both nationality and address country. */
+function buildCountryStaticData() {
   const translation = Object.fromEntries(
     UI_LOCALES.map((loc) => [loc, buildLocalizedMap(COUNTRY_CODES, 'region', loc, 'OTHER')]),
   ) as Record<UiLocale, Record<string, string>>;
 
   return {
     entity: 'users' as const,
-    enum_name: enumName,
+    enum_name: 'countries' as const,
     values: translation.en,
     translation,
   };
 }
 
 export const LOCALE_STATIC_DATA = buildLocaleStaticData();
-export const NATION_STATIC_DATA = buildCountryStaticData('nations');
-export const COUNTRY_STATIC_DATA = buildCountryStaticData('countries');
+export const COUNTRY_STATIC_DATA = buildCountryStaticData();

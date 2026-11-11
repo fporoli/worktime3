@@ -21,6 +21,7 @@ import {
 import { useT } from './i18n';
 import { PageHeader, TableEmptyRow } from './components';
 import { SettingsIcon } from './icons';
+import BrandingSettings from './BrandingSettings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -29,7 +30,6 @@ interface OrgDetails {
   slug: string;
   name: string;
   type: string;
-  avatar_url: string | null;
   default_currency: string;
   max_hours_per_day: number;
 }
@@ -61,7 +61,6 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
 
   const [org, setOrg] = useState<OrgDetails | null>(null);
   const [orgName, setOrgName] = useState('');
-  const [orgLogoUrl, setOrgLogoUrl] = useState('');
   const [defaultCurrency, setDefaultCurrency] = useState('');
   const [maxHoursPerDay, setMaxHoursPerDay] = useState('');
   const [domains, setDomains] = useState<DomainItem[]>([]);
@@ -79,7 +78,6 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       if (data) {
         setOrg(data);
         setOrgName(data.name ?? '');
-        setOrgLogoUrl(data.avatar_url ?? '');
         setDefaultCurrency(data.default_currency ?? '');
         setMaxHoursPerDay(data.max_hours_per_day != null ? String(data.max_hours_per_day) : '');
       }
@@ -124,7 +122,7 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       const res = await fetch(`${API}/organizations/${orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ name: orgName.trim(), avatarUrl: orgLogoUrl.trim() || null, defaultCurrency: defaultCurrency.toUpperCase(), maxHoursPerDay: maxHoursPerDayValue }),
+        body: JSON.stringify({ name: orgName.trim(), defaultCurrency: defaultCurrency.toUpperCase(), maxHoursPerDay: maxHoursPerDayValue }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -211,7 +209,6 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
         </Box>
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <TextField label={t('orgSettings.name')} value={orgName} onChange={(e) => setOrgName(e.target.value)} size="small" sx={{ minWidth: 220 }} />
-          <TextField label={t('orgSettings.logoUrl')} value={orgLogoUrl} onChange={(e) => setOrgLogoUrl(e.target.value)} size="small" sx={{ minWidth: 260 }} placeholder="https://…" />
           <TextField
             label={t('orgSettings.defaultCurrency')}
             value={defaultCurrency}
@@ -236,6 +233,8 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
           </Button>
         </Box>
       </Paper>
+
+      <BrandingSettings orgId={orgId} authHeaders={authHeaders} />
 
       <Paper sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1.5 }}>{t('orgSettings.domains')}</Typography>

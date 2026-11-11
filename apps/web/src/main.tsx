@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import App from './App';
 import { I18nProvider } from './i18n';
-import { createAppTheme, ThemeModeContext, type ThemeMode } from './theme';
+import { BrandingContext, createAppTheme, ThemeModeContext, type ThemeMode } from './theme';
+import type { OrgBranding } from '@worktime3/shared/branding';
 import { DatePickerLocalization } from './ConfigField';
 
 const THEME_STORAGE_KEY = 'worktime.themeMode';
@@ -18,7 +19,9 @@ function loadThemeMode(): ThemeMode {
 
 function Root() {
   const [mode, setMode] = useState<ThemeMode>(loadThemeMode);
-  const theme = useMemo(() => createAppTheme(mode), [mode]);
+  const [branding, setBranding] = useState<OrgBranding>({});
+  const theme = useMemo(() => createAppTheme(mode, branding), [mode, branding]);
+  const brandingCtx = useMemo(() => ({ branding, setBranding }), [branding]);
   const ctx = useMemo(
     () => ({
       mode,
@@ -37,14 +40,16 @@ function Root() {
 
   return (
     <ThemeModeContext.Provider value={ctx}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <I18nProvider>
-          <DatePickerLocalization>
-            <App />
-          </DatePickerLocalization>
-        </I18nProvider>
-      </ThemeProvider>
+      <BrandingContext.Provider value={brandingCtx}>
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <I18nProvider>
+            <DatePickerLocalization>
+              <App />
+            </DatePickerLocalization>
+          </I18nProvider>
+        </ThemeProvider>
+      </BrandingContext.Provider>
     </ThemeModeContext.Provider>
   );
 }

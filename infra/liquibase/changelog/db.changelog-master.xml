@@ -54,6 +54,7 @@
     <include file="036-permission-roles-section.sql" relativeToChangelogFile="true"/>
     <include file="037-permission-data-grants.sql" relativeToChangelogFile="true"/>
     <include file="038-permission-management-own.sql" relativeToChangelogFile="true"/>
+    <include file="039-merge-nations-into-countries.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

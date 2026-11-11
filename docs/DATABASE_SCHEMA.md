@@ -19,7 +19,8 @@ part of a table's domain data or history are shown.
 
 Users, how they authenticate, and the tenant tree they belong to. Security
 settings and SSO federation live directly on the organization row, not in side
-tables.
+tables. `organizations.settings` (jsonb) also holds `branding`: the organization's
+header/page/sidebar colors and logo (see `packages/shared/src/branding.ts`).
 
 ```mermaid
 erDiagram
