@@ -215,9 +215,10 @@ applied changelog file — Liquibase checksums each changeset and will refuse
 to reapply a modified one; add a new changeset instead.
 
 Seed data (`infra/postgres/seeds/seed.sql`) is separate from schema
-migrations and stays manual: `npm run db:seed`. A deployed instance is never
-seeded by `deploy`: use the `vps` workflow's `reset-seed` or the `azure`
-workflow's `seed` / `initdb`.
+migrations and stays manual: `npm run db:seed`. It is additive and safe to re-run:
+it adds missing demo rows and keeps demo data changed since. A deployed instance is
+never seeded by `deploy`: use the `vps` workflow's `seed` (additive) or `reset-seed`
+(clean slate), or the `azure` workflow's `seed` / `initdb`.
 
 ## Host ports (8090+N keycloak, 5430+N pg, 3000+N web, 8000+N api)
 
@@ -381,6 +382,7 @@ environment and an `image_tag` (prefer a `sha-` tag over `latest`):
 | `portainer` | (Re)deploys Portainer, the Docker UI for the whole server, at `portainer.<DOMAIN>`. It is its own stack in `/opt/edge/portainer`, so instance deploys never touch it. Run it once per server, with any environment of that server (it uses that environment's `DOMAIN`). |
 | `portainer-remove` | Takes Portainer down and keeps its data volume. |
 | `destroy` | **Destructive.** Removes the instance (containers, its Postgres and volume, `/opt/worktime3-<env>`, its Caddy site, and its database on a leftover `edge-pg` if there is one). A last dump stays in the deploy user's home. The shared edge stack and other instances stay. Confirmation text: `DESTROY <environment>`. |
+| `seed` | Loads the demo data into a deployed instance, adding only what is missing: nothing is dropped, and demo data changed since (passwords, reporting lines) is kept. Use it after a release adds demo rows. It creates demo users with known passwords, so not for production. Confirmation text: `SEED <environment>`. |
 | `reset-seed` | **Destructive.** Backs up and recreates the `public` schema, migrates, loads the demo data and checks a demo login. Needs the confirmation text. A new instance has no users until you run it once. |
 
 **What `remote.sh` does.** It derives everything instance-specific from the

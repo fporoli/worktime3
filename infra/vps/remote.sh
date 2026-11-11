@@ -5,6 +5,8 @@
 #
 #   remote.sh deploy        edge stack (Caddy), then this instance
 #                           (own Postgres and Mailpit, migrate, api, web, Keycloak), then reload Caddy
+#   remote.sh seed          loads the demo data into the running instance, adding only what is
+#                           missing (seed.sql is additive; nothing is dropped or overwritten)
 #   remote.sh reset-seed    backs up and drops the public schema, migrates, loads the demo data
 #   remote.sh portainer     (re)deploys Portainer, one per server, in its own stack
 #   remote.sh destroy       removes this instance entirely (a final dump is kept in $HOME)
@@ -143,6 +145,23 @@ deploy() {
   caddy_reload
 }
 
+# Loads seed.sql in one transaction. It is additive (fixed keys, ON CONFLICT DO NOTHING), so
+# running it on a populated database only adds the demo rows that are missing.
+load_seed() {
+  local seed_file="/tmp/$PREFIX-seed-$(date -u +%Y%m%dT%H%M%SZ).sql"
+  docker cp "$ROOT/infra/postgres/seeds/seed.sql" "$PG:$seed_file"
+  docker exec "$PG" psql -U worktime -d worktime --no-psqlrc --set=ON_ERROR_STOP=1 --single-transaction -f "$seed_file"
+  docker exec "$PG" rm -f "$seed_file"
+}
+
+# Non-destructive: needs a deployed (migrated) instance; no backup, no restart.
+seed() {
+  install_files
+  docker inspect "$PG" >/dev/null
+  load_seed
+  echo "Demo data present: $(docker exec "$PG" psql -U worktime -d worktime -Atqc "SELECT count(*) FROM public.users") users."
+}
+
 reset_seed() {
   install_files
   write_app_env
@@ -150,7 +169,7 @@ reset_seed() {
   docker inspect "$PG" >/dev/null
   docker inspect "$PREFIX-api" >/dev/null
 
-  local auth_tables_before backup_dir timestamp backup_file seed_file counts
+  local auth_tables_before backup_dir timestamp backup_file counts
   auth_tables_before="$(docker exec "$PG" psql -U worktime -d worktime -Atqc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth'")"
   test "$auth_tables_before" -gt 0
 
@@ -167,10 +186,7 @@ reset_seed() {
 
   "${COMPOSE[@]}" run --rm --build --no-deps migrate
 
-  seed_file="/tmp/$PREFIX-seed-$timestamp.sql"
-  docker cp "$ROOT/infra/postgres/seeds/seed.sql" "$PG:$seed_file"
-  docker exec "$PG" psql -U worktime -d worktime --no-psqlrc --set=ON_ERROR_STOP=1 --single-transaction -f "$seed_file"
-  docker exec "$PG" rm -f "$seed_file"
+  load_seed
 
   counts="$(docker exec "$PG" psql -U worktime -d worktime -Atqc "SELECT (SELECT count(*) FROM public.users), (SELECT count(*) FROM public.organizations), (SELECT count(*) FROM public.user_identities WHERE provider = 'password'), (SELECT count(*) FROM public.databasechangelog), (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth')")"
   test "$counts" = "8|2|3|62|$auth_tables_before"
@@ -217,6 +233,7 @@ case "${1:-}" in
   portainer) portainer_up ;;
   portainer-remove) portainer_remove ;;
   deploy) deploy ;;
+  seed) seed ;;
   reset-seed) reset_seed ;;
-  *) echo "usage: remote.sh deploy|reset-seed|destroy|portainer|portainer-remove" >&2; exit 2 ;;
+  *) echo "usage: remote.sh deploy|seed|reset-seed|destroy|portainer|portainer-remove" >&2; exit 2 ;;
 esac

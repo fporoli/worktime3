@@ -1,5 +1,10 @@
 -- seed.sql — demo users, org, roles, project + project times + static data.
--- Depends on schema.sql + 002-worktime-extensions.sql.
+-- Runs on a migrated database (Liquibase changelogs).
+--
+-- Additive and re-runnable: every row has a fixed key and `ON CONFLICT DO NOTHING`, and the
+-- UPDATEs only fill in values that are still unset. Running it again adds what is missing and
+-- leaves changed demo data (passwords, reporting lines, translations) alone. The VPS `seed`
+-- action relies on this; `reset-seed` drops the schema first for a clean state.
 
 
 INSERT INTO users (id, email, display_name, first_name, last_name, locale, timezone, status)
@@ -52,7 +57,8 @@ ON CONFLICT (organization_id, user_id) DO NOTHING;
 --   Adam   -> Marta, Marco, Uma
 --   Marta  -> Ulla
 --   Marco  -> Ueli
--- An UPDATE rather than a column in the INSERT above, so re-running the seed fixes existing rows too.
+-- An UPDATE rather than a column in the INSERT above, so re-running the seed fills in rows that
+-- exist without a manager; a manager someone set since is left alone.
 UPDATE organization_memberships m
 SET manager_user_id = v.manager_user_id::uuid
 FROM (VALUES
@@ -65,7 +71,8 @@ FROM (VALUES
   ('22222222-2222-2222-2222-222222222227', '22222222-2222-2222-2222-222222222225')  -- Ueli  <- Marco
 ) AS v(user_id, manager_user_id)
 WHERE m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-  AND m.user_id = v.user_id::uuid;
+  AND m.user_id = v.user_id::uuid
+  AND m.manager_user_id IS NULL;
 
 -- Roles per membership (a membership can hold more than one). Everyone who manages someone
 -- above holds the manager role; Ulla is also hr, Uma also developer.
@@ -89,6 +96,7 @@ ON CONFLICT (membership_id, role_id) DO NOTHING;
 INSERT INTO membership_roles (membership_id, role_id)
 VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-111111111111', '00000000-0000-0000-0000-000000000008')
 ON CONFLICT (membership_id, role_id) DO NOTHING;
+-- Re-grants the flag if it was revoked on the demo admin (a boolean has no "unset" to check).
 UPDATE users SET is_superdeveloper = TRUE WHERE id = '11111111-1111-1111-1111-111111111111';
 
 INSERT INTO teams (id, organization_id, name, description, lead_user_id)
@@ -107,10 +115,10 @@ INSERT INTO subprojects (id, project_id, organization_id, name, owner_user_id, c
 VALUES ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Design phase', '22222222-2222-2222-2222-222222222222', 'COST-101', 'phase')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO project_times (user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)
+INSERT INTO project_times (id, user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)
 VALUES
-  ('22222222-2222-2222-2222-222222222226', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'dddddddd-dddd-dddd-dddd-dddddddddddd', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours', 'Homepage hero'),
-  ('22222222-2222-2222-2222-222222222226', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day' + INTERVAL '90 minutes', 'Bugfix')
+  ('99999999-9999-9999-9999-111111111111', '22222222-2222-2222-2222-222222222226', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'dddddddd-dddd-dddd-dddd-dddddddddddd', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours', 'Homepage hero'),
+  ('99999999-9999-9999-9999-222222222222', '22222222-2222-2222-2222-222222222226', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'cccccccc-cccc-cccc-cccc-cccccccccccc', NULL, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day' + INTERVAL '90 minutes', 'Bugfix')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO static_data (organization_id, entity, enum_name, "values", translation)
@@ -134,14 +142,15 @@ VALUES
   (NULL, 'users', 'countries', $wtjson${"CH":"Switzerland","DE":"Germany","FR":"France","IT":"Italy","AT":"Austria","LI":"Liechtenstein","ES":"Spain","PT":"Portugal","GB":"United Kingdom","US":"United States","CZ":"Czechia","SK":"Slovakia","PL":"Poland","OTHER":"Others"}$wtjson$::jsonb, $wtjson${"en":{"CH":"Switzerland","DE":"Germany","FR":"France","IT":"Italy","AT":"Austria","LI":"Liechtenstein","ES":"Spain","PT":"Portugal","GB":"United Kingdom","US":"United States","CZ":"Czechia","SK":"Slovakia","PL":"Poland","OTHER":"Others"},"de":{"CH":"Schweiz","DE":"Deutschland","FR":"Frankreich","IT":"Italien","AT":"Österreich","LI":"Liechtenstein","ES":"Spanien","PT":"Portugal","GB":"Vereinigtes Königreich","US":"Vereinigte Staaten","CZ":"Tschechien","SK":"Slowakei","PL":"Polen","OTHER":"Andere"},"fr":{"CH":"Suisse","DE":"Allemagne","FR":"France","IT":"Italie","AT":"Autriche","LI":"Liechtenstein","ES":"Espagne","PT":"Portugal","GB":"Royaume-Uni","US":"États-Unis","CZ":"Tchéquie","SK":"Slovaquie","PL":"Pologne","OTHER":"Autres"},"it":{"CH":"Svizzera","DE":"Germania","FR":"Francia","IT":"Italia","AT":"Austria","LI":"Liechtenstein","ES":"Spagna","PT":"Portogallo","GB":"Regno Unito","US":"Stati Uniti","CZ":"Cechia","SK":"Slovacchia","PL":"Polonia","OTHER":"Altri"}}$wtjson$::jsonb)
 ON CONFLICT ((COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid)), entity, enum_name) DO NOTHING;
 
-UPDATE roles SET translations = translations || '{"de":"Administrator"}'::jsonb WHERE id = '00000000-0000-0000-0000-000000000002';
-UPDATE roles SET translations = translations || '{"de":"Manager"}'::jsonb WHERE id = '00000000-0000-0000-0000-000000000006';
-UPDATE roles SET translations = translations || '{"de":"Benutzer"}'::jsonb WHERE id = '00000000-0000-0000-0000-000000000003';
+-- Existing keys win (`default || current`), so a translation edited since is kept.
+UPDATE roles SET translations = '{"de":"Administrator"}'::jsonb || translations WHERE id = '00000000-0000-0000-0000-000000000002';
+UPDATE roles SET translations = '{"de":"Manager"}'::jsonb || translations WHERE id = '00000000-0000-0000-0000-000000000006';
+UPDATE roles SET translations = '{"de":"Benutzer"}'::jsonb || translations WHERE id = '00000000-0000-0000-0000-000000000003';
 
 
 -- Local password identities for the demo users: the password is the email's local part
 -- (admin@acme.com / admin, adam@acme.com / adam, ...). Lets the web login screen sign in
--- without Keycloak. DO UPDATE so re-seeding resets a changed demo password.
+-- without Keycloak. A password someone changed since is kept (reset-seed restores them all).
 INSERT INTO user_identities (user_id, provider, provider_user_id, password_hash)
 VALUES
   ('11111111-1111-1111-1111-111111111111', 'password', 'admin@acme.com', '$2a$10$gcYrx7XI8py9JpaAsobCFOmJ/o0OmzqFES7pwVIi11v/PUIPoktda'),
@@ -152,7 +161,7 @@ VALUES
   ('22222222-2222-2222-2222-222222222226', 'password', 'ulla@acme.com',  '$2a$10$2PPuwC7fbSihPj1JprqLteAABeVc4JbtI7FsugBNEdmoLbGYC5Him'),
   ('22222222-2222-2222-2222-222222222227', 'password', 'ueli@acme.com',  '$2a$10$JJiF5sk1UDoMJ.V4rRWDzOil.oagGttPZh9WKuSob4QsedJ7xWnyq'),
   ('22222222-2222-2222-2222-222222222228', 'password', 'uma@acme.com',   '$2a$10$O3mA43NN4tORWX04scyVVuXR.eH1SF3KkUac5oyyBNHtUsPL537wO')
-ON CONFLICT (provider, provider_user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+ON CONFLICT (provider, provider_user_id) DO NOTHING;
 
 -- Demo-account dropdown on the login screen (GET /auth/demo-accounts, public). Global row.
 -- Key = dropdown order; value = a JSON string {name, user, password}, kept a string so the
