@@ -213,3 +213,84 @@ VALUES
   ('ffffffff-ffff-ffff-ffff-111111111111', 'eeeeeeee-eeee-eeee-eeee-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
   ('ffffffff-ffff-ffff-ffff-111111111111', 'eeeeeeee-eeee-eeee-eeee-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 ON CONFLICT (expense_id) DO NOTHING;
+
+-- Demo work time (attendance, work_times) for every active user, in their oldest organization:
+-- 100 sessions in the previous month and 50 in the current one, on weekdays before today
+-- (Europe/Zurich). Each day holds about 7.5-9 hours of work, split into its sessions (random
+-- lengths), starting between 07:00 and 08:30 with 5-30 minute breaks between sessions.
+-- A month in which the user already has any work time is skipped: that is how an earlier demo
+-- run (or real data) is recognized, so re-seeding never adds a second set or overlaps them.
+-- Times are random, so each fresh database gets different values.
+WITH params AS (
+  SELECT (now() AT TIME ZONE 'Europe/Zurich')::date AS today
+),
+months AS (
+  SELECT v.entries, (date_trunc('month', p.today) + make_interval(months => v.month_offset))::date AS month_start
+  FROM params p
+  CROSS JOIN (VALUES (-1, 100), (0, 50)) AS v(month_offset, entries)
+),
+days AS (
+  SELECT mo.month_start, d::date AS day,
+         (row_number() OVER (PARTITION BY mo.month_start ORDER BY d) - 1)::int AS day_idx,
+         (count(*) OVER (PARTITION BY mo.month_start))::int AS n_days
+  FROM months mo
+  CROSS JOIN params p
+  CROSS JOIN generate_series(mo.month_start, (mo.month_start + INTERVAL '1 month' - INTERVAL '1 day')::date, INTERVAL '1 day') AS d
+  WHERE extract(isodow FROM d) < 6 AND d::date < p.today
+),
+people AS (
+  SELECT DISTINCT ON (m.user_id) m.user_id, m.organization_id
+  FROM organization_memberships m
+  JOIN users u ON u.id = m.user_id AND u.status = 'active'
+  WHERE m.status = 'active'
+  ORDER BY m.user_id, m.joined_at, m.organization_id
+),
+targets AS (
+  SELECT pe.user_id, pe.organization_id, mo.month_start, mo.entries
+  FROM people pe
+  CROSS JOIN months mo
+  WHERE NOT EXISTS (
+    SELECT 1 FROM work_times w
+    WHERE w.user_id = pe.user_id
+      AND w.check_in >= (mo.month_start::timestamp AT TIME ZONE 'Europe/Zurich')
+      AND w.check_in < ((mo.month_start + INTERVAL '1 month')::timestamp AT TIME ZONE 'Europe/Zurich')
+  )
+),
+-- Entry i of a month goes to that month's weekday (i mod weekdays), so sessions spread evenly.
+slots AS (
+  SELECT t.user_id, t.organization_id, d.day, i,
+         0.6 + random() * 0.8 AS weight,
+         5 + floor(random() * 26)::int AS gap_before
+  FROM targets t
+  CROSS JOIN generate_series(0, t.entries - 1) AS i
+  JOIN days d ON d.month_start = t.month_start AND d.day_idx = i % d.n_days
+),
+day_plan AS (
+  SELECT user_id, day,
+         (day + TIME '07:00')::timestamp + make_interval(mins => floor(random() * 91)::int) AS day_start,
+         450 + floor(random() * 91)::int AS total_minutes
+  FROM slots
+  GROUP BY user_id, day
+),
+sessions AS (
+  SELECT s.user_id, s.organization_id, dp.day_start,
+         row_number() OVER w AS n,
+         greatest(15, floor(dp.total_minutes * s.weight / sum(s.weight) OVER (PARTITION BY s.user_id, s.day)))::int AS minutes,
+         s.gap_before,
+         s.day
+  FROM slots s
+  JOIN day_plan dp ON dp.user_id = s.user_id AND dp.day = s.day
+  WINDOW w AS (PARTITION BY s.user_id, s.day ORDER BY s.i)
+),
+timed AS (
+  SELECT user_id, organization_id, minutes,
+         day_start + make_interval(mins => (
+           sum(minutes + CASE WHEN n = 1 THEN 0 ELSE gap_before END)
+             OVER (PARTITION BY user_id, day ORDER BY n) - minutes)::int) AS local_in
+  FROM sessions
+)
+INSERT INTO work_times (user_id, organization_id, check_in, check_out)
+SELECT user_id, organization_id,
+       local_in AT TIME ZONE 'Europe/Zurich',
+       (local_in + make_interval(mins => minutes)) AT TIME ZONE 'Europe/Zurich'
+FROM timed;
