@@ -184,16 +184,25 @@ reset_seed() {
   echo "Public-schema backup saved to $backup_file"
 
   docker stop "$PREFIX-api"
+  # Bring the API back even if a later step fails (set -e), so a failed reset never leaves it down.
+  trap 'docker start "$PREFIX-api" >/dev/null || true' EXIT
   docker exec "$PG" psql -U worktime -d worktime -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION worktime; GRANT ALL ON SCHEMA public TO public;"
 
   "${COMPOSE[@]}" run --rm --build --no-deps migrate
 
   load_seed
 
+  # Sanity check, not exact counts (those change whenever seed.sql or the changelog grows):
+  # demo users, orgs and logins exist, and Keycloak's auth schema was left untouched.
   counts="$(docker exec "$PG" psql -U worktime -d worktime -Atqc "SELECT (SELECT count(*) FROM public.users), (SELECT count(*) FROM public.organizations), (SELECT count(*) FROM public.user_identities WHERE provider = 'password'), (SELECT count(*) FROM public.databasechangelog), (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth')")"
-  test "$counts" = "8|2|3|62|$auth_tables_before"
-  echo "Verified users|organizations|password identities|changesets|auth tables: $counts"
+  echo "users|organizations|password identities|changesets|auth tables: $counts"
+  IFS='|' read -r n_users n_orgs n_logins n_changesets n_auth <<<"$counts"
+  if [ "$n_users" -eq 0 ] || [ "$n_orgs" -eq 0 ] || [ "$n_logins" -eq 0 ] || [ "$n_changesets" -eq 0 ] || [ "$n_auth" != "$auth_tables_before" ]; then
+    echo "reset-seed verification failed" >&2
+    exit 1
+  fi
 
+  trap - EXIT
   docker start "$PREFIX-api"
 }
 
