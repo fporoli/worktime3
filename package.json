@@ -21,14 +21,16 @@
     "dev:web": "node scripts/with-env.mjs dev npm run dev --workspace=@worktime3/web",
     "dev:migrate": "node scripts/with-env.mjs dev npm run db:migrate",
     "dev:seed": "node scripts/with-env.mjs dev npm run db:seed",
-    "dev:introspect": "node scripts/with-env.mjs dev npm run db:introspect",
+    "dev:resetdb": "node scripts/with-env.mjs dev node scripts/reset-db.mjs",
+    "dev:introspect":"node scripts/with-env.mjs dev npm run db:introspect",
     "dev:psql": "node scripts/with-env.mjs dev docker compose -f compose/docker-compose.dev.yml exec pg psql -U worktime worktime",
     "local:up": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml up -d --build",
     "local:down": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml down",
     "local:logs": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml logs -f",
     "local:migrate": "node scripts/with-env.mjs local npm run db:migrate",
     "local:seed": "node scripts/with-env.mjs local npm run db:seed",
-    "local:psql": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml exec pg psql -U worktime worktime"
+    "local:resetdb": "node scripts/with-env.mjs local node scripts/reset-db.mjs",
+    "local:psql":"node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml exec pg psql -U worktime worktime"
   },
   "engines": {
     "node": ">=24"

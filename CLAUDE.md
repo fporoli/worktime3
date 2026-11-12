@@ -23,6 +23,7 @@ npm run dev:web            # Vite on :3001
 npm run dev:migrate        # apply Liquibase changelogs (Docker required)
 npm run dev:introspect     # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
 npm run dev:psql           # psql into the dev database; dev:down / dev:logs
+npm run dev:resetdb        # drop + recreate schema public, migrate, seed (also local:resetdb)
 npm run local:up           # whole stack in Docker (.env.local); local:down / local:seed / local:psql
 ```
 
@@ -53,7 +54,7 @@ returns `{ ok: true, offline: true }`. That looks like success but does nothing.
 Demo logins (from `seed.sql`): every `<name>@acme.com` user's password is `<name>`
 (`admin@acme.com` / `admin`, `marta@acme.com` / `marta`, ...). Acme reporting line:
 Alice manages Admin and Adam; Adam manages Marta, Marco and Uma; Marta manages Ulla
-(also hr); Marco manages Ueli; Uma is also developer. The Login screen's demo-account dropdown (Admin, Manager = Marta, User = Ulla)
+(also hr); Marco manages Ueli; Uma is also developer. The Login screen's demo-account dropdown (Admin, Manager = Marta, HR User = Ulla, User = Ueli)
 come from the global `static_data` row `login`/`demo_accounts` via public
 `GET auth/demo-accounts`; each value is a JSON string `{name, user, password}`.
 
@@ -94,7 +95,8 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   references them), and use `ON CONFLICT DO NOTHING` for rows that migrations
   already insert (system roles, permissions, some `static_data`).
 - To reset a database, drop and recreate the `public` schema, then
-  `db:migrate` and `db:seed`. Don't just truncate: that deletes the reference
+  `db:migrate` and `db:seed` (`npm run dev:resetdb` / `local:resetdb` does all three,
+  localhost only). Don't just truncate: that deletes the reference
   data the migrations insert. Keycloak's tables live in the `auth` schema;
   leave it alone.
 - Regular tables have no `created_at`/`updated_at` columns. Record history

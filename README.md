@@ -264,8 +264,10 @@ the API logs an OFFLINE warning at startup without it.
 | `dev:web` | Vite (http://localhost:3001) |
 | `dev:migrate` / `dev:seed` / `dev:introspect` | database tasks against the dev database |
 | `dev:psql` | psql into the dev database |
+| `dev:resetdb` | **Destructive.** Drop and recreate the dev database's `public` schema, migrate, seed (Keycloak's `auth` schema is kept) |
 | `local:up` / `local:down` / `local:logs` | the whole stack in Docker behind Caddy |
 | `local:migrate` / `local:seed` / `local:psql` | database tasks against the local database |
+| `local:resetdb` | **Destructive.** The same reset for the local database |
 
 To run any other command with an environment loaded:
 `node scripts/with-env.mjs dev <command> [args...]`.
