@@ -35,7 +35,6 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 type Status = 'pending' | 'approved' | 'rejected';
 
-const DEFAULT_ABSENCE_TYPES = ['vacation', 'military_service', 'accident', 'compensation', 'school', 'sickness', 'other'];
 
 interface AbsenceRow {
   id: string;
@@ -87,9 +86,12 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [note, setNote] = useState('');
-  const [absenceType, setAbsenceType] = useState('vacation');
+  const [absenceType, setAbsenceType] = useState('');
   const [halfDay, setHalfDay] = useState(false);
-  const [absenceTypes, setAbsenceTypes] = useState<string[]>(DEFAULT_ABSENCE_TYPES);
+  // All from the absences/absence_type static data row: keys, per-type attributes, labels per locale.
+  const [absenceTypes, setAbsenceTypes] = useState<string[]>([]);
+  const [noApprovalTypes, setNoApprovalTypes] = useState<string[]>([]);
+  const [typeLabels, setTypeLabels] = useState<Record<string, Record<string, string>>>({});
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -117,9 +119,13 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
       const res = await fetch(`${API}/organizations/${orgId}/static-data/absences`, { headers: await authHeaders() });
       const data = await res.json();
       const row = Array.isArray(data) ? data.find((r) => r.enum_name === 'absence_type') : null;
-      const keys = row?.values && typeof row.values === 'object' ? Object.keys(row.values) : null;
-      if (keys && keys.length > 0) setAbsenceTypes(keys);
-    } catch { /* offline fallback */ }
+      const values = row?.values && typeof row.values === 'object' ? (row.values as Record<string, unknown>) : {};
+      const keys = Object.keys(values);
+      setAbsenceTypes(keys);
+      setNoApprovalTypes(keys.filter((k) => (values[k] as { approval?: unknown } | null)?.approval === false));
+      setTypeLabels(row?.translation && typeof row.translation === 'object' ? row.translation : {});
+      setAbsenceType((current) => (keys.includes(current) ? current : (keys[0] ?? '')));
+    } catch { /* offline: no types */ }
   }
 
   useEffect(() => {
@@ -145,9 +151,13 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
     }
   }
 
+  /** The static data label in the current language (else English), else a built-in translation, else the key. */
   function typeLabel(type: string): string {
-    const known = DEFAULT_ABSENCE_TYPES.includes(type);
-    return known ? t(`absences.type.${type}`) : type;
+    const fromData = typeLabels[locale]?.[type] ?? typeLabels.en?.[type];
+    if (fromData) return fromData;
+    const key = `absences.type.${type}`;
+    const builtIn = t(key);
+    return builtIn !== key ? builtIn : type;
   }
 
   async function submit() {
@@ -189,11 +199,11 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
           setError(t('absences.uploadFailed', { error: 'offline' }));
         }
       }
-      setSuccess(data.autoApproved ? t('absences.autoApproved') : t('absences.submitted'));
+      setSuccess(data.managerNotified ? t('absences.recorded') : data.autoApproved ? t('absences.autoApproved') : t('absences.submitted'));
       setDateStart('');
       setDateEnd('');
       setNote('');
-      setAbsenceType('vacation');
+      setAbsenceType(absenceTypes[0] ?? '');
       setHalfDay(false);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -309,10 +319,17 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
             label={t('absences.type')}
             value={absenceType}
             onChange={(e) => setAbsenceType(e.target.value)}
+            helperText={noApprovalTypes.includes(absenceType) ? t('absences.noApprovalHint') : undefined}
+            slotProps={{ select: { renderValue: (value) => typeLabel(value as string) } }}
             sx={{ minWidth: 170 }}
           >
             {absenceTypes.map((type) => (
-              <MenuItem key={type} value={type}>{typeLabel(type)}</MenuItem>
+              <MenuItem key={type} value={type} sx={{ display: 'flex', justifyContent: 'space-between', gap: 3 }}>
+                <span>{typeLabel(type)}</span>
+                <Typography variant="caption" color={noApprovalTypes.includes(type) ? 'info.main' : 'text.secondary'}>
+                  {noApprovalTypes.includes(type) ? t('absences.path.notify') : t('absences.path.approval')}
+                </Typography>
+              </MenuItem>
             ))}
           </TextField>
           {isSingleDay && (
@@ -326,7 +343,7 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
             {file ? file.name : t('absences.attachDocument')}
             <input ref={fileInputRef} type="file" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </Button>
-          <Button type="submit" variant="contained" sx={{ height: 40 }}>{t('absences.request')}</Button>
+          <Button type="submit" variant="contained" sx={{ height: 40 }}>{noApprovalTypes.includes(absenceType) ? t('absences.record') : t('absences.request')}</Button>
         </Box>
       </Paper>
 

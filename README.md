@@ -390,6 +390,7 @@ server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
 | `KEYCLOAK_ADMIN_PASSWORD` | |
 | `API_JWT_SECRET` | |
 | `SMTP_PASSWORD` | Optional |
+| `GEMINI_API_KEY` or `OPENAI_API_KEY` | Optional, turns on the AI assistant (Gemini wins if both are set) |
 | `GHCR_TOKEN` | Optional, `read:packages`, only for private images |
 
 **Variables**
@@ -404,6 +405,7 @@ server or another one: production (`wt`), `preprod` (`wtpp`) and `test`
 | `SHOW_DEMO_ACCOUNTS` | Optional, `true`/`false` |
 | `GHCR_USERNAME` | Optional |
 | `SMTP_HOST/PORT/FROM/USER/SECURE` | Optional |
+| `GEMINI_MODEL`, `OPENAI_MODEL` | Optional, the assistant's model (defaults `gemini-3.6-flash` / `gpt-4o-mini`) |
 | `MAIL_SUB` | Optional, publishes the instance's Mailpit inbox at `<MAIL_SUB>.<DOMAIN>` |
 | `PORTAINER_SUB` | Optional, Portainer hostname `<PORTAINER_SUB>.<DOMAIN>`, default `portainer`. Set it per server when servers share a `DOMAIN`, e.g. `portainerpp`. |
 
@@ -467,6 +469,10 @@ Then connect a normal client to `localhost:5434` as role `worktime`, database
 
 The `azure` GitHub Environment uses the same names as `azure.yml` lists
 (`AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID`, `POSTGRES_PASSWORD`, …).
+For the AI assistant, add the secret `GEMINI_API_KEY` (or `OPENAI_API_KEY`) and
+optionally the variable `GEMINI_MODEL` / `OPENAI_MODEL`; they reach the API when
+`azure.yml` provisions the apps (`azure-deploy` only swaps images, so rerun the
+apps phase after adding them).
 Environment values override repo-level ones, so existing repo secrets keep
 working until you move them.
 

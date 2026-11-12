@@ -94,7 +94,7 @@ test('brandingForLog replaces the logo by its length', () => {
 test('seeded branding is valid and its logos match infra/postgres/seeds/branding/*.svg', () => {
   const seedDir = join(__dirname, '../../infra/postgres/seeds');
   const seed = readFileSync(join(seedDir, 'seed.sql'), 'utf8');
-  const rows = [...seed.matchAll(/\('([0-9a-f-]{36})', \$wtjson\$(\{"headerColor".*?\})\$wtjson\$\)/g)];
+  const rows = [...seed.matchAll(/\('([0-9a-f-]{36})', '(\{"headerColor".*?\})'\)/g)];
   assert.equal(rows.length, 2, 'Acme and Globx branding rows');
   const logos: Record<string, string> = { 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa': 'acme.svg', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee': 'globx.svg' };
   for (const [, orgId, json] of rows) {

@@ -45,6 +45,7 @@ install_files() {
 
 # Values are single-quoted so compose does not interpolate `$`; they must not contain a
 # single quote. SMTP_* may be empty: the compose file falls back to the instance's Mailpit.
+# GEMINI_*/OPENAI_* may be empty: the assistant is then off.
 write_app_env() {
   export REALM_FILE="$ROOT/rendered/realm-worktime.json" CONTAINER_PREFIX="$PREFIX" \
     PG_PORT WEB_HOST API_HOST AUTH_HOST
@@ -52,6 +53,7 @@ write_app_env() {
     umask 077
     for name in POSTGRES_PASSWORD KEYCLOAK_ADMIN KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET \
       SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USER SMTP_PASSWORD SMTP_SECURE SHOW_DEMO_ACCOUNTS \
+      GEMINI_API_KEY GEMINI_MODEL OPENAI_API_KEY OPENAI_MODEL \
       REALM_FILE CONTAINER_PREFIX PG_PORT WEB_HOST API_HOST AUTH_HOST; do
       printf "%s='%s'\n" "$name" "$(printenv "$name" || true)"
     done > "$ROOT/compose/.env"

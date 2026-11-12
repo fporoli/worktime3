@@ -309,6 +309,20 @@ EOF
         value: \"$SMTP_PASSWORD\""
     smtp_env="          - { name: SMTP_PASSWORD, secretRef: smtp-password }"
   fi
+  # AI assistant, optional: each key is wired only when set (no key = assistant off).
+  local ai_secret="" ai_env=""
+  if [ -n "${GEMINI_API_KEY:-}" ]; then
+    ai_secret="      - name: gemini-api-key
+        value: \"$GEMINI_API_KEY\""
+    ai_env="          - { name: GEMINI_API_KEY, secretRef: gemini-api-key }"
+  fi
+  if [ -n "${OPENAI_API_KEY:-}" ]; then
+    ai_secret="${ai_secret:+$ai_secret
+}      - name: openai-api-key
+        value: \"$OPENAI_API_KEY\""
+    ai_env="${ai_env:+$ai_env
+}          - { name: OPENAI_API_KEY, secretRef: openai-api-key }"
+  fi
   { spec_head; cat <<EOF
     activeRevisionsMode: Single
     secrets:
@@ -319,6 +333,7 @@ EOF
       - name: api-jwt-secret
         value: "$API_JWT_SECRET"
 $smtp_secret
+$ai_secret
     ingress: { external: true, targetPort: 8000, transport: auto, allowInsecure: false }
   template:
     containers:
@@ -339,7 +354,10 @@ $smtp_secret
           - { name: SMTP_FROM, value: "${SMTP_FROM:-worktime@localhost}" }
           - { name: SMTP_USER, value: "${SMTP_USER:-}" }
           - { name: SMTP_SECURE, value: "${SMTP_SECURE:-false}" }
+          - { name: GEMINI_MODEL, value: "${GEMINI_MODEL:-}" }
+          - { name: OPENAI_MODEL, value: "${OPENAI_MODEL:-}" }
 $smtp_env
+$ai_env
         volumeMounts:
           - { volumeName: documents, mountPath: /data/documents }
     # One replica: the notifications WebSocket gateway only reaches sockets in its own process.
@@ -453,7 +471,7 @@ EOF
 }
 
 # gh reads each secret from stdin, so no value ends up on a command line. GitHub rejects
-# empty values, which is also what leaves the optional SMTP settings unset.
+# empty values, which is also what leaves the optional SMTP and assistant settings unset.
 secrets() {
   require GITHUB_REPOSITORY LOCATION RESOURCE_GROUP PG_SERVER_NAME DOCS_STORAGE_ACCOUNT \
     GHCR_USERNAME GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET
@@ -461,14 +479,14 @@ secrets() {
   # Config lives in the `azure` GitHub Environment (the workflows declare it). Creating it
   # is idempotent; the secrets and variables below are scoped to it, not the whole repo.
   gh api -X PUT "repos/$GITHUB_REPOSITORY/environments/azure" --silent
-  for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET SMTP_PASSWORD; do
+  for name in GHCR_TOKEN POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD API_JWT_SECRET SMTP_PASSWORD GEMINI_API_KEY OPENAI_API_KEY; do
     [ -z "${!name:-}" ] || printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY" --env azure
   done
   gh variable set AZURE_RESOURCE_GROUP --repo "$GITHUB_REPOSITORY" --env azure --body "$RESOURCE_GROUP"
   gh variable set AZURE_LOCATION --repo "$GITHUB_REPOSITORY" --env azure --body "$LOCATION"
   gh variable set AZURE_PG_SERVER_NAME --repo "$GITHUB_REPOSITORY" --env azure --body "$PG_SERVER_NAME"
   gh variable set AZURE_DOCS_STORAGE_ACCOUNT --repo "$GITHUB_REPOSITORY" --env azure --body "$DOCS_STORAGE_ACCOUNT"
-  for name in GHCR_USERNAME KEYCLOAK_ADMIN SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USER SMTP_SECURE; do
+  for name in GHCR_USERNAME KEYCLOAK_ADMIN SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USER SMTP_SECURE GEMINI_MODEL OPENAI_MODEL; do
     [ -z "${!name:-}" ] || gh variable set "$name" --repo "$GITHUB_REPOSITORY" --env azure --body "${!name}"
   done
   echo "  GitHub secrets and variables set in environment azure"

@@ -11,7 +11,7 @@ import type { AuthenticatedRequest } from '../../apps/api/src/types';
 /**
  * `chainRows[n]` is the row set returned by the (n+1)th `db.select(...)...` call that resolves
  * without an explicit `.orderBy()` (e.g. `resolveAbsenceTypes`'s `static_data` lookup) — `[]` by
- * default (no org override, so callers fall back to the built-in absence types).
+ * default (no static_data row, so the org has no absence types).
  */
 function createMockDb(executeHandler: (query: unknown) => Promise<{ rows: any[] }>, chainRows: any[][] = []) {
   let chainCallIndex = 0;
@@ -114,7 +114,7 @@ test('AbsencesController.submit rejects half-day on a multi-day range', async ()
 test('AbsencesController.submit rejects an absence type the org does not recognize', async () => {
   const mockDb = createMockDb(
     async () => ({ rows: [{ name: 'member' }] }),
-    [[]], // resolveAbsenceTypes: no static_data override -> falls back to the built-in defaults
+    [[{ organization_id: null, values: { vacation: {}, sickness: { approval: false } } }]], // resolveAbsenceTypes: the global row
   );
   const controller = makeController(mockDb);
   const req: AuthenticatedRequest = { user: { kind: 'local', sub: 'employee-1' } } as any;
@@ -137,4 +137,16 @@ test('touchesLockedPeriod checks every month the absence touches', async () => {
   checked.length = 0;
   assert.equal(await touchesLockedPeriod(db, 'org-1', 'user-1', '2026-11-25', '2026-12-03'), true);
   assert.deepEqual(checked, ['2026-11-25', '2026-12-01']);
+});
+
+test('absenceNeedsApproval: only {approval: false} skips the manager', async () => {
+  const { absenceNeedsApproval } = await import('../../apps/api/src/absence-types');
+  const values = { vacation: {}, sickness: { approval: false }, accident: { approval: true }, other: 'Other', school: null };
+  assert.equal(absenceNeedsApproval(values, 'vacation'), true);
+  assert.equal(absenceNeedsApproval(values, 'sickness'), false);
+  assert.equal(absenceNeedsApproval(values, 'accident'), true);
+  // Legacy label strings, null and unknown types keep the approval step.
+  assert.equal(absenceNeedsApproval(values, 'other'), true);
+  assert.equal(absenceNeedsApproval(values, 'school'), true);
+  assert.equal(absenceNeedsApproval(values, 'missing'), true);
 });

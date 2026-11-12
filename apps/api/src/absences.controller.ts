@@ -12,14 +12,19 @@ import { absences, static_data, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
 import { WorkflowsService, APPROVE_ABSENCE_WORKFLOW_NAME } from './workflows.service';
-import { DEFAULT_ABSENCE_TYPES } from './absence-types';
+import { absenceNeedsApproval } from './absence-types';
+import { NotificationsService } from './notifications.service';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
 
 const STATUSES = ['pending', 'approved', 'rejected'] as const;
 type Status = (typeof STATUSES)[number];
 
-/** The org's allowed absence_type keys — its own static_data override if set, else global (`organization_id IS NULL`), else built-in defaults. */
-async function resolveAbsenceTypes(db: Db, orgId: string): Promise<Set<string>> {
+/**
+ * The org's absence types as the static_data `values` object (type key -> attributes such as
+ * `{approval: false}`): its own override if set, else the global row (`organization_id IS NULL`).
+ * No row means no types.
+ */
+async function resolveAbsenceTypes(db: Db, orgId: string): Promise<Record<string, unknown>> {
   const rows = await db
     .select({ organization_id: static_data.organization_id, values: static_data.values })
     .from(static_data)
@@ -31,8 +36,8 @@ async function resolveAbsenceTypes(db: Db, orgId: string): Promise<Set<string>> 
       ),
     );
   const picked = rows.find((r) => r.organization_id === orgId) ?? rows.find((r) => r.organization_id === null);
-  if (picked?.values && typeof picked.values === 'object') return new Set(Object.keys(picked.values as Record<string, unknown>));
-  return new Set(DEFAULT_ABSENCE_TYPES);
+  if (picked?.values && typeof picked.values === 'object' && !Array.isArray(picked.values)) return picked.values as Record<string, unknown>;
+  return {};
 }
 
 /** Whether any day of `[dateStart, dateEnd]` lies in a submitted or approved timesheet month. */
@@ -51,6 +56,7 @@ export class AbsencesController implements OnModuleInit {
     private readonly versions: VersionsService,
     private readonly workflowsSvc: WorkflowsService,
     private readonly documents: DocumentsService,
+    private readonly notifications?: NotificationsService,
   ) {}
 
   /** Absences own what "absence.*" workflow actions actually do, and how to resolve an absences row's organization. */
@@ -94,7 +100,8 @@ export class AbsencesController implements OnModuleInit {
     const halfDay = body.halfDay === true;
     if (halfDay && dateEnd !== dateStart) return { ok: false, error: 'half-day-requires-single-day' };
     const absenceType = (body.absenceType ?? 'vacation').trim() || 'vacation';
-    if (!(await resolveAbsenceTypes(db, orgId)).has(absenceType)) return { ok: false, error: 'invalid-absence-type' };
+    const types = await resolveAbsenceTypes(db, orgId);
+    if (!Object.hasOwn(types, absenceType)) return { ok: false, error: 'invalid-absence-type' };
 
     // Range overlap: an existing pending/approved request overlaps [dateStart, dateEnd] when
     // its own start is on or before our end, and its own end is on or after our start.
@@ -116,7 +123,9 @@ export class AbsencesController implements OnModuleInit {
 
     const now = new Date().toISOString();
     const managerUserId = await membershipManagerId(db, orgId, callerId);
-    const autoApproved = !managerUserId;
+    // Without a manager, or for a type flagged {approval: false} in static data, there's nobody to ask.
+    const needsApproval = absenceNeedsApproval(types, absenceType);
+    const autoApproved = !managerUserId || !needsApproval;
     const reviewFields = autoApproved
       ? { status: 'approved' as const, reviewed_by_user_id: callerId, reviewed_at: now }
       : { status: 'pending' as const, reviewed_by_user_id: null, reviewed_at: null };
@@ -148,11 +157,30 @@ export class AbsencesController implements OnModuleInit {
         assignedToUserId: [managerUserId],
         workflowData: { note: note || null },
         actorUserId: callerId,
-        notification: { title: 'New vacation request to review', body: note || undefined },
+        notification: { title: 'New absence request to review', body: note || undefined },
       });
     }
 
-    return { ok: true, id: created.id, autoApproved };
+    if (autoApproved && managerUserId && this.notifications) {
+      // Recorded without approval: the manager still needs to know.
+      const [person] = await db.select({ name: users.display_name, email: users.email }).from(users).where(eq(users.id, callerId));
+      const who = person?.name || person?.email || 'Someone';
+      const range = dateStart === dateEnd ? dateStart : `${dateStart} – ${dateEnd}`;
+      void this.notifications
+        .notifyMany({
+          organizationId: orgId,
+          recipientUserIds: [managerUserId],
+          type: 'absence.recorded',
+          title: `${who} reported an absence: ${absenceType}`,
+          body: [range + (halfDay ? ' (half day)' : ''), note].filter(Boolean).join('\n'),
+          sourceTable: 'absences',
+          sourceTableUuid: created.id,
+          data: { absenceId: created.id, userId: callerId, absenceType, dateStart, dateEnd, halfDay },
+        })
+        .catch((err) => console.error('notify-absence-recorded-failed', err));
+    }
+
+    return { ok: true, id: created.id, autoApproved, managerNotified: autoApproved && !!managerUserId };
   }
 
   @Get('organizations/:orgId/absences')

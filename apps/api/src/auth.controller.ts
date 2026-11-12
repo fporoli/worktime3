@@ -8,7 +8,6 @@ import * as bcrypt from 'bcryptjs';
 import { users, user_identities, organizations, organization_memberships, organization_invitations, roles, membership_roles, static_data } from './db/schema';
 import { pickPrimaryRole } from './access';
 import { VersionsService } from './versions.service';
-import { ABSENCE_TYPE_STATIC_DATA } from './absence-types';
 
 /**
  * Auth: Keycloak is the IdP (same Postgres DB, `auth` schema).
@@ -192,9 +191,8 @@ export class AuthController {
         .values({ organization_id: org.id, user_id: uid, status: 'active' })
         .returning({ id: organization_memberships.id });
       await tx.insert(membership_roles).values({ membership_id: membership.id, role_id: OWNER_ROLE_ID });
-      // Seed the absence-type static data so the Vacation screen has options right away.
-      // Global user options (`locales`, `countries` with `organization_id = null`) are inherited automatically.
-      await tx.insert(static_data).values({ organization_id: org.id, ...ABSENCE_TYPE_STATIC_DATA });
+      // Static data (absence types, `locales`, `countries`) is inherited from the global rows
+      // (`organization_id = null`); an org gets its own copy only when it customizes one.
       return { u, orgId: org.id, membershipId: membership.id, slug: workspaceSlug };
     });
 

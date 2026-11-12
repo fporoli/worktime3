@@ -100,6 +100,12 @@ services:
       # falling back to the insecure hardcoded dev secret — set a real random value.
       API_JWT_SECRET: ${API_JWT_SECRET:?required}
       APP_BASE_URL: https://${WEB_HOST:?required}
+      # AI assistant: one pair from the GitHub Environment (GEMINI wins if both are set);
+      # none = the assistant answers assistant-not-configured.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       # Defaults to this instance's Mailpit catcher — override via compose/.env (the SMTP_*
       # variables of the GitHub Environment) to point at a real relay instead.
       SMTP_HOST: ${SMTP_HOST:-${CONTAINER_PREFIX:?required}-mailpit}

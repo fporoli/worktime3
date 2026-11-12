@@ -27,6 +27,15 @@ export function keycloakIssuer(): string {
   return process.env.JWT_ISSUER ?? 'http://localhost:8091/realms/worktime';
 }
 
+/**
+ * Where to download the realm's signing keys. Defaults to the issuer's certs endpoint;
+ * JWT_JWKS_URL overrides it when the API reaches Keycloak at another address than browsers do
+ * (e.g. `http://keycloak:8080/...` inside Docker, while tokens say `http://localhost:8092/...`).
+ */
+export function keycloakJwksUrl(): string {
+  return process.env.JWT_JWKS_URL || `${keycloakIssuer()}/protocol/openid-connect/certs`;
+}
+
 export function keycloakAudience(): string {
   return process.env.JWT_AUDIENCE ?? 'worktime-web';
 }
@@ -93,7 +102,7 @@ export function resetJwksCache() {
 
 async function getJwks(): Promise<Jwk[]> {
   if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS) return jwksCache.keys;
-  const res = await fetch(`${keycloakIssuer()}/protocol/openid-connect/certs`);
+  const res = await fetch(keycloakJwksUrl());
   if (!res.ok) throw new Error(`jwks-fetch-failed:${res.status}`);
   const data = (await res.json()) as { keys?: Jwk[] };
   jwksCache = { keys: data.keys ?? [], fetchedAt: Date.now() };

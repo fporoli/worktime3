@@ -4,11 +4,13 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   LinearProgress,
@@ -44,7 +46,7 @@ interface StaticDataRow {
   entity: string;
   entity_uuid: string | null;
   enum_name: string;
-  values: Record<string, string>;
+  values: Record<string, unknown>;
   translation: Record<string, Record<string, string>>;
 }
 
@@ -52,12 +54,26 @@ interface KV {
   rowId: number;
   key: string;
   label: string;
+  /** Set when the value is an attribute object (e.g. absence types: `{"approval": false}`) instead of a label. */
+  attrs: Record<string, unknown> | null;
 }
 
-function kvListToValues(list: KV[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const { key, label } of list) {
-    if (key.trim()) out[key.trim()] = label;
+type Attributes = Record<string, unknown>;
+
+function isAttributes(value: unknown): value is Attributes {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Absence types map each key to attributes; their labels live in the translations. */
+function isAbsenceTypes(entity: string, enumName: string): boolean {
+  return entity.trim() === 'absences' && enumName.trim() === 'absence_type';
+}
+
+/** `attributeRow`: every value is an attribute object; otherwise each value is its label. */
+function kvListToValues(list: KV[], attributeRow: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const { key, label, attrs } of list) {
+    if (key.trim()) out[key.trim()] = attributeRow ? (attrs ?? {}) : label;
   }
   return out;
 }
@@ -112,14 +128,17 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
   const [enumEntity, setEnumEntity] = useState('');
   const [enumName, setEnumName] = useState('');
   const [deletingEnum, setDeletingEnum] = useState<StaticDataRow | null>(null);
-  const [enumKvList, setEnumKvList] = useState<KV[]>([{ rowId: 0, key: '', label: '' }]);
+  const [enumKvList, setEnumKvList] = useState<KV[]>([{ rowId: 0, key: '', label: '', attrs: null }]);
   const [enumTranslations, setEnumTranslations] = useState<Record<string, Record<string, string>>>({});
   const [translationLocale, setTranslationLocale] = useState<Locale>('de');
   const [kvFilter, setKvFilter] = useState('');
+  const absenceTypesRow = isAbsenceTypes(enumEntity, enumName);
+  const attributeRow = absenceTypesRow || enumKvList.some((kv) => kv.attrs !== null);
 
-  function makeKv(key = '', label = ''): KV {
+  function makeKv(key = '', value: unknown = '', attributeRow = false): KV {
     nextRowId.current += 1;
-    return { rowId: nextRowId.current, key, label };
+    if (isAttributes(value)) return { rowId: nextRowId.current, key, label: '', attrs: value };
+    return { rowId: nextRowId.current, key, label: value == null ? '' : String(value), attrs: attributeRow ? {} : null };
   }
 
   async function reloadEnums() {
@@ -161,8 +180,9 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
     setDialogScope(row.organization_id === null ? 'global' : 'org');
     setEnumEntity(row.entity);
     setEnumName(row.enum_name);
-    const list = Object.entries(row.values).map(([k, v]) => makeKv(k, v));
-    setEnumKvList(list.length > 0 ? list : [makeKv()]);
+    const attributeRow = isAbsenceTypes(row.entity, row.enum_name) || Object.values(row.values).some(isAttributes);
+    const list = Object.entries(row.values).map(([k, v]) => makeKv(k, v, attributeRow));
+    setEnumKvList(list.length > 0 ? list : [makeKv('', '', attributeRow)]);
     setEnumTranslations(row.translation ?? {});
     setKvFilter('');
     setDialogError(null);
@@ -174,8 +194,9 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
     setDialogScope('org');
     setEnumEntity(row.entity);
     setEnumName(row.enum_name);
-    const list = Object.entries(row.values).map(([k, v]) => makeKv(k, v));
-    setEnumKvList(list.length > 0 ? list : [makeKv()]);
+    const attributeRow = isAbsenceTypes(row.entity, row.enum_name) || Object.values(row.values).some(isAttributes);
+    const list = Object.entries(row.values).map(([k, v]) => makeKv(k, v, attributeRow));
+    setEnumKvList(list.length > 0 ? list : [makeKv('', '', attributeRow)]);
     setEnumTranslations(row.translation ?? {});
     setKvFilter('');
     setDialogError(null);
@@ -186,9 +207,20 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
     setEnumKvList((prev) => prev.map((kv) => (kv.rowId === rowId ? { ...kv, [field]: value } : kv)));
   }
 
+  /** Absence types: `approval: false` is stored only when the type needs no approval. */
+  function updateApproval(rowId: number, needsApproval: boolean) {
+    setEnumKvList((prev) =>
+      prev.map((kv) => {
+        if (kv.rowId !== rowId) return kv;
+        const { approval: _approval, ...rest } = kv.attrs ?? {};
+        return { ...kv, attrs: needsApproval ? rest : { ...rest, approval: false } };
+      }),
+    );
+  }
+
   function addKvRow() {
     setKvFilter('');
-    setEnumKvList((prev) => [...prev, makeKv()]);
+    setEnumKvList((prev) => [...prev, makeKv('', '', attributeRow)]);
   }
 
   function removeKvRow(rowId: number) {
@@ -217,7 +249,7 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
     setError(null);
     setSuccess(null);
     setDialogError(null);
-    const values = kvListToValues(enumKvList);
+    const values = kvListToValues(enumKvList, attributeRow);
     try {
       if (editingEnum) {
         const res = await fetch(`${API}/organizations/${orgId}/static-data/${editingEnum.id}`, {
@@ -276,6 +308,13 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
 
   const globalKeys = new Set(enums.filter((r) => r.organization_id === null).map((r) => rowKey(r.entity, r.enum_name)));
   const orgKeys = new Set(enums.filter((r) => r.organization_id !== null).map((r) => rowKey(r.entity, r.enum_name)));
+
+  /** A table chip: `key: label`, or for attribute values the key plus what is set. */
+  function valuePreview(row: StaticDataRow, key: string, value: unknown): string {
+    if (!isAttributes(value)) return `${key}: ${value}`;
+    if (isAbsenceTypes(row.entity, row.enum_name)) return value.approval === false ? `${key} · ${t('staticdata.noApproval')}` : key;
+    return Object.keys(value).length > 0 ? `${key}: ${JSON.stringify(value)}` : key;
+  }
 
   const normalizedKvFilter = kvFilter.trim().toLowerCase();
   const visibleKvList = normalizedKvFilter
@@ -375,7 +414,7 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                         {visibleEntries.map(([k, v]) => (
-                          <Chip key={k} label={`${k}: ${v}`} size="small" variant="outlined" />
+                          <Chip key={k} label={valuePreview(row, k, v)} size="small" variant="outlined" />
                         ))}
                         {hiddenCount > 0 && (
                           <Chip
@@ -533,7 +572,17 @@ function StaticDataSettings({ orgId, authHeaders }: Omit<AdminSettingsProps, 'ca
             {visibleKvList.map((kv) => (
               <Box key={kv.rowId} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                 <TextField label={t('staticdata.key')} value={kv.key} onChange={(e) => updateKv(kv.rowId, 'key', e.target.value)} size="small" sx={{ flex: 1 }} />
-                <TextField label={t('staticdata.label')} value={kv.label} onChange={(e) => updateKv(kv.rowId, 'label', e.target.value)} size="small" sx={{ flex: 1 }} />
+                {absenceTypesRow ? (
+                  <FormControlLabel
+                    sx={{ flex: 1, m: 0 }}
+                    control={<Checkbox size="small" checked={kv.attrs?.approval !== false} onChange={(e) => updateApproval(kv.rowId, e.target.checked)} />}
+                    label={t('staticdata.needsApproval')}
+                  />
+                ) : attributeRow ? (
+                  <TextField label={t('staticdata.attributes')} value={JSON.stringify(kv.attrs ?? {})} size="small" disabled sx={{ flex: 1 }} />
+                ) : (
+                  <TextField label={t('staticdata.label')} value={kv.label} onChange={(e) => updateKv(kv.rowId, 'label', e.target.value)} size="small" sx={{ flex: 1 }} />
+                )}
                 <IconButton size="small" color="error" onClick={() => removeKvRow(kv.rowId)} disabled={enumKvList.length === 1} aria-label={t('staticdata.removeValue')}>
                   <DeleteIcon fontSize="small" />
                 </IconButton>

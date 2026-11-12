@@ -155,7 +155,11 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   through `workflows.service.ts` and create notifications
   (`notifications.service.ts`, which persists rows and pushes over the WS
   gateway at `/ws/notifications`). Admin-editable dropdown vocabularies live
-  in `static_data`. "Basic data" (`basicdata.*`) is personal data with an
+  in `static_data`. Absence types (`absences`/`absence_type`) map each key to
+  attributes instead of a label (labels are in `translation`): `{"approval": false}`
+  (set for sickness and accident in the global row, 047) records the absence as
+  approved and notifies the manager instead of asking. The code keeps no list of
+  types; new orgs inherit the global row. "Basic data" (`basicdata.*`) is personal data with an
   HR change-request/approval history.
 - Work-time model (`packages/shared/src/worktime.ts`, DB side in
   `work-time-model.service.ts`): a person's target per day comes from their

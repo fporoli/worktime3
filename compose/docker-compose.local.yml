@@ -62,6 +62,19 @@ services:
     environment:
       DATABASE_URL: postgresql://worktime:${POSTGRES_PASSWORD:-worktime_dev_only}@pg:5432/worktime
       API_PORT: 8000
+      # Compose passes only what is listed here: values come from .env.local via `npm run local:up`.
+      API_JWT_SECRET: ${API_JWT_SECRET:-}
+      # Keycloak tokens carry the browser's address (via caddy :8092); the API fetches the
+      # signing keys from the keycloak container directly, since localhost here is the API itself.
+      JWT_ISSUER: ${JWT_ISSUER:-http://localhost:8092/realms/worktime}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-worktime-web}
+      JWT_JWKS_URL: http://keycloak:8080/realms/worktime/protocol/openid-connect/certs
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3002}
+      # AI assistant: set one pair in .env.local (GEMINI wins if both are set); unset = assistant off.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       # Local catcher by default (same as the `local` profile's Mailpit) — override
       # SMTP_HOST/PORT/USER/PASSWORD/SECURE/FROM to point at a real relay instead.
       SMTP_HOST: ${SMTP_HOST:-mailpit}

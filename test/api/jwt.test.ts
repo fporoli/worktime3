@@ -133,3 +133,17 @@ test('localSecret throws in production if API_JWT_SECRET is unset', async () => 
     if (origSecret !== undefined) process.env.API_JWT_SECRET = origSecret;
   }
 });
+
+test('keycloakJwksUrl: JWT_JWKS_URL overrides the issuer certs endpoint', async () => {
+  const { keycloakJwksUrl } = await import('../../apps/api/src/jwt');
+  const saved = process.env.JWT_JWKS_URL;
+  try {
+    delete process.env.JWT_JWKS_URL;
+    assert.equal(keycloakJwksUrl(), `${process.env.JWT_ISSUER}/protocol/openid-connect/certs`);
+    process.env.JWT_JWKS_URL = 'http://keycloak:8080/realms/worktime/protocol/openid-connect/certs';
+    assert.equal(keycloakJwksUrl(), 'http://keycloak:8080/realms/worktime/protocol/openid-connect/certs');
+  } finally {
+    if (saved === undefined) delete process.env.JWT_JWKS_URL;
+    else process.env.JWT_JWKS_URL = saved;
+  }
+});
