@@ -31,8 +31,9 @@ import { DesignModeNotice, DesignModeProvider, useDesignAccess } from './designM
 import NotificationBell from './NotificationBell';
 import { useNotifications, type Notification } from './useNotifications';
 import { formatDurationMinutes } from './localeFormat';
-import { grantedScopes, holdsAny, isBasicDataReviewer, seesOthersBasicData } from '@worktime3/shared/permissions';
+import { grantedScopes, holdsAny, holdsBeyondOwn, isBasicDataReviewer, seesOthersBasicData } from '@worktime3/shared/permissions';
 import {
+  AccountBalanceWalletIcon,
   AutoAwesomeIcon,
   BeachAccessIcon,
   CalendarMonthIcon,
@@ -71,6 +72,8 @@ const ExpenseReports = lazy(() => import('./ExpenseReports'));
 const ExpenseProcessing = lazy(() => import('./ExpenseProcessing'));
 const Assistant = lazy(() => import('./Assistant'));
 const TeamHours = lazy(() => import('./TeamHours'));
+const ProjectTimesheet = lazy(() => import('./ProjectTimesheet'));
+const BalanceReport = lazy(() => import('./BalanceReport'));
 const AuditLog = lazy(() => import('./AuditLog'));
 const Users = lazy(() => import('./Users'));
 
@@ -81,6 +84,7 @@ type Section =
   | 'home'
   | 'myData'
   | 'time'
+  | 'projectTimesheet'
   | 'timesheet'
   | 'workTime'
   | 'absences'
@@ -89,6 +93,7 @@ type Section =
   | 'management'
   | 'managementProjects'
   | 'hours'
+  | 'balances'
   | 'invitations'
   | 'approvals'
   | 'users'
@@ -101,12 +106,14 @@ const SECTION_TO_HASH: Record<Section, string> = {
   home: '#/home',
   myData: '#/my-data',
   time: '#/time',
+  projectTimesheet: '#/project-timesheet',
   timesheet: '#/timesheet',
   workTime: '#/work-time',
   absences: '#/absences',
   expenses: '#/expenses',
   expenseReports: '#/expense-reports',
   hours: '#/team-hours',
+  balances: '#/balances',
   approvals: '#/approvals',
   users: '#/users',
   invitations: '#/invitations',
@@ -168,6 +175,7 @@ function resolveRoleFlags(session: Session | null, orgId: string | null): RoleFl
 const SECTION_NAV_OBJECT: Record<Exclude<Section, 'home'>, string> = {
   myData: 'nav.myData',
   time: 'nav.time',
+  projectTimesheet: 'nav.projectTimesheet',
   timesheet: 'nav.timesheet',
   workTime: 'nav.workTime',
   absences: 'nav.absences',
@@ -176,6 +184,7 @@ const SECTION_NAV_OBJECT: Record<Exclude<Section, 'home'>, string> = {
   management: 'nav.management',
   managementProjects: 'nav.management',
   hours: 'nav.teamHours',
+  balances: 'nav.balances',
   invitations: 'nav.invitations',
   approvals: 'nav.approvals',
   users: 'nav.users',
@@ -201,6 +210,7 @@ function isSectionAllowedByRole(sec: Section, flags: RoleFlags): boolean {
     case 'home':
     case 'myData':
     case 'time':
+    case 'projectTimesheet':
     case 'timesheet':
     case 'workTime':
     case 'absences':
@@ -218,6 +228,7 @@ function isSectionAllowedByRole(sec: Section, flags: RoleFlags): boolean {
     case 'management':
     case 'managementProjects':
     case 'hours':
+    case 'balances':
     case 'invitations':
     case 'approvals':
       return flags.canManage;
@@ -559,10 +570,9 @@ export default function App() {
       header: t('nav.myWork'),
       items: [
         { id: 'home', section: 'home', label: t('nav.home'), icon: <DashboardIcon fontSize="small" />, visible: allowed('home') },
-        { id: 'time', section: 'time', label: t('nav.timeTracking'), icon: <ScheduleIcon fontSize="small" />, visible: allowed('time') },
-        { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), icon: <CalendarMonthIcon fontSize="small" />, visible: allowed('timesheet') },
         { id: 'workTime', section: 'workTime', label: t('nav.workTime'), icon: <TimerIcon fontSize="small" />, visible: allowed('workTime') },
         { id: 'absences', section: 'absences', label: t('nav.absences'), icon: <BeachAccessIcon fontSize="small" />, visible: allowed('absences') },
+        { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), icon: <CalendarMonthIcon fontSize="small" />, visible: allowed('timesheet') },
         {
           id: 'myData',
           section: 'myData',
@@ -576,9 +586,17 @@ export default function App() {
       ],
     },
     {
+      header: t('nav.projectTracking'),
+      items: [
+        { id: 'time', section: 'time', label: t('nav.timeTracking'), icon: <ScheduleIcon fontSize="small" />, visible: allowed('time') },
+        { id: 'projectTimesheet', section: 'projectTimesheet', label: t('nav.projectTimesheet'), icon: <WorkspacesIcon fontSize="small" />, visible: allowed('projectTimesheet') },
+      ],
+    },
+    {
       header: t('nav.organization'),
       items: [
         { id: 'hours', section: 'hours', label: t('nav.teamHours'), icon: <GroupIcon fontSize="small" />, visible: allowed('hours') },
+        { id: 'balances', section: 'balances', label: t('nav.balances'), icon: <AccountBalanceWalletIcon fontSize="small" />, visible: allowed('balances') },
         {
           id: 'approvals',
           section: 'approvals',
@@ -833,7 +851,11 @@ export default function App() {
                   userId={session.userId}
                   authHeaders={authHeaders}
                   onReviewResolved={() => void refreshBadges()}
+                  showWorkSchedule={permissions ? holdsAny(permissions, 'section.workTime.schedule') : true}
                 />
+              )}
+              {section === 'projectTimesheet' && allowed('projectTimesheet') && orgId && (
+                <ProjectTimesheet orgId={orgId} authHeaders={authHeaders} />
               )}
               {section === 'time' && allowed('time') && orgId && (
                 <ProjectTime
@@ -851,7 +873,6 @@ export default function App() {
                 <WorkTime
                   orgId={orgId}
                   userId={session.userId}
-                  isAdmin={flags.isAdmin}
                   authHeaders={authHeaders}
                   onWorkTimeChanged={() => setWorkTimeVersion((v) => v + 1)}
                 />
@@ -884,6 +905,9 @@ export default function App() {
               {section === 'hours' && allowed('hours') && orgId && (
                 <TeamHours orgId={orgId} authHeaders={authHeaders} />
               )}
+              {section === 'balances' && allowed('balances') && orgId && (
+                <BalanceReport orgId={orgId} authHeaders={authHeaders} />
+              )}
               {section === 'invitations' && allowed('invitations') && orgId && (
                 <Invitations orgId={orgId} authHeaders={authHeaders} />
               )}
@@ -901,6 +925,7 @@ export default function App() {
                   isAdmin={flags.isAdmin}
                   isHr={flags.isHr}
                   canAccessBasicData={permissions ? seesOthersBasicData(permissions) : flags.isAdmin || flags.isHr}
+                  canSeeWorkSchedules={permissions ? holdsBeyondOwn(permissions, 'section.workTime.schedule', 'see') : flags.isAdmin || flags.isHr || flags.canManage}
                   canManage={flags.canManage}
                   authHeaders={authHeaders}
                 />

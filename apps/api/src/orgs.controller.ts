@@ -46,9 +46,6 @@ const ORG_COLUMNS = {
 /** Default reporting currency when an org hasn't set one in `settings.defaultCurrency` yet. */
 const FALLBACK_DEFAULT_CURRENCY = 'CHF';
 
-/** Default full-day vacation hours when an org hasn't set `settings.maxHoursPerDay` yet. */
-const DEFAULT_MAX_HOURS_PER_DAY = 8;
-
 /**
  * Whether a role may be granted in organization `orgId`: a global role (`organization_id`
  * null) unless the organization has its own copy of it, or one of the organization's roles.
@@ -97,11 +94,9 @@ export class OrgsController {
     const { settings, ...rest } = org;
     const settingsObj = settings as Record<string, unknown> | null;
     const defaultCurrency = settingsObj?.defaultCurrency;
-    const maxHoursPerDay = settingsObj?.maxHoursPerDay;
     return {
       ...rest,
       default_currency: typeof defaultCurrency === 'string' ? defaultCurrency : FALLBACK_DEFAULT_CURRENCY,
-      max_hours_per_day: typeof maxHoursPerDay === 'number' ? maxHoursPerDay : DEFAULT_MAX_HOURS_PER_DAY,
     };
   }
 
@@ -147,7 +142,7 @@ export class OrgsController {
   @Patch(':id')
   async update(
     @Param('id') id: string,
-    @Body() body: { name?: string; avatarUrl?: string | null; defaultCurrency?: string; maxHoursPerDay?: number },
+    @Body() body: { name?: string; avatarUrl?: string | null; defaultCurrency?: string },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
@@ -159,9 +154,6 @@ export class OrgsController {
     if (body.defaultCurrency !== undefined && !/^[A-Za-z]{3}$/.test(body.defaultCurrency)) {
       return { ok: false, error: 'invalid-default-currency' };
     }
-    if (body.maxHoursPerDay !== undefined && !(typeof body.maxHoursPerDay === 'number' && body.maxHoursPerDay > 0 && body.maxHoursPerDay <= 24)) {
-      return { ok: false, error: 'invalid-max-hours-per-day' };
-    }
 
     const patch: Partial<typeof organizations.$inferInsert> = {};
     if (body.name !== undefined) patch.name = body.name.trim();
@@ -170,7 +162,6 @@ export class OrgsController {
     // every other org-level, rarely-queried setting already lives in (see 006-fold-org-settings-and-sso.sql).
     const settingsPatch: Record<string, unknown> = {};
     if (body.defaultCurrency !== undefined) settingsPatch.defaultCurrency = body.defaultCurrency.toUpperCase();
-    if (body.maxHoursPerDay !== undefined) settingsPatch.maxHoursPerDay = body.maxHoursPerDay;
     if (Object.keys(settingsPatch).length > 0) {
       patch.settings = sql`${organizations.settings} || ${JSON.stringify(settingsPatch)}::jsonb`;
     }

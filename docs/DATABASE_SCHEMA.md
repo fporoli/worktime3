@@ -268,26 +268,44 @@ erDiagram
 ```
 
 > One period per `(organization_id, user_id, period_start)` —
-> `uq_timesheet_period`. Work-time writes are rejected once the covering
-> period is `submitted` or `approved`.
+> `uq_timesheet_period`. Work-time and absence writes are rejected once the
+> covering period is `submitted` or `approved`.
+>
+> `project_time_periods` is the project timesheet: one row per
+> `(organization_id, user_id, project_id, period_start)`
+> (`uq_project_time_periods`), with the same statuses, approved by the
+> project's owner. A `submitted` or `approved` row locks that person's
+> project time on that project in that month; the working-time timesheet
+> does not lock project time.
 
-## Attendance & Balances (4 tables)
+## Attendance & Balances (9 tables)
 
 `work_times` is the attendance clock (check-in/check-out stamps) — distinct
 from `project_times`, which tags hours against a project/activity rather
-than recording whether someone was at work at all. Approving a timesheet
-period compares `work_times` sessions in that period against the person's
-contracted hours and posts one row to `work_time_balance_entries`, an
-append-only ledger; `work_time_balances` is the fast-read running total
-maintained alongside it. `absences` (vacation requests, but also sickness,
-military service, etc. — see `absence_type`) feed the same ledger, but only
-when `absence_type = 'vacation'`: the debit is `workingDays × dayHours`
-(halved when `half_day`), where `dayHours` is the org's
-`settings.maxHoursPerDay` (`organizations.settings`, see Identity &
-Organizations above) — a flat org-wide figure, not the requester's own
-contracted hours.
-Other absence types are tracked (and optionally evidenced — see the
-Documents section) but don't move the balance.
+than recording whether someone was at work at all. A person's daily target
+comes from `work_schedules` (minutes per weekday, with history), public
+holidays (the canton in `organizations.settings.holidayRegion` plus
+`org_holidays`) and approved `absences` (see `packages/shared/src/worktime.ts`).
+
+Balances are derived (`apps/api/src/balances.service.ts`). Approving a
+working-time timesheet closes its month: `work_time_months` freezes target,
+attendance, holiday and absence minutes (per absence type), vacation days
+taken and Überzeit (`legal_overtime_minutes`; NULL for months closed before
+046, computed from attendance); reopening the timesheet deletes the row. Months not closed are computed
+live. The overtime balance is the sum of the months' differences plus
+`balance_adjustments` (opening balance, correction, payout; minutes for
+overtime, full-time days for vacation). Überzeit (legal overtime, Swiss ArG) is
+the share of attendance beyond `settings.legalMaxWeeklyMinutes` (45 h default)
+per calendar week; it is part of the overtime balance, tracked as its own
+account against `settings.legalOvertimeYearLimitMinutes` (170 h / 140 h), and
+`legal_overtime` adjustments (e.g. a payout) move both. Vacation is counted in full-time days:
+the yearly entitlement is `settings.vacationDaysPerYear` (default 25) prorated
+by the schedule's workload and the counting start, unless `vacation_entitlements`
+sets that year's days for the person; days taken come from approved
+`vacation` absences; the rest carries over to the next year. Balances count
+from `settings.balancesStartDate`, else from each person's first recorded
+activity. `work_time_balance_entries` / `work_time_balances` are the earlier
+ledger, migrated by 042 and no longer written.
 
 ```mermaid
 erDiagram
@@ -301,6 +319,12 @@ erDiagram
     ORGANIZATIONS ||--o{ WORK_TIME_BALANCE_ENTRIES : "scopes"
     USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "affects"
     USERS ||--o{ WORK_TIME_BALANCE_ENTRIES : "created_by_user_id"
+    USERS ||--o{ WORK_SCHEDULES : "works to"
+    ORGANIZATIONS ||--o{ ORG_HOLIDAYS : "observes"
+    USERS ||--o{ WORK_TIME_MONTHS : "closed month"
+    TIMESHEET_PERIODS ||--o| WORK_TIME_MONTHS : "approval closes"
+    USERS ||--o{ BALANCE_ADJUSTMENTS : "adjusted"
+    USERS ||--o{ VACATION_ENTITLEMENTS : "entitled"
 
     WORK_TIMES {
         uuid id PK
@@ -343,20 +367,60 @@ erDiagram
         text note "nullable"
         uuid created_by_user_id FK "nullable"
     }
+    WORK_SCHEDULES {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        date valid_from
+        numeric workload_percent
+        int_array day_minutes "Mon..Sun"
+    }
+    ORG_HOLIDAYS {
+        uuid id PK
+        uuid organization_id FK
+        date date
+        text name
+        numeric fraction
+        boolean observed "false = canton holiday worked"
+    }
+    WORK_TIME_MONTHS {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        date month
+        uuid timesheet_period_id FK
+        int target_minutes
+        int actual_minutes
+        int delta_minutes
+        jsonb absence_minutes "per absence type"
+        numeric vacation_days
+    }
+    BALANCE_ADJUSTMENTS {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        text balance "overtime | vacation"
+        text kind "opening | correction | payout"
+        date effective_date
+        numeric amount "minutes or days"
+    }
+    VACATION_ENTITLEMENTS {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        int year
+        numeric days
+    }
+    TIMESHEET_PERIODS { uuid id PK }
     ORGANIZATIONS { uuid id PK }
     USERS { uuid id PK }
 ```
 
 > One open session per person at a time, globally — enforced by
 > `uq_work_times_one_open_session`, a unique index on `user_id` where
-> `check_out IS NULL`. `work_time_balances` is a cache: every write to it
-> happens transactionally alongside the ledger row in
-> `work_time_balance_entries` that justifies it (a timesheet approval, an
-> approved vacation, or an admin's manual adjustment) — reopening an
-> approved timesheet period posts an offsetting entry rather than mutating
-> history. Contracted hours (`weeklyTargetMinutes`, defaulting to a 40h
-> week) live in `organization_memberships.settings`, the same free-form
-> bucket documented in Access Control / RBAC above.
+> `check_out IS NULL`. `work_time_months` has one row per
+> `(organization_id, user_id, month)` (`uq_work_time_months`); absences are
+> refused for days in a submitted or approved month, whose numbers are frozen.
 
 ## Documents (1 table)
 

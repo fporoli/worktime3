@@ -21,7 +21,7 @@ async function bootstrap() {
     // eslint-disable-next-line no-console
     console.warn(
       'WARNING: DATABASE_URL is not set — running in OFFLINE mode, nothing is read or written. ' +
-        'Load an environment first: . ./env.dev.sh (Windows: call env.dev.bat)',
+        'Start it with npm run dev:api, or set DATABASE_URL.',
     );
   }
 }

@@ -17,7 +17,9 @@ import {
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 import { useI18n } from './i18n';
-import { formatDurationMinutes } from './localeFormat';
+import { formatDurationMinutes, formatLocaleDate, formatSignedMinutes } from './localeFormat';
+import { holidayName, type Holiday } from '@worktime3/shared/worktime';
+import { formatDays, monthName, type MonthBalance } from './BalancesPanel';
 import { PageHeader } from './components';
 import { ChevronLeftIcon, ChevronRightIcon } from './icons';
 
@@ -48,10 +50,15 @@ interface ReopenRequest {
   finished: string | null;
 }
 
-interface WorkSessionRow {
-  id: string;
-  check_in: string;
-  check_out: string | null;
+interface DayRow {
+  date: string;
+  scheduled: number;
+  holiday: number;
+  absence: number;
+  absenceType?: string;
+  target: number;
+  attended: number;
+  holidayInfo: Holiday | null;
 }
 
 const REOPEN_ERROR_MESSAGES: Record<string, (t: (key: string) => string) => string> = {
@@ -106,7 +113,10 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const { t, locale } = useI18n();
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [monthEntries, setMonthEntries] = useState<Entry[]>([]);
-  const [monthWorkSessions, setMonthWorkSessions] = useState<WorkSessionRow[]>([]);
+  const [days, setDays] = useState<DayRow[]>([]);
+  const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
+  const [monthBalance, setMonthBalance] = useState<MonthBalance | null>(null);
+  const [balanceStart, setBalanceStart] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,14 +143,20 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     const { from, to } = periodRange('month', targetPeriod);
     try {
       const headers = await authHeaders();
-      const [ptRes, wtRes] = await Promise.all([
+      const lastDay = new Date(Date.UTC(Number(targetPeriod.slice(0, 4)), Number(targetPeriod.slice(5, 7)), 0)).toISOString().slice(0, 10);
+      const [ptRes, dayRes, balRes] = await Promise.all([
         fetch(`${API}/organizations/${orgId}/project-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
-        fetch(`${API}/organizations/${orgId}/work-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/day-targets?from=${targetPeriod}&to=${lastDay}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/balances/year?year=${targetPeriod.slice(0, 4)}`, { headers }),
       ]);
       const ptData = await ptRes.json();
-      const wtData = await wtRes.json();
+      const dayData = await dayRes.json();
+      const balData = await balRes.json();
       setMonthEntries(Array.isArray(ptData?.entries) ? ptData.entries : []);
-      setMonthWorkSessions(Array.isArray(wtData?.entries) ? wtData.entries : []);
+      setDays(Array.isArray(dayData?.days) ? dayData.days : []);
+      if (dayData?.today) setToday(dayData.today);
+      setBalanceStart(typeof balData?.start === 'string' ? balData.start : null);
+      setMonthBalance(Array.isArray(balData?.months) ? (balData.months as MonthBalance[]).find((m) => m.month === targetPeriod) ?? null : null);
     } catch { /* offline fallback */ }
   }
 
@@ -216,7 +232,7 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       }
       setSuccess(data.autoApproved ? t('timesheet.autoApproved') : t('timesheet.submitted'));
       setSubmitNote('');
-      await reload();
+      await Promise.all([reload(), reloadMonthSummary(period)]);
     } catch {
       setError(t('timesheet.submitFailedOffline'));
     }
@@ -226,29 +242,17 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
     () => monthEntries.reduce((sum, e) => sum + minutes(e), 0),
     [monthEntries],
   );
-  const totalWorkMinutes = useMemo(
-    () =>
-      monthWorkSessions.reduce((sum, s) => {
-        if (!s.check_out) return sum;
-        return sum + Math.max(0, (new Date(s.check_out).getTime() - new Date(s.check_in).getTime()) / 60000);
-      }, 0),
-    [monthWorkSessions],
-  );
-  const projectBreakdown = useMemo(() => {
-    const map = new Map<string, { label: string; minutes: number; count: number }>();
-    for (const e of monthEntries) {
-      const label = e.project_name
-        ? e.subproject_name
-          ? `${e.project_name} / ${e.subproject_name}`
-          : e.project_name
-        : t('timesheet.unassignedProject');
-      const existing = map.get(label) ?? { label, minutes: 0, count: 0 };
-      existing.minutes += minutes(e);
-      existing.count += 1;
-      map.set(label, existing);
-    }
-    return [...map.values()].sort((a, b) => b.minutes - a.minutes);
-  }, [monthEntries, t]);
+  const pastDays = days.filter((d) => d.date < today);
+  const targetMinutes = days.reduce((sum, d) => sum + d.target, 0);
+  const workedMinutes = days.reduce((sum, d) => sum + d.attended, 0);
+  // Difference only for days already over, so the current month doesn't look short.
+  const differenceMinutes = pastDays.reduce((sum, d) => sum + d.attended - d.target, 0);
+  const monthOver = shiftMonth(period, 1) <= `${today.slice(0, 7)}-01`;
+  const absenceLabel = (type: string | undefined) => {
+    if (!type) return '';
+    const label = t(`absences.type.${type}`);
+    return label === `absences.type.${type}` ? type : label;
+  };
 
   const history = [...periods]
     .filter((p) => p.period_start !== period)
@@ -292,52 +296,139 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
           {t('timesheet.viewing', { period: period.slice(0, 7) })}
         </Typography>
 
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
-            gap: 1.5,
-            mb: 2,
-          }}
-        >
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }, gap: 1.5, mb: 2 }}>
           <Paper variant="outlined" sx={{ p: 1.5 }}>
-            <Typography variant="caption" color="text.secondary">{t('timesheet.projectHours')}</Typography>
-            <Typography variant="h6">{formatDurationMinutes(totalProjectMinutes)}</Typography>
+            <Typography variant="caption" color="text.secondary">{t('timesheet.target')}</Typography>
+            <Typography variant="h6">{formatDurationMinutes(targetMinutes)}</Typography>
           </Paper>
           <Paper variant="outlined" sx={{ p: 1.5 }}>
             <Typography variant="caption" color="text.secondary">{t('timesheet.workHours')}</Typography>
-            <Typography variant="h6">{formatDurationMinutes(totalWorkMinutes)}</Typography>
+            <Typography variant="h6">{formatDurationMinutes(workedMinutes)}</Typography>
           </Paper>
           <Paper variant="outlined" sx={{ p: 1.5 }}>
-            <Typography variant="caption" color="text.secondary">{t('timesheet.entriesCount')}</Typography>
-            <Typography variant="h6">{monthEntries.length}</Typography>
+            <Typography variant="caption" color="text.secondary">{monthOver ? t('timesheet.difference') : t('timesheet.differenceToDate')}</Typography>
+            <Typography variant="h6" color={differenceMinutes < 0 ? 'error.main' : 'success.main'}>{formatSignedMinutes(differenceMinutes)}</Typography>
+          </Paper>
+          <Paper variant="outlined" sx={{ p: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">{t('timesheet.balanceEnd')}</Typography>
+            <Typography variant="h6" color={monthBalance && monthBalance.overtimeBalance < 0 ? 'error.main' : undefined}>
+              {monthBalance && monthBalance.status !== 'before-start' ? formatSignedMinutes(monthBalance.overtimeBalance) : '—'}
+            </Typography>
           </Paper>
         </Box>
 
-        {projectBreakdown.length > 0 && (
-          <Box sx={{ mb: 2.5 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('timesheet.byProject')}</Typography>
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
+        {monthBalance && monthBalance.status !== 'before-start' && (
+          <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+              <Typography variant="subtitle2">{t('timesheet.carry.title')}</Typography>
+              {balanceStart && (
+                <Typography variant="body2" color="text.secondary">{t('timesheet.carry.start', { date: formatLocaleDate(balanceStart, locale) })}</Typography>
+              )}
+            </Box>
+            <Table size="small" sx={{ maxWidth: 640 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell />
+                  <TableCell align="right">{t('timesheet.carry.overtime')}</TableCell>
+                  <TableCell align="right">{t('timesheet.carry.vacation')}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell>{t('timesheet.carry.opening', { month: monthName(shiftMonth(period, -1), locale) })}</TableCell>
+                  <TableCell align="right">{formatSignedMinutes(monthBalance.overtimeOpening)}</TableCell>
+                  <TableCell align="right">{formatDays(monthBalance.vacationOpening, locale)}</TableCell>
+                </TableRow>
+                {monthBalance.vacationCredited !== 0 && (
                   <TableRow>
-                    <TableCell>{t('common.project')}</TableCell>
-                    <TableCell align="right">{t('time.entries')}</TableCell>
-                    <TableCell align="right">{t('approvals.duration')}</TableCell>
+                    <TableCell>{t('timesheet.carry.entitlement', { year: period.slice(0, 4) })}</TableCell>
+                    <TableCell align="right">—</TableCell>
+                    <TableCell align="right">+{formatDays(monthBalance.vacationCredited, locale)}</TableCell>
                   </TableRow>
-                </TableHead>
-                <TableBody>
-                  {projectBreakdown.map((b) => (
-                    <TableRow key={b.label}>
-                      <TableCell>{b.label}</TableCell>
-                      <TableCell align="right">{b.count}</TableCell>
-                      <TableCell align="right">{formatDurationMinutes(b.minutes)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Box>
+                )}
+                <TableRow>
+                  <TableCell>{t('timesheet.carry.month')}</TableCell>
+                  <TableCell align="right" sx={{ color: monthBalance.delta < 0 ? 'error.main' : undefined }}>{formatSignedMinutes(monthBalance.delta)}</TableCell>
+                  <TableCell align="right">
+                    {monthBalance.vacationDays + monthBalance.plannedVacationDays
+                      ? `−${formatDays(monthBalance.vacationDays + monthBalance.plannedVacationDays, locale)}`
+                      : '—'}
+                  </TableCell>
+                </TableRow>
+                {(monthBalance.adjustmentMinutes !== 0 || monthBalance.vacationAdjustmentDays !== 0) && (
+                  <TableRow>
+                    <TableCell>{t('timesheet.carry.adjustments')}</TableCell>
+                    <TableCell align="right">{monthBalance.adjustmentMinutes ? formatSignedMinutes(monthBalance.adjustmentMinutes) : '—'}</TableCell>
+                    <TableCell align="right">
+                      {monthBalance.vacationAdjustmentDays
+                        ? `${monthBalance.vacationAdjustmentDays > 0 ? '+' : ''}${formatDays(monthBalance.vacationAdjustmentDays, locale)}`
+                        : '—'}
+                    </TableCell>
+                  </TableRow>
+                )}
+                <TableRow sx={{ '& td': { fontWeight: 600, borderBottom: 'none' } }}>
+                  <TableCell>{t('timesheet.carry.closing', { month: monthName(period, locale) })}</TableCell>
+                  <TableCell align="right" sx={{ color: monthBalance.overtimeBalance < 0 ? 'error.main' : undefined }}>
+                    {formatSignedMinutes(monthBalance.overtimeBalance)}
+                  </TableCell>
+                  <TableCell align="right" sx={{ color: monthBalance.vacationBalance < 0 ? 'error.main' : undefined }}>
+                    {formatDays(monthBalance.vacationBalance, locale)}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            {!monthOver && (
+              <Typography variant="caption" color="text.secondary">{t('timesheet.carry.note')}</Typography>
+            )}
+          </Paper>
+        )}
+
+        <TableContainer sx={{ mb: 2, maxHeight: 520 }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('timesheet.day')}</TableCell>
+                <TableCell align="right">{t('timesheet.target')}</TableCell>
+                <TableCell align="right">{t('timesheet.workHours')}</TableCell>
+                <TableCell align="right">{t('timesheet.difference')}</TableCell>
+                <TableCell>{t('timesheet.dayNote')}</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {days.map((d) => {
+                const past = d.date < today;
+                const free = d.scheduled === 0;
+                const diff = d.attended - d.target;
+                const notes = [
+                  d.holidayInfo ? holidayName(d.holidayInfo, locale) : '',
+                  d.absence > 0 ? `${absenceLabel(d.absenceType)}${d.absence < d.scheduled - d.holiday ? ` (${t('workTimeSettings.halfDay')})` : ''}` : '',
+                ].filter(Boolean);
+                const [y, m, dd] = d.date.split('-').map(Number);
+                return (
+                  <TableRow key={d.date} sx={{ opacity: free && d.attended === 0 ? 0.5 : 1, bgcolor: d.date === today ? 'action.selected' : undefined }}>
+                    <TableCell>{new Date(y, m - 1, dd).toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })}</TableCell>
+                    <TableCell align="right">{d.target ? formatDurationMinutes(d.target) : '—'}</TableCell>
+                    <TableCell align="right">{d.attended ? formatDurationMinutes(d.attended) : past && d.target ? formatDurationMinutes(0) : '—'}</TableCell>
+                    <TableCell align="right" sx={{ color: past && diff < 0 ? 'error.main' : undefined }}>
+                      {past && (d.target || d.attended) ? formatSignedMinutes(diff) : ''}
+                    </TableCell>
+                    <TableCell>{notes.join(' · ')}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          {t('timesheet.projectInfo', { value: formatDurationMinutes(totalProjectMinutes), count: String(monthEntries.length) })}
+          {monthBalance && monthBalance.vacationDays > 0 && ` · ${t('timesheet.vacationTaken', { value: formatDays(monthBalance.vacationDays, locale) })}`}
+        </Typography>
+
+        {(status === 'open' || status === 'rejected') && (
+          <Alert severity={monthOver ? 'info' : 'warning'} sx={{ mb: 1.5, maxWidth: 900 }}>
+            {monthOver ? t('timesheet.submitExplain') : t('timesheet.submitEarly')}
+          </Alert>
         )}
 
         {(status === 'open' || status === 'rejected') && (

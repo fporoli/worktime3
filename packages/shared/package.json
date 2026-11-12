@@ -30,6 +30,11 @@
       "source": "./src/branding.ts",
       "types": "./dist/branding.d.ts",
       "default": "./dist/branding.js"
+    },
+    "./worktime": {
+      "source": "./src/worktime.ts",
+      "types": "./dist/worktime.d.ts",
+      "default": "./dist/worktime.js"
     }
   }
 }

@@ -38,6 +38,13 @@ FROM (VALUES
 ) AS v(id, branding)
 WHERE o.id = v.id::uuid AND NOT (o.settings ? 'branding');
 
+-- Public holidays follow a canton (organizations.settings.holidayRegion, Organization settings ->
+-- Working time and holidays). Only set while an organization has none.
+UPDATE organizations o
+SET settings = o.settings || jsonb_build_object('holidayRegion', v.region)
+FROM (VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'ZH'), ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'GE')) AS v(id, region)
+WHERE o.id = v.id::uuid AND NOT jsonb_exists(o.settings, 'holidayRegion');
+
 INSERT INTO roles(id, organization_id, "name", description, is_system_role, settings, translations, admin_user_ids) VALUES
   ('00000000-0000-0000-0000-000000000001'::uuid, NULL, 'owner', 'Full organization owner and legal contact', true, '{}'::jsonb, '{}'::jsonb, '{}'),
   ('00000000-0000-0000-0000-000000000002'::uuid, NULL, 'admin', 'Organization administrator', true, '{}'::jsonb, '{}'::jsonb, '{}'),
@@ -120,11 +127,17 @@ VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-3333333
 ON CONFLICT (team_id, membership_id) DO NOTHING;
 
 INSERT INTO projects (id, organization_id, name, owner_user_id, cost_item, type)
-VALUES ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Website Relaunch', '22222222-2222-2222-2222-222222222222', 'COST-100', 'customer')
+VALUES ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Website FIFA Relaunch', '22222222-2222-2222-2222-222222222222', 'COST-100', 'customer'),
+       ('cccccccc-cccc-cccc-cccc-cccccccccccd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Microsoft 365 Intro @ UBS', '22222222-2222-2222-2222-222222222222', 'COST-101', 'customer'),
+       ('cccccccc-cccc-cccc-cccc-ccccccccccce', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Acme Internal Project', '22222222-2222-2222-2222-222222222222', 'COST-102', 'internal')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO subprojects (id, project_id, organization_id, name, owner_user_id, cost_item, type)
-VALUES ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Design phase', '22222222-2222-2222-2222-222222222222', 'COST-101', 'phase')
+VALUES ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Design phase', '22222222-2222-2222-2222-222222222222', 'COST-101', 'phase'),
+       ('dddddddd-dddd-dddd-dddd-ddddddddddd1', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Implementation phase', '22222222-2222-2222-2222-222222222222', 'COST-101', 'phase'),
+       ('dddddddd-dddd-dddd-dddd-ddddddddddd2', 'cccccccc-cccc-cccc-cccc-cccccccccccd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '365 Status Assessment', '22222222-2222-2222-2222-222222222222', 'COST-102', 'phase'),
+       ('dddddddd-dddd-dddd-dddd-ddddddddddd3', 'cccccccc-cccc-cccc-cccc-ccccccccccce', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Novatime Migration', '22222222-2222-2222-2222-222222222222', 'COST-103', 'phase'),
+       ('dddddddd-dddd-dddd-dddd-ddddddddddd4', 'cccccccc-cccc-cccc-cccc-ccccccccccce', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Novatime Replacement', '22222222-2222-2222-2222-222222222222', 'COST-104', 'phase')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO project_times (id, user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)

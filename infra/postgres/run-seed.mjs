@@ -6,12 +6,12 @@
 // its defaults (localhost:5432). Reading the env var in Node sidesteps that.
 import { execFileSync } from 'node:child_process';
 
-// No env-file fallback: load the target environment first (`. ./env.dev.sh`,
-// `call env.dev.bat`, or the .local equivalents) so the seed can't silently
-// hit a different database than intended.
+// No env-file fallback here: run it through `npm run dev:seed` / `local:seed`
+// (scripts/with-env.mjs), or with DATABASE_URL set (CI, VPS), so the seed can't
+// silently hit a different database than intended.
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
-  console.error('DATABASE_URL is not set. Load an environment first: . ./env.dev.sh (Windows: call env.dev.bat)');
+  console.error('DATABASE_URL is not set. Use npm run dev:seed or npm run local:seed, or set DATABASE_URL.');
   process.exit(1);
 }
 

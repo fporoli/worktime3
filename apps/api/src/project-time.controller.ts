@@ -3,7 +3,8 @@ import { and, asc, eq, getTableColumns, gt, gte, lt, ne, type SQL } from 'drizzl
 import { DbService, type Db } from './db.service';
 import { ProjectTimeService } from './project-time.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, canSeeUserData, isOrgMember, isPeriodLocked, reachesAll } from './access';
+import { WorkTimeModelService } from './work-time-model.service';
+import { callerUserId, canSeeUserData, isOrgMember, isProjectPeriodLocked, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { project_times, projects, subprojects, users } from './db/schema';
 
@@ -13,6 +14,7 @@ export class ProjectTimeController {
     private readonly db: DbService,
     private readonly wt: ProjectTimeService,
     private readonly versions: VersionsService,
+    private readonly workTime: WorkTimeModelService,
   ) {}
 
   @Post('organizations/:orgId/project-time')
@@ -27,6 +29,8 @@ export class ProjectTimeController {
       comment?: string;
       /** Set once the user has seen the overlap warning and chose to add it anyway. */
       acknowledgeOverlap?: boolean;
+      /** Set once the user has seen the "more project time than working time" warning and chose to add it anyway. */
+      acknowledgeAttendance?: boolean;
     },
     @Req() req: AuthenticatedRequest,
   ) {
@@ -36,7 +40,8 @@ export class ProjectTimeController {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
     if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
-    if (await isPeriodLocked(db, orgId, userId, body.startTime)) return { ok: false, error: 'period-locked' };
+    // Project time is locked per project and month by the project timesheet, not by the working-time one.
+    if (await isProjectPeriodLocked(db, orgId, userId, body.projectId, body.startTime)) return { ok: false, error: 'period-locked' };
     // Only "ranges" users care about overlap at all — everyone else logs duration-only entries that
     // are expected to share the same 08:00 start, so there's nothing to warn about.
     if (await this.usesProjectTimeRanges(db, userId)) {
@@ -44,6 +49,12 @@ export class ProjectTimeController {
       if (overlaps.length > 0 && !body.acknowledgeOverlap) {
         return { ok: false, error: 'overlapping-entry-confirm', overlaps };
       }
+    }
+    // Project time and attendance are recorded separately, but a day's project time should not
+    // exceed that day's attendance (plus the organization's tolerance): warn, and save on confirmation.
+    if (!body.acknowledgeAttendance) {
+      const check = await this.workTime.checkProjectTime(db, orgId, userId, body.startTime, body.endTime);
+      if (!check.ok) return { ...check, error: 'project-exceeds-attendance-confirm' };
     }
     const values = {
       user_id: userId,
@@ -121,6 +132,8 @@ export class ProjectTimeController {
       comment?: string;
       /** Set once the user has seen the overlap warning and chose to keep it anyway. */
       acknowledgeOverlap?: boolean;
+      /** Set once the user has seen the "more project time than working time" warning and chose to keep it anyway. */
+      acknowledgeAttendance?: boolean;
     },
     @Req() req: AuthenticatedRequest,
   ) {
@@ -129,9 +142,11 @@ export class ProjectTimeController {
     const owned = await this.assertEditableEntry(db, id, req);
     if ('error' in owned) return owned;
 
-    // A locked month can't be edited into either — check the target date too, not just the entry's current one.
-    if (body.startTime !== undefined && body.startTime !== owned.entry.start_time && owned.entry.organization_id) {
-      if (await isPeriodLocked(db, owned.entry.organization_id, owned.userId, body.startTime)) {
+    // A locked project month can't be edited into either: check where the entry ends up, not just where it is.
+    const targetProject = body.projectId !== undefined ? body.projectId || null : owned.entry.project_id;
+    const targetStart = body.startTime ?? owned.entry.start_time;
+    if (owned.entry.organization_id && (targetProject !== owned.entry.project_id || targetStart !== owned.entry.start_time)) {
+      if (await isProjectPeriodLocked(db, owned.entry.organization_id, owned.userId, targetProject, targetStart)) {
         return { ok: false, error: 'period-locked' };
       }
     }
@@ -143,6 +158,18 @@ export class ProjectTimeController {
       if (overlaps.length > 0 && !body.acknowledgeOverlap) {
         return { ok: false, error: 'overlapping-entry-confirm', overlaps };
       }
+    }
+
+    if ((body.startTime !== undefined || body.endTime !== undefined) && owned.entry.organization_id && !body.acknowledgeAttendance) {
+      const check = await this.workTime.checkProjectTime(
+        db,
+        owned.entry.organization_id,
+        owned.userId,
+        body.startTime ?? owned.entry.start_time,
+        body.endTime ?? owned.entry.end_time,
+        id,
+      );
+      if (!check.ok) return { ...check, error: 'project-exceeds-attendance-confirm' };
     }
 
     const patch: Partial<typeof project_times.$inferInsert> = {};
@@ -171,7 +198,7 @@ export class ProjectTimeController {
 
   /**
    * Entries are only editable by the user they belong to, and only outside a
-   * submitted/approved timesheet period. Returns `{error}` when disallowed,
+   * submitted/approved project month (project timesheet). Returns `{error}` when disallowed,
    * or the entry (plus caller id) when the edit may proceed.
    */
   private async assertEditableEntry(
@@ -180,7 +207,7 @@ export class ProjectTimeController {
     req: AuthenticatedRequest,
   ): Promise<
     | { ok: false; error: string }
-    | { userId: string; entry: { organization_id: string | null; start_time: string; end_time: string } }
+    | { userId: string; entry: { organization_id: string | null; project_id: string | null; start_time: string; end_time: string } }
   > {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
@@ -188,6 +215,7 @@ export class ProjectTimeController {
       .select({
         user_id: project_times.user_id,
         organization_id: project_times.organization_id,
+        project_id: project_times.project_id,
         start_time: project_times.start_time,
         end_time: project_times.end_time,
       })
@@ -195,7 +223,7 @@ export class ProjectTimeController {
       .where(eq(project_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
     if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
-    if (row.organization_id && (await isPeriodLocked(db, row.organization_id, userId, row.start_time))) {
+    if (row.organization_id && (await isProjectPeriodLocked(db, row.organization_id, userId, row.project_id, row.start_time))) {
       return { ok: false, error: 'period-locked' };
     }
     return { userId, entry: row };

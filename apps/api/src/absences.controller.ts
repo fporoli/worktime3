@@ -5,12 +5,12 @@ import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Response } from 'express';
 import { DbService, type Db } from './db.service';
-import { callerUserId, canEditBeyondOwn, canSeeUserData, isOrgMember, listableUserIds, membershipManagerId } from './access';
+import { callerUserId, canEditBeyondOwn, canSeeUserData, isOrgMember, isPeriodLocked, listableUserIds, membershipManagerId } from './access';
+import { monthStart, nextMonth } from '@worktime3/shared/worktime';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { absences, static_data, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
 import { VersionsService } from './versions.service';
-import { BalancesService } from './balances.service';
 import { WorkflowsService, APPROVE_ABSENCE_WORKFLOW_NAME } from './workflows.service';
 import { DEFAULT_ABSENCE_TYPES } from './absence-types';
 import { DocumentsService, DOCUMENTS_ROOT, MAX_DOCUMENT_BYTES } from './documents.service';
@@ -35,6 +35,14 @@ async function resolveAbsenceTypes(db: Db, orgId: string): Promise<Set<string>> 
   return new Set(DEFAULT_ABSENCE_TYPES);
 }
 
+/** Whether any day of `[dateStart, dateEnd]` lies in a submitted or approved timesheet month. */
+export async function touchesLockedPeriod(db: Db, orgId: string, userId: string, dateStart: string, dateEnd: string): Promise<boolean> {
+  for (let day = dateStart; day <= dateEnd; day = nextMonth(monthStart(day))) {
+    if (await isPeriodLocked(db, orgId, userId, day)) return true;
+  }
+  return false;
+}
+
 @Controller()
 export class AbsencesController implements OnModuleInit {
   constructor(
@@ -42,7 +50,6 @@ export class AbsencesController implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly versions: VersionsService,
     private readonly workflowsSvc: WorkflowsService,
-    private readonly balances: BalancesService,
     private readonly documents: DocumentsService,
   ) {}
 
@@ -57,7 +64,6 @@ export class AbsencesController implements OnModuleInit {
       const patch = { status: 'approved' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: null };
       await db.update(absences).set(patch).where(eq(absences.id, ctx.sourceTableUuid));
       void this.versions.record('absences', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
-      await this.balances.applyAbsenceApproval(db, ctx.sourceTableUuid, ctx.actorUserId);
     });
 
     this.workflowsSvc.registerAction('absence.reject', async (db, ctx) => {
@@ -105,6 +111,8 @@ export class AbsencesController implements OnModuleInit {
         ),
       );
     if (overlap) return { ok: false, error: 'overlapping-request' };
+    // A submitted or approved timesheet freezes its month's balance; the absence would change it.
+    if (await touchesLockedPeriod(db, orgId, callerId, dateStart, dateEnd)) return { ok: false, error: 'period-locked' };
 
     const now = new Date().toISOString();
     const managerUserId = await membershipManagerId(db, orgId, callerId);
@@ -120,9 +128,7 @@ export class AbsencesController implements OnModuleInit {
       .record(orgId, callerId, autoApproved ? 'absence.submit-auto-approved' : 'absence.submit', 'absence', created.id, { dateStart, dateEnd, absenceType, halfDay, note: note || undefined })
       .catch(() => {});
 
-    if (autoApproved) {
-      await this.balances.applyAbsenceApproval(db, created.id, callerId);
-    } else if (managerUserId) {
+    if (!autoApproved && managerUserId) {
       const definition = await this.workflowsSvc.ensureDefinition(db, orgId, APPROVE_ABSENCE_WORKFLOW_NAME, "A vacation request awaiting the employee's manager to approve or reject it.", [
         {
           key: 'manager_review',

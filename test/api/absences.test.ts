@@ -1,11 +1,10 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { AbsencesController } from '../../apps/api/src/absences.controller';
+import { AbsencesController, touchesLockedPeriod } from '../../apps/api/src/absences.controller';
 import type { DbService } from '../../apps/api/src/db.service';
 import type { AuditService } from '../../apps/api/src/audit.service';
 import type { VersionsService } from '../../apps/api/src/versions.service';
 import type { WorkflowsService } from '../../apps/api/src/workflows.service';
-import type { BalancesService } from '../../apps/api/src/balances.service';
 import type { DocumentsService } from '../../apps/api/src/documents.service';
 import type { AuthenticatedRequest } from '../../apps/api/src/types';
 
@@ -41,11 +40,10 @@ function createMockDb(executeHandler: (query: unknown) => Promise<{ rows: any[] 
 const mockAudit = {} as unknown as AuditService;
 const mockVersions = { record: async () => {} } as unknown as VersionsService;
 const mockWorkflows = {} as unknown as WorkflowsService;
-const mockBalances = {} as unknown as BalancesService;
 const mockDocuments = {} as unknown as DocumentsService;
 
 function makeController(mockDb: DbService) {
-  return new AbsencesController(mockDb, mockAudit, mockVersions, mockWorkflows, mockBalances, mockDocuments);
+  return new AbsencesController(mockDb, mockAudit, mockVersions, mockWorkflows, mockDocuments);
 }
 
 test('AbsencesController.list rejects non-admin/non-manager querying peer entries', async () => {
@@ -123,4 +121,20 @@ test('AbsencesController.submit rejects an absence type the org does not recogni
 
   const result = await controller.submit('org-1', { dateStart: '2026-09-07', dateEnd: '2026-09-07', absenceType: 'not-a-real-type' }, req);
   assert.deepEqual(result, { ok: false, error: 'invalid-absence-type' });
+});
+
+test('touchesLockedPeriod checks every month the absence touches', async () => {
+  const checked: string[] = [];
+  const db: any = {
+    execute: async (q: any) => {
+      const date = (q.queryChunks ?? []).find((c: any) => typeof c === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c));
+      checked.push(date);
+      return { rows: date === '2026-12-01' ? [{ '?column?': 1 }] : [] };
+    },
+  };
+  assert.equal(await touchesLockedPeriod(db, 'org-1', 'user-1', '2026-11-25', '2026-11-28'), false);
+  assert.deepEqual(checked, ['2026-11-25']);
+  checked.length = 0;
+  assert.equal(await touchesLockedPeriod(db, 'org-1', 'user-1', '2026-11-25', '2026-12-03'), true);
+  assert.deepEqual(checked, ['2026-11-25', '2026-12-01']);
 });

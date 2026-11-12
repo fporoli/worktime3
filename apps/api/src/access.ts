@@ -173,6 +173,29 @@ export async function isPeriodLocked(
   return rows.rows.length > 0;
 }
 
+/**
+ * Whether a person's project time on `projectId` at a date is locked: that project's month is
+ * submitted or approved in their project timesheet (project_time_periods). Project time without
+ * a project is never locked; the working-time timesheet does not lock project time.
+ */
+export async function isProjectPeriodLocked(
+  db: Executor,
+  organizationId: string,
+  userId: string,
+  projectId: string | null | undefined,
+  dateOrTimestamp: string,
+): Promise<boolean> {
+  if (!projectId) return false;
+  const rows = await db.execute(
+    sql`SELECT 1 FROM project_time_periods
+        WHERE organization_id = ${organizationId} AND user_id = ${userId} AND project_id = ${projectId}
+          AND status IN ('submitted', 'approved')
+          AND period_start <= ${dateOrTimestamp}::date AND period_end > ${dateOrTimestamp}::date
+        LIMIT 1`,
+  );
+  return rows.rows.length > 0;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Permissions (packages/shared/src/permissions.ts): `<object>:<action>:<scope>` ids held via
 // membership_roles -> role_permissions. An organization's own copy of a role carries its own

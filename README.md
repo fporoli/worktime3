@@ -28,7 +28,7 @@ host-run API and web app directly.
 | --- | --- |
 | `apps/web` | React 18 + MUI + Vite. One PascalCase file per page, lazy-loaded from `App.tsx` (nav drawer, session, org switcher, role gating). |
 | `apps/api` | NestJS API, one controller per resource. |
-| `packages/shared` | Cross-cutting TS types/constants (role ids, RBAC permission matrix), mirrored but not yet consumed by either app. |
+| `packages/shared` | Code shared by web and API: `permissions.ts` (permission catalogue), `fields.ts` (configurable form fields), `branding.ts`, `worktime.ts` (daily targets, holidays, month summaries, vacation entitlement). `index.ts` (role ids, RBAC matrix) is mirrored but not yet imported. |
 | `infra/liquibase` | The database schema's source of truth (see below). |
 | `infra/postgres/seeds` | `seed.sql`: demo orgs/users/projects/project times/expenses. Run manually, separate from schema migrations. |
 | `infra/keycloak` | Realm export (`realm-worktime.json`) imported on Keycloak startup. |
@@ -49,11 +49,13 @@ host-run API and web app directly.
 
 | Area | Files |
 | --- | --- |
-| Session and shell | `App.tsx` (also holds project-time entry), `Login.tsx` (local + Keycloak SSO + invite-accept), `Home`, `NotificationBell` |
-| Time | `WorkTime` (check-in/out), `Absences`, `Timesheet`, `Approvals`, `TeamHours` |
+| Session and shell | `App.tsx` (nav groups, session, org switcher, branding), `Login.tsx` (local + Keycloak SSO + invite-accept), `Home`, `NotificationBell`, `UserMenu` |
+| My work | `WorkTime` (check-in/out), `Absences`, `Timesheet` (monthly working-time timesheet for the line manager), `MyData` (`BasicDataPanel`), `BalancesPanel` (overtime/vacation by month) |
+| Projects | `ProjectTime` (hours per project), `ProjectTimesheet` (monthly submission to each project's owner) |
 | Expenses | `Expenses`, `ExpenseReports`, `ExpenseProcessing` |
-| Organization | `Management` (teams/projects/subprojects), `Invitations`, `Users`, `OrganizationSettings` |
-| Admin | `AdminSettings` (static-data enums), `AuditLog` |
+| Organization | `Approvals`, `TeamHours`, `BalanceReport` (Time balances with alerts), `Management` (teams/projects/subprojects), `Invitations`, `Users` (`WorkSchedulePanel`), `OrganizationSettings` (`WorkTimeSettings`, `BrandingSettings`) |
+| Admin | `AdminSettings` (static-data enums), `RolesPermissions`, `FormDesigner`, `AuditLog` |
+| Form fields | `ConfigField`, `designMode.tsx` (configurable forms, see `docs/FIELD_CONFIG.md`) |
 | AI | `Assistant` (chat) |
 | Support modules | `auth.ts` (Keycloak client + token refresh), `aggregate.ts` (daily/weekly/monthly bucketing), `i18n.tsx` (en/de/fr/it) |
 
@@ -61,15 +63,16 @@ host-run API and web app directly.
 
 | Area | Controllers |
 | --- | --- |
-| Identity | `auth`, `users`, `basicdata`, `orgs`, `roles` |
+| Identity | `auth`, `users`, `basicdata`, `orgs`, `roles`, `permissions`, `fields` |
 | Organization | `teams`, `projects` (+ subprojects) |
-| Time | `project-time`, `work-time`, `absences`, `balances`, `timesheets` |
+| Time | `work-time`, `absences`, `work-schedules`, `timesheets`, `balances`, `project-time`, `project-timesheets` |
 | Expenses | `expenses`, `expense-reports` |
 | Cross-cutting | `workflows`, `static-data`, `audit`, `assistant`, `notifications` (+ WebSocket gateway) |
 
 | Module | Role |
 | --- | --- |
-| `access.ts` | Authorization helpers every controller calls (`isOrgAdmin`, `isOrgManagerOrAdmin`, `callerUserId`, …), resolved from the caller's validated JWT, never trusted from the request body. |
+| `access.ts` | Authorization helpers every controller calls (`callerUserId`, `can`, `canSeeUserData`, period locks, …), resolved from the caller's validated JWT, never trusted from the request body. |
+| `work-time-model.service.ts`, `balances.service.ts` | Daily targets (schedules, holidays, absences) and the monthly overtime/vacation balances. |
 | `jwt.ts` / `jwt.guard.ts` | Validate local HS256 tokens and Keycloak-issued tokens (JWKS) behind one global guard. Routes opt out with `@Public()`. |
 | `db.service.ts` | Wraps a single `pg.Pool` and exposes a typed Drizzle client via `getDb()`. |
 | `db/schema.ts`, `relations.ts` | **Generated, not hand-written** (see Database below). |
@@ -99,25 +102,31 @@ host-run API and web app directly.
   organizations through `organization_memberships`, and the web app
   re-resolves the user's role whenever the org switcher changes.
 - Roles are per organization, and a membership can hold several
-  (`membership_roles`): `user`, `manager`, `admin`, plus HR and billing
-  variants.
+  (`membership_roles`). Access is decided by **permissions**, not role names:
+  ids of the form `<object>:<action>:<scope>` (`nav.balances:see:reports`,
+  `section.basicdata.personalien:edit:all`), catalogued in
+  `packages/shared/src/permissions.ts` and granted to roles through
+  `role_permissions`. Global roles carry the defaults; an organization can
+  customize a role (it gets its own copy) or create its own, under Admin
+  settings -> Roles & permissions.
 - Authorization helpers in `access.ts`:
 
   | Helper | Passes for |
   | --- | --- |
   | `isOrgMember` | Any member of the org |
-  | `isOrgManagerOrAdmin` | Managers and admins |
-  | `isOrgAdmin` | Admins |
-  | `isOrgHrOrAdmin` | HR and admins |
-  | `isOrgBillingAdmin` | Billing admins |
+  | `can` | Callers holding a permission (`edit` implies `see`) |
+  | `canSeeUserData` / `listableUserIds` | Self, the person's designated manager, or a grant covering them |
+  | `reachesAll` / `canEditBeyondOwn` | Grants covering everyone / admin-only overrides |
   | `isManagerOf` | The specific manager of a member |
-  | `canManageTeamMembers` | Users allowed to change a team's members |
-  | `isOwnerAdminOrManagerOf` | Owner, admin, or the member's manager |
+  | `canManageItem` / `canManageTeamMembers` | Team leads and project owners (scope `own`) |
+  | `isSuperDeveloper` / `isOrgDeveloper` | Global and per-org form designers |
 - "Manager of X" is the specific `organization_memberships.manager_user_id`,
   so approvals route to the member's own manager, not to any manager in the
   org.
-- Time-entry writes additionally check `isPeriodLocked`: a month that is
-  submitted or approved is read-only until it is reopened.
+- Time writes additionally check a period lock: work time and absences
+  `isPeriodLocked` (the working-time timesheet month is submitted or
+  approved), project time `isProjectPeriodLocked` (that project's month in the
+  project timesheet). A locked month is read-only until it is reopened.
 
 ### Domain areas
 
@@ -126,10 +135,12 @@ and tables:
 
 | Area | What it is | Where |
 | --- | --- | --- |
-| Project time | Hours booked against projects and subprojects | `project-time.*`, `projects.controller.ts` |
 | Work time | Check-in/check-out attendance | `work-time.*` |
-| Balances | Vacation and overtime accounts | `balances.*`, `absences.controller.ts` |
-| Timesheets | Monthly submission and approval of project time | `timesheets.controller.ts` |
+| Work-time model | Daily targets: work schedules, canton and org holidays, approved absences | `work-time-model.service.ts`, `work-schedules.controller.ts`, `packages/shared/src/worktime.ts` |
+| Working-time timesheet | Monthly attendance and absences, approved by the line manager; approval closes the month's balance | `timesheets.controller.ts` |
+| Balances | Overtime (minutes) and vacation (days), by month and year, with carry-over, adjustments and a monthly alert report | `balances.*` |
+| Project time | Hours booked against projects and subprojects, independent of attendance | `project-time.*`, `projects.controller.ts` |
+| Project timesheet | Each person's monthly hours per project, approved by the project's owner (for billing) | `project-timesheets.controller.ts` |
 | Expenses | Expense items and expense reports | `expenses.controller.ts`, `expense-reports.controller.ts` |
 | Basic data | Personal data with an HR change-request/approval history | `basicdata.*` |
 | Static data | Admin-editable dropdown vocabularies | `static-data.controller.ts` |
@@ -139,7 +150,8 @@ and tables:
 
 Timesheets, expense reports, absences, and timesheet reopen requests all go
 through `workflows.service.ts`. A submission is routed to the requester's
-manager, and each state change creates a notification through
+manager; a project timesheet goes to the project's owner instead (approved
+right away when the person owns the project or it has none). Each state change creates a notification through
 `notifications.service.ts`. That service persists the row and pushes it to
 connected clients over the WebSocket gateway at `/ws/notifications`, which the
 web app consumes via `useNotifications.ts` and `NotificationBell`.
@@ -196,9 +208,10 @@ ships without a driver):
 **Drizzle owns the query layer**, typed against whatever Liquibase has
 applied. `apps/api/src/db/schema.ts` and `relations.ts` are generated by
 introspecting the live database — never hand-edit them. `scripts/
-fix-introspected-schema.mjs` patches the one gap `drizzle-kit introspect`
-has (Postgres's `citext` type, used by `users.email`/`organizations.slug`/
-etc., has no built-in mapping) so the command stays a single, rerunnable
+fix-introspected-schema.mjs` patches what `drizzle-kit introspect`
+gets wrong (Postgres's `citext` type, used by `users.email`/`organizations.slug`/
+etc., has no built-in mapping; some `COALESCE(... ::uuid)` index expressions
+come out truncated) so the command stays a single, rerunnable
 step.
 
 **Making a schema change:**
@@ -236,40 +249,52 @@ under `DOMAIN`; production uses `wt`, `wtservice`, `wtauth` under
 ## Dev and Local deployment
 
 Each environment has its own env file: `.env.dev` (N=1) and `.env.local`
-(N=2), copied from `env.example.dev.cfg` / `env.example.local.cfg`.
-`env.dev.sh` / `env.local.sh` (Windows: `call env.dev.bat` /
-`call env.local.bat`) export that file's variables into the current shell.
-The npm scripts are environment-agnostic and read everything (`DATABASE_URL`
-etc.) from the shell, so load an environment first. `db:seed` refuses to
-run without `DATABASE_URL`, and the API logs an OFFLINE warning at startup.
+(N=2), copied once from `env.example.dev.cfg` / `env.example.local.cfg`.
+The `dev:*` and `local:*` npm scripts load that file for you
+(`scripts/with-env.mjs`; the file's values win over your shell's), on macOS,
+Linux and Windows alike. The base scripts underneath (`db:migrate`, `db:seed`,
+`start`, …) read only the process environment; CI and the deploys call them
+with config from GitHub. `db:seed` refuses to run without `DATABASE_URL`, and
+the API logs an OFFLINE warning at startup without it.
+
+| Script | Does |
+| --- | --- |
+| `dev:up` / `dev:down` / `dev:logs` | pg + migrate + Keycloak + Mailpit in Docker |
+| `dev:api` | build and start the API (http://localhost:8001) |
+| `dev:web` | Vite (http://localhost:3001) |
+| `dev:migrate` / `dev:seed` / `dev:introspect` | database tasks against the dev database |
+| `dev:psql` | psql into the dev database |
+| `local:up` / `local:down` / `local:logs` | the whole stack in Docker behind Caddy |
+| `local:migrate` / `local:seed` / `local:psql` | database tasks against the local database |
+
+To run any other command with an environment loaded:
+`node scripts/with-env.mjs dev <command> [args...]`.
 
 **dev** (pg + Keycloak + Mailpit in Docker, API + web on the host):
 
 ```sh
-cp env.example.dev.cfg .env.dev        # Windows: copy
-. ./env.dev.sh                         # Windows: call env.dev.bat
-docker compose -f compose/docker-compose.dev.yml up -d   # pg + migrate + keycloak + mailpit
+cp env.example.dev.cfg .env.dev        # once; Windows: copy
 npm install
-npm run db:seed
-npm run build --workspaces
-npm run test --workspaces
+npm run dev:up                         # pg + migrate + keycloak + mailpit
+npm run dev:seed
+npm run build
+npm test
 ```
 
 Then run the API and web app on the host (separate terminals), or use the
 "Development Full Stack: API + Web" VS Code launch config:
 
 ```sh
-npm run start --workspace=@worktime3/api   # http://localhost:8001 (after . ./env.dev.sh)
-npm run dev --workspace=@worktime3/web     # vite, http://localhost:3001
+npm run dev:api    # http://localhost:8001
+npm run dev:web    # vite, http://localhost:3001
 ```
 
 **local** (everything in Docker, behind Caddy):
 
 ```sh
-cp env.example.local.cfg .env.local
-. ./env.local.sh
-docker compose -f compose/docker-compose.local.yml up -d --build
-npm run db:seed
+cp env.example.local.cfg .env.local    # once
+npm run local:up
+npm run local:seed
 ```
 
 ### Demo accounts
@@ -288,9 +313,16 @@ Invite token `dev-invite-0001` accepts an invitation as `invited@acme.com`.
 
 ## Roles
 
-- `user`: log own work time, daily/weekly/monthly overview.
-- `manager`: + invite members, teams, subprojects (only if project owner).
-- `admin`: + static data, organization settings (name/domains/SSO), audit read.
+Default grants of the global roles (organizations can change them, see
+Multi-tenancy and authorization above):
+
+- `user`: own work time, absences, timesheets, project time and data.
+- `manager`: + their reports' data and approvals, team hours, balance report,
+  invitations, teams, subprojects (only if project owner).
+- `hr`: + everyone's personal data and balances, adjustments.
+- `admin`: + static data, organization settings (name/domains/SSO, work time,
+  branding), roles & permissions, audit read.
+- `owner`: everything.
 
 ## Auth
 

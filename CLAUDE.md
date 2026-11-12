@@ -12,18 +12,18 @@ Run from the repo root unless noted.
 
 ```sh
 cp env.example.dev.cfg .env.dev   # once; Windows: copy
-. ./env.dev.sh                    # export .env.dev into the shell (Windows: call env.dev.bat)
-docker compose -f compose/docker-compose.dev.yml up -d   # pg + migrate + keycloak + mailpit
 npm install
-npm run db:seed            # demo data (infra/postgres/seeds/seed.sql); needs DATABASE_URL exported
+npm run dev:up             # Docker: pg + migrate + keycloak + mailpit
+npm run dev:seed           # demo data (infra/postgres/seeds/seed.sql)
 npm run build              # all workspaces (api: tsc; web: tsc --noEmit + vite build)
 npm test                   # all workspaces
 
-npm run start --workspace=@worktime3/api   # API on :8001 (needs a prior build)
-npm run dev --workspace=@worktime3/web     # Vite on :3001
-
-npm run db:migrate         # apply Liquibase changelogs to $DATABASE_URL (Docker required)
-npm run db:introspect      # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
+npm run dev:api            # build + start the API on :8001
+npm run dev:web            # Vite on :3001
+npm run dev:migrate        # apply Liquibase changelogs (Docker required)
+npm run dev:introspect     # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
+npm run dev:psql           # psql into the dev database; dev:down / dev:logs
+npm run local:up           # whole stack in Docker (.env.local); local:down / local:seed / local:psql
 ```
 
 Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --conditions=source --test ../../test/api/orgs.test.ts`
@@ -38,10 +38,15 @@ debug the host-run API and web against `.env.dev`; "Local Full Stack: Docker +
 Chrome" brings up the local compose stack (task `local: stack up`) and opens
 Chrome on 3002. Host processes must not run on local's ports, which Caddy holds.
 
-npm scripts are environment-agnostic. They read all config from the shell and
-never from an env file, so source `env.dev.sh` / `env.local.sh` first. Don't
-add per-environment script variants or `--env-file` flags. `db:seed` exits if
-`DATABASE_URL` is unset. The API still starts without it, in offline mode
+The base npm scripts (`db:migrate`, `db:seed`, `db:introspect`, `build`, `start`)
+are environment-agnostic: they read config only from the process environment,
+never from an env file, because CI and the VPS/Azure deploys run them with config
+from GitHub Environments. The `dev:*` / `local:*` scripts are thin wrappers for
+local development: `scripts/with-env.mjs <dev|local> <cmd>` loads `.env.dev` /
+`.env.local` (file values win over the shell's, `PG*` derived from `POSTGRES_*`)
+and runs a base script or `docker compose`. Add new local conveniences that way;
+never make CI, workflows or deploy scripts depend on them or on `.env` files.
+`db:seed` exits if `DATABASE_URL` is unset. The API still starts without it, in offline mode
 (logged as a WARNING at startup), and every endpoint, including login, then
 returns `{ ok: true, offline: true }`. That looks like success but does nothing.
 
@@ -112,7 +117,9 @@ come from the global `static_data` row `login`/`demo_accounts` via public
      `reachesAll` / `canEditBeyondOwn`, plus `isOrgMember`, `isManagerOf`, `isSuperDeveloper`.
      Team Management uses `canManageItem` (scope `own` = teams you lead, projects you own).
      Don't add checks on role names; `isOrgDeveloper` (form design) is the one left.
-  4. Time-entry writes also check `isPeriodLocked` (submitted/approved month).
+  4. Work-time and absence writes check `isPeriodLocked` (working-time timesheet month
+     submitted/approved); project-time writes check `isProjectPeriodLocked` (that project's
+     month in the project timesheet).
 - Permissions: ids are `<object>:<action>:<scope>` (`nav.teamHours:see:reports`,
   `section.basicdata.personalien:edit:all`), catalogued in
   `packages/shared/src/permissions.ts` and in Liquibase (035-037), held via
@@ -148,6 +155,28 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   gateway at `/ws/notifications`). Admin-editable dropdown vocabularies live
   in `static_data`. "Basic data" (`basicdata.*`) is personal data with an
   HR change-request/approval history.
+- Work-time model (`packages/shared/src/worktime.ts`, DB side in
+  `work-time-model.service.ts`): a person's target per day comes from their
+  `work_schedules` row in force (minutes per weekday, with history; else the org's
+  full-time week Mon-Fri), minus public holidays (computed per canton from
+  `organizations.settings.holidayRegion`, plus `org_holidays` rows) and approved
+  absences. Project time stays independent of attendance, but a day's project time above its
+  attendance + `projectTimeToleranceMinutes` returns `project-exceeds-attendance-confirm`
+  until the client resends with `acknowledgeAttendance`.
+- Balances (`balances.service.ts`, `computeYearBalances` is pure): approving a working-time
+  timesheet closes the month into `work_time_months` (reopening deletes it); other months
+  are computed live from the model. Overtime = month differences + `balance_adjustments`;
+  Überzeit (attendance beyond `legalMaxWeeklyMinutes` per calendar week) is a share of it,
+  kept as its own account (`legal_overtime` adjustments move both);
+  vacation is in full-time days (entitlement `vacationDaysPerYear` prorated by workload,
+  or a `vacation_entitlements` row; carried over). Others' balances and the monthly report
+  with alerts are `nav.balances` (Time balances page); one's own are always visible.
+- Two timesheets: the working-time timesheet (`timesheet_periods`, `timesheets.controller.ts`,
+  Monthly timesheet page) goes to the line manager and closes the month's balance; the project
+  timesheet (`project_time_periods`, one row per person, project and month,
+  `project-timesheets.controller.ts`) goes to each project's owner (Approvals page), approved
+  on submit when the person owns the project or it has none. Hours without a project can't
+  be submitted.
 
 ## Web conventions (`apps/web/src`)
 

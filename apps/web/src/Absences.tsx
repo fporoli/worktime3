@@ -169,6 +169,7 @@ export default function Absences({ orgId, userId, authHeaders }: AbsencesProps) 
           'overlapping-request': t('absences.overlapping'),
           'half-day-requires-single-day': t('absences.halfDayRequiresSingleDay'),
           'invalid-absence-type': t('absences.invalidAbsenceType'),
+          'period-locked': t('absences.periodLocked'),
         };
         setError(messages[data.error] ?? t('absences.submitFailed', { error: data.error ?? 'unknown error' }));
         return;

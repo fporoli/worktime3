@@ -22,6 +22,7 @@ import { useT } from './i18n';
 import { PageHeader, TableEmptyRow } from './components';
 import { SettingsIcon } from './icons';
 import BrandingSettings from './BrandingSettings';
+import WorkTimeSettings from './WorkTimeSettings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -31,7 +32,6 @@ interface OrgDetails {
   name: string;
   type: string;
   default_currency: string;
-  max_hours_per_day: number;
 }
 
 interface DomainItem {
@@ -62,7 +62,6 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
   const [org, setOrg] = useState<OrgDetails | null>(null);
   const [orgName, setOrgName] = useState('');
   const [defaultCurrency, setDefaultCurrency] = useState('');
-  const [maxHoursPerDay, setMaxHoursPerDay] = useState('');
   const [domains, setDomains] = useState<DomainItem[]>([]);
   const [newDomain, setNewDomain] = useState('');
   const [newDomainAutoJoin, setNewDomainAutoJoin] = useState(false);
@@ -79,7 +78,6 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
         setOrg(data);
         setOrgName(data.name ?? '');
         setDefaultCurrency(data.default_currency ?? '');
-        setMaxHoursPerDay(data.max_hours_per_day != null ? String(data.max_hours_per_day) : '');
       }
     } catch { /* offline fallback */ }
   }
@@ -111,18 +109,16 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  const maxHoursPerDayValue = Number(maxHoursPerDay);
-  const isMaxHoursPerDayValid = maxHoursPerDay.trim() !== '' && Number.isFinite(maxHoursPerDayValue) && maxHoursPerDayValue > 0 && maxHoursPerDayValue <= 24;
 
   async function handleSaveOrg() {
-    if (!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid) return;
+    if (!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)) return;
     setError(null);
     setSuccess(null);
     try {
       const res = await fetch(`${API}/organizations/${orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ name: orgName.trim(), defaultCurrency: defaultCurrency.toUpperCase(), maxHoursPerDay: maxHoursPerDayValue }),
+        body: JSON.stringify({ name: orgName.trim(), defaultCurrency: defaultCurrency.toUpperCase() }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -218,23 +214,15 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
             sx={{ maxWidth: 160 }}
             helperText={t('orgSettings.defaultCurrencyHelper')}
           />
-          <TextField
-            label={t('orgSettings.maxHoursPerDay')}
-            type="number"
-            value={maxHoursPerDay}
-            onChange={(e) => setMaxHoursPerDay(e.target.value)}
-            size="small"
-            slotProps={{ htmlInput: { min: 0, max: 24, step: 0.5 } }}
-            sx={{ maxWidth: 170 }}
-            helperText={t('orgSettings.maxHoursPerDayHelper')}
-          />
-          <Button type="submit" variant="contained" sx={{ height: 40 }} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency) || !isMaxHoursPerDayValid}>
+          <Button type="submit" variant="contained" sx={{ height: 40 }} disabled={!orgName.trim() || !/^[A-Za-z]{3}$/.test(defaultCurrency)}>
             {t('common.save')}
           </Button>
         </Box>
       </Paper>
 
       <BrandingSettings orgId={orgId} authHeaders={authHeaders} />
+
+      <WorkTimeSettings orgId={orgId} authHeaders={authHeaders} />
 
       <Paper sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1.5 }}>{t('orgSettings.domains')}</Typography>

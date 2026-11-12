@@ -64,6 +64,7 @@ export class WorkflowsController {
     const periodIds = rows.filter((r) => r.source_table === 'timesheet_periods').map((r) => r.source_table_uuid);
     const reportIds = rows.filter((r) => r.source_table === 'expense_reports').map((r) => r.source_table_uuid);
     const absenceIds = rows.filter((r) => r.source_table === 'absences').map((r) => r.source_table_uuid);
+    const projectPeriodIds = rows.filter((r) => r.source_table === 'project_time_periods').map((r) => r.source_table_uuid);
 
     const periodRows = periodIds.length
       ? await db
@@ -109,6 +110,31 @@ export class WorkflowsController {
           .innerJoin(users, eq(users.id, absences.user_id))
           .where(inArray(absences.id, absenceIds))
       : [];
+    // Project months: who, which project, which month, and how many minutes it holds.
+    const projectPeriodRows = projectPeriodIds.length
+      ? ((
+          await db.execute(sql`
+            SELECT ptp.id, to_char(ptp.period_start, 'YYYY-MM-DD') AS period_start, ptp.user_id, u.display_name AS user_display_name, u.email AS user_email,
+                   ptp.project_id, p.name AS project_name,
+                   COALESCE((SELECT SUM(EXTRACT(EPOCH FROM (pt.end_time - pt.start_time))) / 60 FROM project_times pt
+                             WHERE pt.organization_id = ptp.organization_id AND pt.user_id = ptp.user_id AND pt.project_id = ptp.project_id
+                               AND pt.start_time::date >= ptp.period_start AND pt.start_time::date < ptp.period_end), 0) AS minutes
+            FROM project_time_periods ptp
+            JOIN users u ON u.id = ptp.user_id
+            JOIN projects p ON p.id = ptp.project_id
+            WHERE ptp.id IN (${sql.join(projectPeriodIds.map((id) => sql`${id}`), sql`, `)})`)
+        ).rows as Record<string, unknown>[]).map((r) => ({
+          id: String(r.id),
+          period_start: String(r.period_start).slice(0, 10),
+          user_id: String(r.user_id),
+          user_display_name: r.user_display_name as string,
+          user_email: r.user_email as string,
+          project_id: String(r.project_id),
+          project_name: r.project_name as string,
+          minutes: Math.round(Number(r.minutes)),
+        }))
+      : [];
+    const projectPeriodById = new Map(projectPeriodRows.map((p) => [p.id, p]));
     const periodById = new Map(periodRows.map((p) => [p.id, p]));
     const reportById = new Map(reportRows.map((r) => [r.id, r]));
     const absenceById = new Map(absenceRows.map((a) => [a.id, a]));
@@ -117,6 +143,7 @@ export class WorkflowsController {
       timesheet_period: r.source_table === 'timesheet_periods' ? (periodById.get(r.source_table_uuid) ?? null) : null,
       expense_report: r.source_table === 'expense_reports' ? (reportById.get(r.source_table_uuid) ?? null) : null,
       absence: r.source_table === 'absences' ? (absenceById.get(r.source_table_uuid) ?? null) : null,
+      project_time_period: r.source_table === 'project_time_periods' ? (projectPeriodById.get(r.source_table_uuid) ?? null) : null,
     }));
   }
 

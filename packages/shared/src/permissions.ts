@@ -48,6 +48,7 @@ export interface PermissionObject {
  */
 export const NAV_OBJECTS: readonly PermissionObject[] = [
   { id: 'nav.time', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.timeTracking' },
+  { id: 'nav.projectTimesheet', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.projectTimesheet' },
   { id: 'nav.timesheet', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.monthlyTimesheet' },
   { id: 'nav.workTime', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.workTime' },
   { id: 'nav.absences', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.absences' },
@@ -55,6 +56,7 @@ export const NAV_OBJECTS: readonly PermissionObject[] = [
   { id: 'nav.expenses', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.expenses' },
   { id: 'nav.expenseReports', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.expenseReports' },
   { id: 'nav.teamHours', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.teamHours' },
+  { id: 'nav.balances', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.balances' },
   { id: 'nav.approvals', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.approvals' },
   { id: 'nav.users', kind: 'nav', scopes: PEOPLE_SCOPES, caption: 'nav.users' },
   { id: 'nav.invitations', kind: 'nav', scopes: ORG_SCOPES, caption: 'nav.invitations' },
@@ -76,13 +78,19 @@ export const SECTION_OBJECTS: readonly PermissionObject[] = [
   { id: 'section.basicdata.civilStatus', kind: 'section', scopes: PEOPLE_SCOPES, caption: 'home.section.civilStatus', parent: BASICDATA_PARENT },
 ];
 
+/** Working-time sections about one person: on My data (own) and from the Users page (others). */
+export const WORK_SECTION_OBJECTS: readonly PermissionObject[] = [
+  // The person's work schedule (target hours per weekday, workload, holiday canton).
+  { id: 'section.workTime.schedule', kind: 'section', scopes: PEOPLE_SCOPES, caption: 'workSchedule.title', parent: BASICDATA_PARENT },
+];
+
 /** Organization-wide sections of a page; both parents are that page. */
 export const ADMIN_SECTION_OBJECTS: readonly PermissionObject[] = [
   // Roles & permissions in Admin settings: create/edit roles and what they grant.
   { id: 'section.admin.roles', kind: 'section', scopes: ORG_SCOPES, caption: 'roles.title', parent: { own: 'nav.admin', others: 'nav.admin' } },
 ];
 
-export const PERMISSION_OBJECTS: readonly PermissionObject[] = [...NAV_OBJECTS, ...SECTION_OBJECTS, ...ADMIN_SECTION_OBJECTS];
+export const PERMISSION_OBJECTS: readonly PermissionObject[] = [...NAV_OBJECTS, ...SECTION_OBJECTS, ...WORK_SECTION_OBJECTS, ...ADMIN_SECTION_OBJECTS];
 
 /**
  * Grants the `admin` role always keeps, so an organization cannot lock itself out of

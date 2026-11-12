@@ -24,10 +24,11 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import BalanceOverview from './BalanceOverview';
 import { useI18n } from './i18n';
 import { formatDurationMinutes, formatSignedMinutes } from './localeFormat';
 import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
-import { BalanceLedger } from './BalanceLedger';
+import { BalancesPanel, formatDays } from './BalancesPanel';
 import { DeleteIcon, EditIcon, PlayArrowIcon, StopIcon, TimerIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -40,8 +41,12 @@ interface Session {
 }
 
 interface Balance {
+  /** Booked at timesheet approval. */
   overtimeMinutes: number;
-  vacationMinutes: number;
+  /** Running actual − target of the days no approved timesheet covers yet. */
+  pendingOvertimeMinutes: number;
+  /** Vacation days left this year, after approved future vacation. */
+  vacationDays: number;
 }
 
 type RangeKey = '14d' | 'thisMonth' | 'lastMonth' | '90d';
@@ -89,12 +94,11 @@ function fromLocalInput(value: string): string {
 interface WorkTimeProps {
   orgId: string;
   userId: string;
-  isAdmin?: boolean;
   authHeaders: () => Promise<Record<string, string>>;
   onWorkTimeChanged?: () => void;
 }
 
-export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, onWorkTimeChanged }: WorkTimeProps) {
+export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged }: WorkTimeProps) {
   const { t, locale } = useI18n();
   const [tab, setTab] = useState<'sessions' | 'balances'>('sessions');
   const [range, setRange] = useState<RangeKey>('14d');
@@ -119,7 +123,7 @@ export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, 
     try {
       const res = await fetch(`${API}/organizations/${orgId}/balances`, { headers: await authHeaders() });
       const data = await res.json();
-      setBalance(data ? { overtimeMinutes: data.overtimeMinutes, vacationMinutes: data.vacationMinutes } : null);
+      setBalance(data ? { overtimeMinutes: data.overtimeMinutes, pendingOvertimeMinutes: data.pendingOvertimeMinutes ?? 0, vacationDays: data.vacationDays ?? 0 } : null);
     } catch { /* offline fallback */ }
   }
 
@@ -242,14 +246,21 @@ export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, 
         end={
           balance && (
             <>
+              <Tooltip
+                title={t('workTime.overtimeBreakdown', {
+                  booked: formatSignedMinutes(balance.overtimeMinutes),
+                  pending: formatSignedMinutes(balance.pendingOvertimeMinutes),
+                })}
+              >
+                <Chip
+                  label={t('workTime.overtimeBalance', { value: formatSignedMinutes(balance.overtimeMinutes + balance.pendingOvertimeMinutes) })}
+                  color={balance.overtimeMinutes + balance.pendingOvertimeMinutes < 0 ? 'error' : 'success'}
+                  variant="outlined"
+                  size="small"
+                />
+              </Tooltip>
               <Chip
-                label={t('workTime.overtimeBalance', { value: formatSignedMinutes(balance.overtimeMinutes) })}
-                color={balance.overtimeMinutes < 0 ? 'error' : 'success'}
-                variant="outlined"
-                size="small"
-              />
-              <Chip
-                label={t('workTime.vacationBalance', { value: formatSignedMinutes(balance.vacationMinutes) })}
+                label={t('workTime.vacationBalance', { value: formatDays(balance.vacationDays, locale) })}
                 color="default"
                 variant="outlined"
                 size="small"
@@ -281,6 +292,8 @@ export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, 
           </Box>
         </Box>
       </Paper>
+
+      <BalanceOverview orgId={orgId} authHeaders={authHeaders} refreshKey={balanceRefreshKey} />
 
       <Paper sx={{ p: 2 }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
@@ -347,13 +360,12 @@ export default function WorkTime({ orgId, userId, isAdmin = false, authHeaders, 
             </TableContainer>
           </>
         ) : (
-          <BalanceLedger
+          <BalancesPanel
             orgId={orgId}
             userId={userId}
-            isAdmin={isAdmin}
             authHeaders={authHeaders}
             refreshKey={balanceRefreshKey}
-            onAdjusted={() => {
+            onChanged={() => {
               void reloadBalance();
             }}
           />

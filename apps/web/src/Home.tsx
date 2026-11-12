@@ -17,8 +17,10 @@ import {
 } from '@mui/material';
 import { BarChart } from '@mui/x-charts/BarChart';
 import { bucket, minutes, periodRange, shiftPeriod, startOfWeek, todayDate, type Entry } from './aggregate';
+import BalanceOverview from './BalanceOverview';
 import { useI18n } from './i18n';
 import { formatDurationMinutes, formatSignedMinutes } from './localeFormat';
+import { formatDays } from './BalancesPanel';
 import { PageHeader, TableEmptyRow } from './components';
 import { ReviewQueue } from './BasicDataPanel';
 import {
@@ -42,8 +44,11 @@ interface WorkSession {
 }
 
 interface Balance {
+  /** Closed months plus adjustments. */
   overtimeMinutes: number;
-  vacationMinutes: number;
+  /** Days before today in months not closed yet. */
+  pendingOvertimeMinutes: number;
+  vacationDays: number;
 }
 
 interface TimesheetPeriod {
@@ -124,7 +129,11 @@ export default function Home({
         responses.map((r) => r.json().catch(() => null)),
       );
       setStatus(statusData && statusData.check_in ? statusData : null);
-      setBalance(balanceData && typeof balanceData.overtimeMinutes === 'number' ? balanceData : null);
+      setBalance(
+        balanceData && typeof balanceData.overtimeMinutes === 'number'
+          ? { overtimeMinutes: balanceData.overtimeMinutes, pendingOvertimeMinutes: balanceData.pendingOvertimeMinutes ?? 0, vacationDays: balanceData.vacationDays ?? 0 }
+          : null,
+      );
       setWeekEntries(Array.isArray(entriesData?.entries) ? entriesData.entries : []);
       if (Array.isArray(periodsData)) {
         const cur = periodsData.find((p: TimesheetPeriod) => p.period_start === currentMonthStart);
@@ -264,9 +273,9 @@ export default function Home({
           <Typography variant="caption" color="text.secondary">{t('dashboard.overtime')}</Typography>
           <Typography
             variant="h6"
-            sx={{ mt: 0.5, color: balance && balance.overtimeMinutes < 0 ? 'error.main' : 'success.main' }}
+            sx={{ mt: 0.5, color: balance && balance.overtimeMinutes + balance.pendingOvertimeMinutes < 0 ? 'error.main' : 'success.main' }}
           >
-            {balance ? formatSignedMinutes(balance.overtimeMinutes) : '—'}
+            {balance ? formatSignedMinutes(balance.overtimeMinutes + balance.pendingOvertimeMinutes) : '—'}
           </Typography>
           <Typography variant="caption" color="text.secondary">{t('balances.type.overtime')}</Typography>
         </Paper>
@@ -274,7 +283,7 @@ export default function Home({
         <Paper sx={{ p: 2, cursor: 'pointer' }} onClick={() => onNavigate('absences')}>
           <Typography variant="caption" color="text.secondary">{t('dashboard.vacation')}</Typography>
           <Typography variant="h6" sx={{ mt: 0.5 }}>
-            {balance ? formatSignedMinutes(balance.vacationMinutes) : '—'}
+            {balance ? t('balances.days', { value: formatDays(balance.vacationDays, locale) }) : '—'}
           </Typography>
           <Typography variant="caption" color="text.secondary">{t('balances.type.vacation')}</Typography>
         </Paper>
@@ -335,6 +344,7 @@ export default function Home({
         </Box>
 
         <Box sx={{ display: 'grid', gap: 2 }}>
+          <BalanceOverview orgId={orgId} authHeaders={authHeaders} refreshKey={status?.check_out ?? status?.check_in} layout="column" />
           <Paper sx={{ p: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{t('dashboard.currentTimesheet')}</Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>

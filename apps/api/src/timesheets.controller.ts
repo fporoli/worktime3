@@ -47,7 +47,7 @@ export class TimesheetsController implements OnModuleInit {
       const patch = { status: 'approved' as const, reviewed_by_user_id: ctx.actorUserId, reviewed_at: new Date().toISOString(), review_note: null };
       await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
       void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
-      await this.balances.applyTimesheetApproval(db, ctx.sourceTableUuid, ctx.actorUserId);
+      await this.balances.closeMonth(db, ctx.sourceTableUuid, ctx.actorUserId);
     });
 
     this.workflowsSvc.registerAction('timesheet.reject', async (db, ctx) => {
@@ -60,7 +60,7 @@ export class TimesheetsController implements OnModuleInit {
       const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
       await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, ctx.sourceTableUuid));
       void this.versions.record('timesheet_periods', ctx.sourceTableUuid, 'update_delta', ctx.actorUserId, patch).catch(() => {});
-      await this.balances.reverseTimesheetApproval(db, ctx.sourceTableUuid, ctx.actorUserId);
+      await this.balances.reopenMonth(db, ctx.sourceTableUuid, ctx.actorUserId);
     });
   }
 
@@ -163,6 +163,9 @@ export class TimesheetsController implements OnModuleInit {
       .record(orgId, callerId, autoApproved ? 'timesheet.submit-auto-approved' : 'timesheet.submit', 'timesheet_period', periodId, { periodStart, note: note || undefined })
       .catch(() => {});
 
+    // Approved on submit (no manager): the month closes right away.
+    if (autoApproved) await this.balances.closeMonth(db, periodId, callerId);
+
     // Route to the owner's manager as an "approve timesheet" workflow — the manager acts on it via /workflows.
     if (!autoApproved && managerUserId) {
       const definition = await this.workflowsSvc.ensureDefinition(db, orgId, APPROVE_TIMESHEET_WORKFLOW_NAME, "A submitted month awaiting the employee's manager to approve or reject it.", [
@@ -249,7 +252,7 @@ export class TimesheetsController implements OnModuleInit {
       .record(period.organization_id, callerId, `timesheet.${newStatus === 'approved' ? 'approve' : 'reject'}`, 'timesheet_period', id, note ? { note } : undefined)
       .catch(() => {});
     void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
-    if (newStatus === 'approved') await this.balances.applyTimesheetApproval(db, id, callerId);
+    if (newStatus === 'approved') await this.balances.closeMonth(db, id, callerId);
     return { ok: true };
   }
 
@@ -271,7 +274,7 @@ export class TimesheetsController implements OnModuleInit {
     await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
     void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
     void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
-    await this.balances.reverseTimesheetApproval(db, id, callerId);
+    await this.balances.reopenMonth(db, id, callerId);
     return { ok: true };
   }
 

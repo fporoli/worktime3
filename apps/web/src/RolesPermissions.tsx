@@ -32,6 +32,7 @@ import {
   NAV_OBJECTS,
   SCOPES,
   SECTION_OBJECTS,
+  WORK_SECTION_OBJECTS,
   allPermissionIds,
   permissionId,
   type PermissionObject,
@@ -77,6 +78,7 @@ const CATALOGUE = new Set(allPermissionIds());
 const OBJECT_GROUPS: { key: string; objects: readonly PermissionObject[] }[] = [
   { key: 'roles.group.nav', objects: NAV_OBJECTS },
   { key: 'roles.group.basicdata', objects: SECTION_OBJECTS },
+  { key: 'roles.group.work', objects: WORK_SECTION_OBJECTS },
   { key: 'roles.group.admin', objects: ADMIN_SECTION_OBJECTS },
 ];
 

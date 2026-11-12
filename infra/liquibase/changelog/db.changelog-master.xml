@@ -55,6 +55,13 @@
     <include file="037-permission-data-grants.sql" relativeToChangelogFile="true"/>
     <include file="038-permission-management-own.sql" relativeToChangelogFile="true"/>
     <include file="039-merge-nations-into-countries.sql" relativeToChangelogFile="true"/>
+    <include file="040-work-time-model.sql" relativeToChangelogFile="true"/>
+    <include file="041-permission-work-schedule.sql" relativeToChangelogFile="true"/>
+    <include file="042-monthly-balances.sql" relativeToChangelogFile="true"/>
+    <include file="043-permission-balances.sql" relativeToChangelogFile="true"/>
+    <include file="044-project-timesheets.sql" relativeToChangelogFile="true"/>
+    <include file="045-permission-project-timesheet.sql" relativeToChangelogFile="true"/>
+    <include file="046-legal-overtime.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 

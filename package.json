@@ -13,7 +13,22 @@
     "test": "npm run test --workspaces",
     "db:migrate": "node infra/liquibase/migrate.mjs",
     "db:seed": "node infra/postgres/run-seed.mjs infra/postgres/seeds/seed.sql",
-    "db:introspect": "npm run db:introspect --workspace=@worktime3/api"
+    "db:introspect": "npm run db:introspect --workspace=@worktime3/api",
+    "dev:up": "node scripts/with-env.mjs dev docker compose -f compose/docker-compose.dev.yml up -d",
+    "dev:down": "node scripts/with-env.mjs dev docker compose -f compose/docker-compose.dev.yml down",
+    "dev:logs": "node scripts/with-env.mjs dev docker compose -f compose/docker-compose.dev.yml logs -f",
+    "dev:api": "npm run build --workspace=@worktime3/api && node scripts/with-env.mjs dev npm run start --workspace=@worktime3/api",
+    "dev:web": "node scripts/with-env.mjs dev npm run dev --workspace=@worktime3/web",
+    "dev:migrate": "node scripts/with-env.mjs dev npm run db:migrate",
+    "dev:seed": "node scripts/with-env.mjs dev npm run db:seed",
+    "dev:introspect": "node scripts/with-env.mjs dev npm run db:introspect",
+    "dev:psql": "node scripts/with-env.mjs dev docker compose -f compose/docker-compose.dev.yml exec pg psql -U worktime worktime",
+    "local:up": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml up -d --build",
+    "local:down": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml down",
+    "local:logs": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml logs -f",
+    "local:migrate": "node scripts/with-env.mjs local npm run db:migrate",
+    "local:seed": "node scripts/with-env.mjs local npm run db:seed",
+    "local:psql": "node scripts/with-env.mjs local docker compose -f compose/docker-compose.local.yml exec pg psql -U worktime worktime"
   },
   "engines": {
     "node": ">=24"

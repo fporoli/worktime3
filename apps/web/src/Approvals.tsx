@@ -22,7 +22,7 @@ import {
 } from '@mui/material';
 import { minutes, periodLabel, periodRange, type Entry } from './aggregate';
 import { useI18n, type TFunction } from './i18n';
-import { formatDurationMinutes, formatFileSize, formatLocaleDate, formatLocaleNumber } from './localeFormat';
+import { formatDurationMinutes, formatFileSize, formatLocaleDate, formatLocaleNumber, formatSignedMinutes } from './localeFormat';
 import { getSourceTitle } from './Timesheet';
 import { getExpenseReportTitle } from './ExpenseReports';
 import { getAbsenceTitle } from './Absences';
@@ -38,6 +38,27 @@ interface PeriodRow {
   user_display_name: string;
   user_email: string;
   period_start: string;
+}
+
+interface ProjectPeriodRow {
+  id: string;
+  user_id: string;
+  user_display_name: string;
+  user_email: string;
+  period_start: string;
+  project_id: string;
+  project_name: string;
+  minutes: number;
+}
+
+/** One day of a working-time month (GET day-targets). */
+interface DayRow {
+  date: string;
+  target: number;
+  attended: number;
+  absence: number;
+  absenceType?: string;
+  holidayInfo: { name?: string; key?: string } | null;
 }
 
 interface ExpenseReportRow {
@@ -95,6 +116,7 @@ interface ActionItem {
   timesheet_period: PeriodRow | null;
   expense_report: ExpenseReportRow | null;
   absence: AbsenceRow | null;
+  project_time_period: ProjectPeriodRow | null;
 }
 
 function actionItemLabel(definitionName: string, t: TFunction): string {
@@ -102,17 +124,28 @@ function actionItemLabel(definitionName: string, t: TFunction): string {
   if (definitionName === 'reopen approved timesheet') return t('approvals.kind.reopen');
   if (definitionName === 'approve expense report') return t('approvals.kind.expenseReport');
   if (definitionName === 'approve absence') return t('approvals.kind.absence');
+  if (definitionName === 'approve project timesheet') return t('approvals.kind.projectTimesheet');
   return definitionName;
 }
 
 function actionItemDetail(item: ActionItem): string {
-  return item.workflow_data.reason || item.workflow_data.note || '—';
+  const text = item.workflow_data.reason || item.workflow_data.note || '';
+  if (item.project_time_period) return [formatDurationMinutes(item.project_time_period.minutes), text].filter(Boolean).join(' · ');
+  return text || '—';
+}
+
+/** The person an action item is about, whatever kind of record it is. */
+function itemPerson(item: ActionItem): { name: string; email: string } | null {
+  const row = item.timesheet_period ?? item.expense_report ?? item.absence ?? item.project_time_period;
+  return row ? { name: row.user_display_name, email: row.user_email } : null;
 }
 
 const SOURCE_TITLE_FNS: Record<string, (item: ActionItem) => string | null> = {
   getSourceTitle: (item) => (item.timesheet_period ? getSourceTitle(item.timesheet_period.period_start) : null),
   getExpenseReportTitle: (item) => (item.expense_report ? getExpenseReportTitle(item.expense_report) : null),
   getAbsenceTitle: (item) => (item.absence ? getAbsenceTitle(item.absence) : null),
+  getProjectTimesheetTitle: (item) =>
+    item.project_time_period ? `${item.project_time_period.project_name} · ${getSourceTitle(item.project_time_period.period_start)}` : null,
 };
 
 function correspondingObject(item: ActionItem): string {
@@ -145,6 +178,14 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
   const [inspectingEntries, setInspectingEntries] = useState<Entry[]>([]);
   const [inspectingLoading, setInspectingLoading] = useState(false);
   const [inspectingError, setInspectingError] = useState<string | null>(null);
+  /** Set when the entries dialog shows one project's month rather than nothing. */
+  const [inspectingProject, setInspectingProject] = useState<string | null>(null);
+
+  const [inspectingMonth, setInspectingMonth] = useState<PeriodRow | null>(null);
+  const [inspectingMonthItemId, setInspectingMonthItemId] = useState<string | null>(null);
+  const [monthDays, setMonthDays] = useState<DayRow[]>([]);
+  const [monthLoading, setMonthLoading] = useState(false);
+  const [monthError, setMonthError] = useState<string | null>(null);
 
   const [inspectingReport, setInspectingReport] = useState<ExpenseReportRow | null>(null);
   const [inspectingReportActionItemId, setInspectingReportActionItemId] = useState<string | null>(null);
@@ -224,21 +265,41 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
     } catch { /* offline fallback */ }
   }
 
+  /** A working-time month: the person's days with target, worked and difference. */
   async function inspect(period: PeriodRow, actionItemId: string | null) {
-    setInspectingPeriod(period);
+    setInspectingMonth(period);
+    setInspectingMonthItemId(actionItemId);
+    setMonthDays([]);
+    setMonthLoading(true);
+    setMonthError(null);
+    try {
+      const startDate = period.period_start.slice(0, 10);
+      const [y, m] = startDate.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+      const res = await fetch(`${API}/organizations/${orgId}/day-targets?userId=${period.user_id}&from=${startDate}&to=${lastDay}`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (data?.ok === false) setMonthError(t('approvals.loadEntriesFailed'));
+      setMonthDays(Array.isArray(data?.days) ? data.days : []);
+    } catch {
+      setMonthError(t('approvals.loadEntriesFailed'));
+    } finally {
+      setMonthLoading(false);
+    }
+  }
+
+  /** A project month: that project's entries of the person in that month. */
+  async function inspectProjectMonth(period: ProjectPeriodRow, actionItemId: string) {
+    setInspectingPeriod({ id: period.id, user_id: period.user_id, user_display_name: period.user_display_name, user_email: period.user_email, period_start: period.period_start });
+    setInspectingProject(period.project_name);
     setInspectingActionItemId(actionItemId);
     setInspectingEntries([]);
     setInspectingLoading(true);
     setInspectingError(null);
     try {
-      const { from, to } = periodRange('month', period.period_start.slice(0, 10));
-      const url = new URL(`${API}/organizations/${orgId}/project-time`);
-      url.searchParams.set('userId', period.user_id);
-      url.searchParams.set('from', from);
-      url.searchParams.set('to', to);
-      const res = await fetch(url.toString(), { headers: await authHeaders() });
+      const res = await fetch(`${API}/project-timesheets/${period.id}/entries`, { headers: await authHeaders() });
       const data = await res.json();
-      setInspectingEntries(Array.isArray(data.entries) ? data.entries : []);
+      if (data?.ok === false) setInspectingError(t('approvals.loadEntriesFailed'));
+      setInspectingEntries(Array.isArray(data?.entries) ? data.entries.map((e: Entry) => ({ ...e, project_name: period.project_name })) : []);
     } catch {
       setInspectingError(t('approvals.loadEntriesFailed'));
     } finally {
@@ -378,6 +439,8 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
       item.expense_report?.user_email,
       item.absence?.user_display_name,
       item.absence?.user_email,
+      item.project_time_period?.user_display_name,
+      item.project_time_period?.user_email,
       actionItemLabel(item.definition_name, t),
       correspondingObject(item),
       actionItemDetail(item),
@@ -437,8 +500,8 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
                 <Fragment key={item.id}>
                   <TableRow hover>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.timesheet_period?.user_display_name ?? item.expense_report?.user_display_name ?? item.absence?.user_display_name ?? '—'}</Typography>
-                      <Typography variant="caption" color="text.secondary">{item.timesheet_period?.user_email ?? item.expense_report?.user_email ?? item.absence?.user_email ?? ''}</Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>{itemPerson(item)?.name ?? '—'}</Typography>
+                      <Typography variant="caption" color="text.secondary">{itemPerson(item)?.email ?? ''}</Typography>
                     </TableCell>
                     <TableCell><Chip label={actionItemLabel(item.definition_name, t)} size="small" variant="outlined" /></TableCell>
                     <TableCell>
@@ -457,6 +520,9 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
                       )}
                       {item.expense_report && (
                         <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void inspectReport(item.expense_report!, item.id)}>{t('approvals.inspect')}</Button>
+                      )}
+                      {item.project_time_period && (
+                        <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void inspectProjectMonth(item.project_time_period!, item.id)}>{t('approvals.inspect')}</Button>
                       )}
                       {item.absence?.document_id && (
                         <Button size="small" variant="outlined" sx={{ mr: 1 }} onClick={() => void viewAbsenceDocument(item.absence!)}>{t('approvals.documents')}</Button>
@@ -517,10 +583,95 @@ export default function Approvals({ orgId, role, authHeaders, onChanged }: Appro
         </Paper>
       )}
 
+      <Dialog open={!!inspectingMonth} onClose={() => setInspectingMonth(null)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          {inspectingMonth
+            ? t('approvals.reviewTimesheetFor', { name: inspectingMonth.user_display_name, period: periodLabel('month', inspectingMonth.period_start.slice(0, 10), locale) })
+            : t('approvals.reviewTimesheet')}
+        </DialogTitle>
+        <DialogContent dividers>
+          {monthError && <Alert severity="error" sx={{ mb: 2 }}>{monthError}</Alert>}
+          {monthLoading && <LinearProgress sx={{ mb: 2 }} />}
+          {inspectingMonth && (() => {
+            const target = monthDays.reduce((sum, d) => sum + d.target, 0);
+            const worked = monthDays.reduce((sum, d) => sum + d.attended, 0);
+            return (
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>{inspectingMonth.user_email}</Typography>
+                <Chip label={`${t('timesheet.target')}: ${formatDurationMinutes(target)}`} variant="outlined" />
+                <Chip label={`${t('timesheet.workHours')}: ${formatDurationMinutes(worked)}`} variant="outlined" />
+                <Chip label={`${t('timesheet.difference')}: ${formatSignedMinutes(worked - target)}`} color={worked - target < 0 ? 'error' : 'success'} variant="outlined" />
+              </Box>
+            );
+          })()}
+          <TableContainer sx={{ maxHeight: 480 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('timesheet.day')}</TableCell>
+                  <TableCell align="right">{t('timesheet.target')}</TableCell>
+                  <TableCell align="right">{t('timesheet.workHours')}</TableCell>
+                  <TableCell align="right">{t('timesheet.difference')}</TableCell>
+                  <TableCell>{t('timesheet.dayNote')}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {monthDays.map((d) => {
+                  const [y, m, dd] = d.date.split('-').map(Number);
+                  const note = [d.holidayInfo?.name ?? '', d.absence > 0 && d.absenceType ? formatAbsenceType(d.absenceType, t) : ''].filter(Boolean).join(' · ');
+                  return (
+                    <TableRow key={d.date} sx={{ opacity: d.target === 0 && d.attended === 0 ? 0.5 : 1 }}>
+                      <TableCell>{new Date(y, m - 1, dd).toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })}</TableCell>
+                      <TableCell align="right">{d.target ? formatDurationMinutes(d.target) : '—'}</TableCell>
+                      <TableCell align="right">{d.attended ? formatDurationMinutes(d.attended) : '—'}</TableCell>
+                      <TableCell align="right" sx={{ color: d.attended - d.target < 0 ? 'error.main' : undefined }}>
+                        {d.target || d.attended ? formatSignedMinutes(d.attended - d.target) : ''}
+                      </TableCell>
+                      <TableCell>{note}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInspectingMonth(null)}>{t('common.close')}</Button>
+          {inspectingMonthItemId && (
+            <>
+              <Button
+                color="error"
+                onClick={() => {
+                  const id = inspectingMonthItemId;
+                  setInspectingMonth(null);
+                  setRejectingId(id);
+                }}
+              >
+                {t('approvals.reject')}…
+              </Button>
+              <Button
+                variant="contained"
+                onClick={async () => {
+                  const id = inspectingMonthItemId;
+                  setInspectingMonth(null);
+                  await approveItem(id);
+                }}
+              >
+                {t('approvals.approve')}
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={!!inspectingPeriod} onClose={() => setInspectingPeriod(null)} maxWidth="md" fullWidth>
         <DialogTitle>
           {inspectingPeriod
-            ? t('approvals.reviewTimesheetFor', { name: inspectingPeriod.user_display_name, period: periodLabel('month', inspectingPeriod.period_start.slice(0, 10), locale) })
+            ? t('approvals.reviewProjectTimeFor', {
+                name: inspectingPeriod.user_display_name,
+                project: inspectingProject ?? '',
+                period: periodLabel('month', inspectingPeriod.period_start.slice(0, 10), locale),
+              })
             : t('approvals.reviewTimesheet')}
         </DialogTitle>
         <DialogContent dividers>

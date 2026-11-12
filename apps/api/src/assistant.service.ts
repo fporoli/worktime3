@@ -4,7 +4,8 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import { and, asc, eq, ilike, inArray } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { VersionsService } from './versions.service';
-import { can, isOrgMember, isPeriodLocked } from './access';
+import { WorkTimeModelService } from './work-time-model.service';
+import { can, isOrgMember, isProjectPeriodLocked } from './access';
 import { project_times, projects, teams, team_members, organization_memberships, users } from './db/schema';
 
 export interface AssistantMessage {
@@ -84,6 +85,7 @@ export class AssistantService {
   constructor(
     private readonly db: DbService,
     private readonly versions: VersionsService,
+    private readonly workTime: WorkTimeModelService,
   ) {}
 
   /**
@@ -233,16 +235,27 @@ export class AssistantService {
         results.push({ date, ok: false, error: 'end must be after start' });
         continue;
       }
-      if (await isPeriodLocked(ctx.db, ctx.orgId, ctx.callerId, date)) {
-        results.push({ date, ok: false, error: 'that month is locked (submitted/approved)' });
-        continue;
-      }
       const projectName = typeof e.projectName === 'string' ? e.projectName : undefined;
       const project = projectName
         ? orgProjects.find((p) => p.name.toLowerCase() === projectName.toLowerCase())
         : undefined;
       if (projectName && !project) {
         results.push({ date, ok: false, error: `unknown project "${projectName}"` });
+        continue;
+      }
+      if (await isProjectPeriodLocked(ctx.db, ctx.orgId, ctx.callerId, project?.id, start)) {
+        results.push({ date, ok: false, error: "that project's month is locked (submitted/approved)" });
+        continue;
+      }
+      // The REST endpoint warns and saves on confirmation; the assistant can't ask, so it skips
+      // the entry and says why (the person can add it themselves after recording working time).
+      const check = await this.workTime.checkProjectTime(ctx.db, ctx.orgId, ctx.callerId, start, end);
+      if (!check.ok) {
+        results.push({
+          date,
+          ok: false,
+          error: `project time (${check.projectMinutes} min) would exceed the attendance recorded that day (${check.attendanceMinutes} min); record working time first`,
+        });
         continue;
       }
       const values = {

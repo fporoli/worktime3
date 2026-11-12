@@ -28,7 +28,7 @@ import {
 import { BarChart } from '@mui/x-charts/BarChart';
 import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type Entry, type PeriodType } from './aggregate';
 import { useI18n } from './i18n';
-import { formatDurationMinutes } from './localeFormat';
+import { formatDurationMinutes, formatLocaleDate } from './localeFormat';
 import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
 import { ChevronLeftIcon, ChevronRightIcon, ContentCopyIcon, DeleteIcon, EditIcon, ScheduleIcon } from './icons';
 
@@ -64,9 +64,11 @@ interface OverlapConfirm {
   overlaps: OverlapEntry[];
 }
 
-interface TimesheetPeriodRow {
+/** A submitted or approved project month: that project's time in that month can't change. */
+interface ProjectLock {
+  project_id: string;
   period_start: string;
-  status: 'open' | 'submitted' | 'approved' | 'rejected';
+  status: 'submitted' | 'approved';
 }
 
 function splitLocal(iso: string): { date: string; time: string } {
@@ -121,20 +123,20 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [overlapConfirm, setOverlapConfirm] = useState<OverlapConfirm | null>(null);
+  // "More project time than working time" warning; confirming resends with both acknowledgements.
+  const [attendanceConfirm, setAttendanceConfirm] = useState<{ kind: 'add' | 'draft'; message: string; overlapAck: boolean } | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
-  const [periods, setPeriods] = useState<TimesheetPeriodRow[]>([]);
+  const [locks, setLocks] = useState<ProjectLock[]>([]);
 
   const rows = useMemo(() => bucket(entries, 'daily'), [entries]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
   const subprojects = subprojectsByProject[projectId] ?? [];
   const draftSubprojects = draft ? (subprojectsByProject[draft.projectId] ?? []) : [];
 
-  const activeMonthStart = `${entryDate.slice(0, 7)}-01`;
-  const viewedMonthStart = `${periodAnchor.slice(0, 7)}-01`;
-  const activeMonthStatus = periods.find((p) => p.period_start === activeMonthStart)?.status ?? 'open';
-  const viewedMonthStatus = periods.find((p) => p.period_start === viewedMonthStart)?.status ?? 'open';
-  const isEntryDateLocked = activeMonthStatus === 'submitted' || activeMonthStatus === 'approved';
-  const isViewedPeriodLocked = viewedMonthStatus === 'submitted' || viewedMonthStatus === 'approved';
+  const lockOf = (pid: string | null | undefined, date: string) =>
+    pid ? locks.find((l) => l.project_id === pid && l.period_start === `${date.slice(0, 7)}-01`) ?? null : null;
+  const activeLock = lockOf(projectId, entryDate);
+  const isEntryDateLocked = activeLock !== null;
 
   async function loadSubprojects(pid: string) {
     if (!pid) return;
@@ -172,9 +174,9 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
 
   async function reloadPeriods() {
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods?userId=${userId}`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets/locks`, { headers: await authHeaders() });
       const data = await res.json();
-      if (Array.isArray(data)) setPeriods(data);
+      if (Array.isArray(data)) setLocks(data);
     } catch { /* offline fallback */ }
   }
 
@@ -200,7 +202,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.projectId]);
 
-  async function addEntry(acknowledgeOverlap = false) {
+  async function addEntry(acknowledgeOverlap = false, acknowledgeAttendance = false) {
     setError(null);
     setSuccess(null);
     const startTime = toIso(entryDate, useProjectTimeRanges ? entryStartTime : DEFAULT_PROJECT_TIME_START);
@@ -216,6 +218,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
           subprojectId: subprojectId || undefined,
           comment,
           acknowledgeOverlap: acknowledgeOverlap || undefined,
+          acknowledgeAttendance: acknowledgeAttendance || undefined,
         }),
       });
       const data = await res.json();
@@ -224,10 +227,16 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
           setOverlapConfirm({ kind: 'add', overlaps: data.overlaps ?? [] });
           return;
         }
-        setError(PROJECT_TIME_ERRORS.has(data.error) ? t(`time.error.${data.error}`) : t('time.addFailed', { error: data.error ?? t('common.unknownError') }));
+        if (data.error === 'project-exceeds-attendance-confirm') {
+          setOverlapConfirm(null);
+          setAttendanceConfirm({ kind: 'add', message: saveError(data, 'time.addFailed'), overlapAck: acknowledgeOverlap });
+          return;
+        }
+        setError(saveError(data, 'time.addFailed'));
         return;
       }
       setOverlapConfirm(null);
+      setAttendanceConfirm(null);
       setComment('');
       setSuccess(t('time.added'));
       await reloadEntries();
@@ -236,7 +245,19 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
     }
   }
 
-  async function saveDraft(acknowledgeOverlap = false) {
+  /** The message for a refused save; the attendance check names the day and both totals. */
+  function saveError(data: { error?: string; date?: string; projectMinutes?: number; attendanceMinutes?: number }, fallbackKey: string): string {
+    if (data.error === 'project-exceeds-attendance-confirm') {
+      return t('time.error.project-exceeds-attendance', {
+        date: data.date ? formatLocaleDate(data.date, locale) : '',
+        project: formatDurationMinutes(data.projectMinutes ?? 0),
+        attendance: formatDurationMinutes(data.attendanceMinutes ?? 0),
+      });
+    }
+    return PROJECT_TIME_ERRORS.has(data.error ?? '') ? t(`time.error.${data.error}`) : t(fallbackKey, { error: data.error ?? t('common.unknownError') });
+  }
+
+  async function saveDraft(acknowledgeOverlap = false, acknowledgeAttendance = false) {
     if (!draft) return;
     setError(null);
     setSuccess(null);
@@ -252,7 +273,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
       const res = await fetch(`${API}/project-time/${draft.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ ...patch, acknowledgeOverlap: acknowledgeOverlap || undefined }),
+        body: JSON.stringify({ ...patch, acknowledgeOverlap: acknowledgeOverlap || undefined, acknowledgeAttendance: acknowledgeAttendance || undefined }),
       });
       const data = await res.json();
       if (data.ok === false) {
@@ -260,10 +281,16 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
           setOverlapConfirm({ kind: 'draft', overlaps: data.overlaps ?? [] });
           return;
         }
-        setError(PROJECT_TIME_ERRORS.has(data.error) ? t(`time.error.${data.error}`) : t('time.saveFailed', { error: data.error ?? t('common.unknownError') }));
+        if (data.error === 'project-exceeds-attendance-confirm') {
+          setOverlapConfirm(null);
+          setAttendanceConfirm({ kind: 'draft', message: saveError(data, 'time.saveFailed'), overlapAck: acknowledgeOverlap });
+          return;
+        }
+        setError(saveError(data, 'time.saveFailed'));
         return;
       }
       setOverlapConfirm(null);
+      setAttendanceConfirm(null);
       setDraft(null);
       setSuccess(t('time.saved'));
       await reloadEntries();
@@ -327,7 +354,10 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
       {isEntryDateLocked && (
         <Alert severity="warning">
-          {t('time.periodLockedBanner', { status: t(`timesheet.status.${activeMonthStatus}`) })}
+          {t('time.projectLockedBanner', {
+            project: projects.find((p) => p.id === projectId)?.name ?? '',
+            status: t(`timesheet.status.${activeLock?.status ?? 'submitted'}`),
+          })}
         </Alert>
       )}
 
@@ -461,12 +491,6 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
 
         {loading && <LinearProgress sx={{ mt: 1.5 }} />}
 
-        {isViewedPeriodLocked && !isEntryDateLocked && (
-          <Alert severity="info" sx={{ mt: 1.5 }}>
-            {t('time.periodLockedBanner', { status: t(`timesheet.status.${viewedMonthStatus}`) })}
-          </Alert>
-        )}
-
         {chartData.length > 0 && (
           <Box sx={{ mt: 2 }}>
             <Typography variant="subtitle2" sx={{ mb: 0.5 }}>{t('time.chartTitle')}</Typography>
@@ -520,9 +544,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
             </TableHead>
             <TableBody>
               {sortedEntries.map((e) => {
-                const entryMonth = splitLocal(e.start_time).date.slice(0, 7) + '-01';
-                const entryStatus = periods.find((p) => p.period_start === entryMonth)?.status ?? 'open';
-                const entryLocked = entryStatus === 'submitted' || entryStatus === 'approved';
+                const entryLocked = lockOf(e.project_id, splitLocal(e.start_time).date) !== null;
                 return (
                   <TableRow key={e.id} hover>
                     <TableCell>{new Date(e.start_time).toLocaleDateString(locale)}</TableCell>
@@ -656,6 +678,26 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
             <Button type="submit" variant="contained" disabled={draftDurationInvalid}>{t('time.save')}</Button>
           </DialogActions>
         </Box>
+      </Dialog>
+
+      <Dialog open={!!attendanceConfirm} onClose={() => setAttendanceConfirm(null)} fullWidth maxWidth="xs">
+        <DialogTitle>{t('time.attendanceTitle')}</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 1, pt: 1 }}>
+          <Typography variant="body2">{attendanceConfirm?.message}</Typography>
+          <Typography variant="body2">{t('time.attendanceConfirm')}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAttendanceConfirm(null)}>{t('time.cancel')}</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (attendanceConfirm?.kind === 'add') void addEntry(attendanceConfirm.overlapAck, true);
+              else if (attendanceConfirm?.kind === 'draft') void saveDraft(attendanceConfirm.overlapAck, true);
+            }}
+          >
+            {t('time.bookAnyway')}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       <Dialog open={!!overlapConfirm} onClose={() => setOverlapConfirm(null)} fullWidth maxWidth="xs">

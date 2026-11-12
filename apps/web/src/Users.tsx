@@ -24,11 +24,12 @@ import {
   Typography,
 } from '@mui/material';
 import { BasicDataPanel } from './BasicDataPanel';
-import { BalanceLedger } from './BalanceLedger';
+import WorkSchedulePanel from './WorkSchedulePanel';
+import { BalancesPanel } from './BalancesPanel';
 import { useI18n } from './i18n';
 import { assignableRoles, roleLabel, type OrgRole } from './roleLabel';
 import { PageHeader, TableEmptyRow } from './components';
-import { AccountBalanceWalletIcon, CloseIcon, PeopleIcon, PersonIcon, SearchIcon } from './icons';
+import { AccountBalanceWalletIcon, CloseIcon, PeopleIcon, PersonIcon, ScheduleIcon, SearchIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -52,6 +53,8 @@ interface UsersProps {
   isHr: boolean;
   /** May open other members' personal details (section permissions beyond `own`). */
   canAccessBasicData: boolean;
+  /** The caller may see other people's work schedules (section.workTime.schedule beyond own). */
+  canSeeWorkSchedules?: boolean;
   canManage: boolean;
   authHeaders: () => Promise<Record<string, string>>;
 }
@@ -62,7 +65,7 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
   suspended: 'error',
 };
 
-export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, authHeaders }: UsersProps) {
+export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSchedules = false, canManage, authHeaders }: UsersProps) {
   const { t, locale } = useI18n();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
@@ -72,6 +75,7 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, a
   const [search, setSearch] = useState('');
   const [basicDataFor, setBasicDataFor] = useState<Member | null>(null);
   const [balancesFor, setBalancesFor] = useState<Member | null>(null);
+  const [scheduleFor, setScheduleFor] = useState<Member | null>(null);
 
   const canViewBalances = isAdmin || canManage;
 
@@ -222,7 +226,7 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, a
                 <TableCell>{t('users.col.manager')}</TableCell>
                 <TableCell>{t('users.col.roles')}</TableCell>
                 {isAdmin && <TableCell>{t('users.col.addRole')}</TableCell>}
-                {(canAccessBasicData || canViewBalances) && <TableCell align="right">{t('common.actions')}</TableCell>}
+                {(canAccessBasicData || canViewBalances || canSeeWorkSchedules) && <TableCell align="right">{t('common.actions')}</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -283,8 +287,15 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, a
                         </Box>
                       </TableCell>
                     )}
-                    {(canAccessBasicData || canViewBalances) && (
+                    {(canAccessBasicData || canViewBalances || canSeeWorkSchedules) && (
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        {canSeeWorkSchedules && (
+                          <Tooltip title={t('workSchedule.title')}>
+                            <IconButton size="small" aria-label={t('workSchedule.title')} onClick={() => setScheduleFor(m)}>
+                              <ScheduleIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         {canViewBalances && (
                           <Tooltip title={t('users.balances')}>
                             <IconButton size="small" aria-label={t('users.balances')} onClick={() => setBalancesFor(m)}>
@@ -324,7 +335,19 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, a
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!balancesFor} onClose={() => setBalancesFor(null)} fullWidth maxWidth="md">
+      <Dialog open={!!scheduleFor} onClose={() => setScheduleFor(null)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="h6" component="span">{scheduleFor?.display_name}</Typography>
+          <IconButton size="small" aria-label={t('common.close')} onClick={() => setScheduleFor(null)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {scheduleFor && <WorkSchedulePanel orgId={orgId} userId={scheduleFor.user_id} authHeaders={authHeaders} />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!balancesFor} onClose={() => setBalancesFor(null)} fullWidth maxWidth="lg">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Typography variant="h6" component="span">
             {balancesFor ? t('balances.forUser', { name: balancesFor.display_name }) : t('balances.title')}
@@ -335,7 +358,7 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canManage, a
         </DialogTitle>
         <DialogContent dividers>
           {balancesFor && (
-            <BalanceLedger orgId={orgId} userId={balancesFor.user_id} isAdmin={isAdmin} authHeaders={authHeaders} />
+            <BalancesPanel orgId={orgId} userId={balancesFor.user_id} authHeaders={authHeaders} />
           )}
         </DialogContent>
         <DialogActions>
