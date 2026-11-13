@@ -112,10 +112,17 @@ export async function canManageRole(
   return rows.rows.length > 0;
 }
 
-/** The `manager_user_id` on `userId`'s membership in this org, or null if they have none (top of their chain). */
-export async function membershipManagerId(db: Executor, organizationId: string, userId: string): Promise<string | null> {
+/**
+ * `userId`'s manager in this org on `onDate` ('YYYY-MM-DD', default today): the manager of their
+ * employee assignment in force then (latest `valid_from` on or before it), or null if none (top of
+ * their chain). Managers change over time, so always ask this rather than storing the answer.
+ */
+export async function membershipManagerId(db: Executor, organizationId: string, userId: string, onDate?: string): Promise<string | null> {
   const rows = await db.execute(
-    sql`SELECT manager_user_id FROM organization_memberships WHERE organization_id = ${organizationId} AND user_id = ${userId} LIMIT 1`,
+    sql`SELECT manager_user_id FROM employee_assignments
+        WHERE organization_id = ${organizationId} AND user_id = ${userId}
+          AND valid_from <= COALESCE(${onDate ?? null}::date, CURRENT_DATE)
+        ORDER BY valid_from DESC LIMIT 1`,
   );
   return (rows.rows[0]?.manager_user_id as string | null) ?? null;
 }
@@ -125,10 +132,14 @@ export async function isManagerOf(db: Executor, organizationId: string, managerI
   return (await membershipManagerId(db, organizationId, targetUserId)) === managerId;
 }
 
-/** user_ids whose membership in this org names `managerId` as their manager — i.e. `managerId`'s direct reports. */
+/** user_ids whose assignment in force today names `managerId` as their manager — i.e. `managerId`'s direct reports. */
 export async function directReportUserIds(db: Executor, organizationId: string, managerId: string): Promise<string[]> {
   const rows = await db.execute(
-    sql`SELECT user_id FROM organization_memberships WHERE organization_id = ${organizationId} AND manager_user_id = ${managerId}`,
+    sql`SELECT user_id FROM (
+          SELECT DISTINCT ON (user_id) user_id, manager_user_id FROM employee_assignments
+          WHERE organization_id = ${organizationId} AND valid_from <= CURRENT_DATE
+          ORDER BY user_id, valid_from DESC
+        ) current_assignment WHERE manager_user_id = ${managerId}`,
   );
   return rows.rows.map((r: Record<string, unknown>) => r.user_id as string);
 }

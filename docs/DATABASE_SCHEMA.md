@@ -108,7 +108,10 @@ erDiagram
     PERMISSIONS ||--o{ ROLE_PERMISSIONS : "granted via"
     ORGANIZATIONS ||--o{ ORGANIZATION_MEMBERSHIPS : "admits"
     USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "joins"
-    USERS ||--o{ ORGANIZATION_MEMBERSHIPS : "manager_user_id"
+    ORGANIZATIONS ||--o{ DEPARTMENTS : "has"
+    USERS ||--o{ DEPARTMENTS : "leader_user_id"
+    USERS ||--o{ EMPLOYEE_ASSIGNMENTS : "user_id / manager_user_id"
+    DEPARTMENTS ||--o{ EMPLOYEE_ASSIGNMENTS : "department_id"
     ORGANIZATION_MEMBERSHIPS ||--o{ MEMBERSHIP_ROLES : "holds"
     ROLES ||--o{ MEMBERSHIP_ROLES : "granted as"
     USERS ||--o{ MEMBERSHIP_ROLES : "granted_by_user_id"
@@ -137,10 +140,27 @@ erDiagram
         uuid organization_id FK
         uuid user_id FK
         enum status "active / invited / suspended"
-        timestamptz joined_at "nullable"
-        uuid manager_user_id FK "nullable — who timesheet approvals route to; null = top of chain"
+        timestamptz joined_at "nullable — when the account joined"
+        date start_date "nullable — employment start (balances count from it)"
         timestamptz exit_at "nullable — membership end; must be after joined_at when both are set"
         jsonb settings "free-form per-membership bucket: validity dates, planned holidays, etc."
+    }
+    DEPARTMENTS {
+        uuid id PK
+        uuid organization_id FK
+        text name "unique per org"
+        uuid leader_user_id FK "nullable — default leader, only suggested as manager"
+        boolean is_active
+        int sort_order
+    }
+    EMPLOYEE_ASSIGNMENTS {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        date valid_from "unique per (org, user); in force until the next row"
+        uuid department_id FK "nullable"
+        text job_function "nullable"
+        uuid manager_user_id FK "nullable — who approvals route to; null = top of chain"
     }
     MEMBERSHIP_ROLES {
         uuid membership_id PK "FK -> organization_memberships"
@@ -163,8 +183,10 @@ erDiagram
 > One membership row per `(organization_id, user_id)` — `uq_org_user_membership`
 > — but any number of rows in `membership_roles` for it. Granting or revoking a
 > role requires being an org owner/admin, or being listed in that role's own
-> `admin_user_ids`. A member's `manager_user_id` is who their timesheet
-> submissions route to for approval (see Timesheets below) — an org admin can
+> `admin_user_ids`. A member's manager is the `manager_user_id` of their
+> `employee_assignments` row in force (latest `valid_from` on or before the day):
+> who their timesheet, absence and expense submissions route to (see Timesheets
+> below); a change is a new dated row, so the history stays. An org admin can
 > always review/approve regardless of this chain.
 
 ## Teams (2 tables)

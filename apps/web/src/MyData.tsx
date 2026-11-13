@@ -1,6 +1,7 @@
 import { Box } from '@mui/material';
 import { BasicDataPanel, ReviewQueue } from './BasicDataPanel';
 import WorkSchedulePanel from './WorkSchedulePanel';
+import EmploymentPanel from './EmploymentPanel';
 
 export interface MyDataProps {
   orgId: string;
@@ -9,13 +10,16 @@ export interface MyDataProps {
   onReviewResolved?: () => void;
   /** The caller may see their own work schedule (section.workTime.schedule). */
   showWorkSchedule?: boolean;
+  /** The caller may see their own employment (section.people.employment). */
+  showEmployment?: boolean;
 }
 
 /** Personal basic data page + HR change-request review queue. */
-export default function MyData({ orgId, userId, authHeaders, onReviewResolved, showWorkSchedule = true }: MyDataProps) {
+export default function MyData({ orgId, userId, authHeaders, onReviewResolved, showWorkSchedule = true, showEmployment = true }: MyDataProps) {
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
       <BasicDataPanel orgId={orgId} userId={userId} isSelf authHeaders={authHeaders} />
+      {showEmployment && <EmploymentPanel orgId={orgId} userId={userId} authHeaders={authHeaders} />}
       {showWorkSchedule && <WorkSchedulePanel orgId={orgId} userId={userId} authHeaders={authHeaders} />}
       <ReviewQueue orgId={orgId} authHeaders={authHeaders} onResolved={onReviewResolved} />
     </Box>

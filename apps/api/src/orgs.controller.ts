@@ -32,7 +32,6 @@ export function buildInviteEmail(orgName: string, token: string): { subject: str
   };
 }
 
-const managerUsers = alias(users, 'manager_users');
 
 const ORG_COLUMNS = {
   id: organizations.id,
@@ -186,18 +185,29 @@ export class OrgsController {
         status: organization_memberships.status,
         email: users.email,
         display_name: users.display_name,
-        manager_user_id: organization_memberships.manager_user_id,
-        manager_display_name: managerUsers.display_name,
+        start_date: organization_memberships.start_date,
+        joined_at: organization_memberships.joined_at,
         settings: organization_memberships.settings,
         role_id: roles.id,
         role_name: roles.name,
       })
       .from(organization_memberships)
       .innerJoin(users, eq(users.id, organization_memberships.user_id))
-      .leftJoin(managerUsers, eq(managerUsers.id, organization_memberships.manager_user_id))
       .leftJoin(membership_roles, eq(membership_roles.membership_id, organization_memberships.id))
       .leftJoin(roles, eq(roles.id, membership_roles.role_id))
       .where(eq(organization_memberships.organization_id, id));
+
+    // Department, function and manager come from each person's assignment in force today.
+    const assigned = await db.execute(sql`
+      SELECT DISTINCT ON (a.user_id) a.user_id, a.manager_user_id, m.display_name AS manager_name,
+             a.department_id, d.name AS department_name, a.job_function
+      FROM employee_assignments a
+      LEFT JOIN users m ON m.id = a.manager_user_id
+      LEFT JOIN departments d ON d.id = a.department_id
+      WHERE a.organization_id = ${id} AND a.valid_from <= CURRENT_DATE
+      ORDER BY a.user_id, a.valid_from DESC`);
+    type Current = { user_id: string; manager_user_id: string | null; manager_name: string | null; department_id: string | null; department_name: string | null; job_function: string | null };
+    const current = new Map((assigned.rows as Current[]).map((r) => [r.user_id, r]));
 
     // A membership can hold several roles now — fold the joined rows back into one entry per member.
     const byMembership = new Map<
@@ -210,6 +220,10 @@ export class OrgsController {
         display_name: string;
         manager_user_id: string | null;
         manager_display_name: string | null;
+        department_id: string | null;
+        department_name: string | null;
+        job_function: string | null;
+        start_date: string | null;
         settings: unknown;
         role_ids: string[];
         role_names: string[];
@@ -224,8 +238,12 @@ export class OrgsController {
           status: row.status,
           email: row.email,
           display_name: row.display_name,
-          manager_user_id: row.manager_user_id,
-          manager_display_name: row.manager_display_name,
+          manager_user_id: current.get(row.user_id)?.manager_user_id ?? null,
+          manager_display_name: current.get(row.user_id)?.manager_name ?? null,
+          department_id: current.get(row.user_id)?.department_id ?? null,
+          department_name: current.get(row.user_id)?.department_name ?? null,
+          job_function: current.get(row.user_id)?.job_function ?? null,
+          start_date: row.start_date ?? row.joined_at?.slice(0, 10) ?? null,
           settings: row.settings,
           role_ids: [],
           role_names: [],
@@ -238,7 +256,10 @@ export class OrgsController {
     return [...byMembership.values()];
   }
 
-  /** Admin-only: (re)assign who a member's timesheet approvals route to, or stash free-form per-membership data. */
+  /**
+   * Admin-only: free-form per-membership data. The manager line is dated now: it is set through
+   * employment assignments (`organizations/:orgId/users/:userId/assignments`).
+   */
   @Patch(':id/members/:membershipId')
   async updateMember(
     @Param('id') id: string,
@@ -250,8 +271,8 @@ export class OrgsController {
     if (!db) return { ok: true, offline: true };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    // Member administration (manager line, membership settings): a Users edit grant reaching everyone.
     if (!(await reachesAll(db, id, callerId, 'nav.users', 'edit'))) return { ok: false, error: 'forbidden' };
+    if (body.managerUserId !== undefined) return { ok: false, error: 'use-employment-assignments' };
 
     const [membership] = await db
       .select({ user_id: organization_memberships.user_id })
@@ -260,17 +281,6 @@ export class OrgsController {
     if (!membership) return { ok: false, error: 'membership-not-found' };
 
     const patch: Partial<typeof organization_memberships.$inferInsert> = {};
-    if (body.managerUserId !== undefined) {
-      if (body.managerUserId === membership.user_id) return { ok: false, error: 'cannot-be-own-manager' };
-      if (body.managerUserId) {
-        const [managerMembership] = await db
-          .select({ id: organization_memberships.id })
-          .from(organization_memberships)
-          .where(and(eq(organization_memberships.organization_id, id), eq(organization_memberships.user_id, body.managerUserId)));
-        if (!managerMembership) return { ok: false, error: 'manager-not-a-member' };
-      }
-      patch.manager_user_id = body.managerUserId;
-    }
     if (body.settings !== undefined) patch.settings = body.settings;
     if (Object.keys(patch).length === 0) return { ok: true, noop: true };
 

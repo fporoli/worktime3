@@ -23,6 +23,7 @@ import { PageHeader, TableEmptyRow } from './components';
 import { SettingsIcon } from './icons';
 import BrandingSettings from './BrandingSettings';
 import WorkTimeSettings from './WorkTimeSettings';
+import DepartmentSettings from './DepartmentSettings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -221,6 +222,8 @@ export default function OrganizationSettings({ orgId, authHeaders }: Organizatio
       </Paper>
 
       <BrandingSettings orgId={orgId} authHeaders={authHeaders} />
+
+      <DepartmentSettings orgId={orgId} authHeaders={authHeaders} />
 
       <WorkTimeSettings orgId={orgId} authHeaders={authHeaders} />
 

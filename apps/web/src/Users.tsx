@@ -25,11 +25,12 @@ import {
 } from '@mui/material';
 import { BasicDataPanel } from './BasicDataPanel';
 import WorkSchedulePanel from './WorkSchedulePanel';
+import EmploymentPanel from './EmploymentPanel';
 import { BalancesPanel } from './BalancesPanel';
 import { useI18n } from './i18n';
 import { assignableRoles, roleLabel, type OrgRole } from './roleLabel';
 import { PageHeader, TableEmptyRow } from './components';
-import { AccountBalanceWalletIcon, CloseIcon, PeopleIcon, PersonIcon, ScheduleIcon, SearchIcon } from './icons';
+import { AccountBalanceWalletIcon, BusinessIcon, CloseIcon, PeopleIcon, PersonIcon, ScheduleIcon, SearchIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -43,6 +44,8 @@ interface Member {
   display_name: string;
   manager_user_id: string | null;
   manager_display_name: string | null;
+  department_name: string | null;
+  job_function: string | null;
   role_ids: string[];
   role_names: string[];
 }
@@ -55,6 +58,8 @@ interface UsersProps {
   canAccessBasicData: boolean;
   /** The caller may see other people's work schedules (section.workTime.schedule beyond own). */
   canSeeWorkSchedules?: boolean;
+  /** The caller may see other people's employment (section.people.employment beyond own). */
+  canSeeEmployment?: boolean;
   canManage: boolean;
   authHeaders: () => Promise<Record<string, string>>;
 }
@@ -65,7 +70,7 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'warning' | 'error'> 
   suspended: 'error',
 };
 
-export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSchedules = false, canManage, authHeaders }: UsersProps) {
+export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSchedules = false, canSeeEmployment = false, canManage, authHeaders }: UsersProps) {
   const { t, locale } = useI18n();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
@@ -76,6 +81,7 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
   const [basicDataFor, setBasicDataFor] = useState<Member | null>(null);
   const [balancesFor, setBalancesFor] = useState<Member | null>(null);
   const [scheduleFor, setScheduleFor] = useState<Member | null>(null);
+  const [employmentFor, setEmploymentFor] = useState<Member | null>(null);
 
   const canViewBalances = isAdmin || canManage;
 
@@ -130,27 +136,10 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
     }
   }
 
-  async function setManager(membershipId: string, managerUserId: string) {
-    setError(null);
-    try {
-      const res = await fetch(`${API}/organizations/${orgId}/members/${membershipId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ managerUserId: managerUserId || null }),
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        const message =
-          data.error === 'cannot-be-own-manager'
-            ? t('users.cannotBeOwnManager')
-            : t('users.setManagerFailed', { error: data.error ?? t('common.unknownError') });
-        setError(message);
-        return;
-      }
-      await reloadMembers();
-    } catch {
-      setError(t('common.cannotReachApi'));
-    }
+  /** Closing the employment dialog refreshes the table: department and manager may have changed. */
+  function closeEmployment() {
+    setEmploymentFor(null);
+    void reloadMembers();
   }
 
   async function revokeRole(membershipId: string, roleId: string) {
@@ -223,10 +212,11 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
                 <TableCell>{t('common.name')}</TableCell>
                 <TableCell>{t('common.email')}</TableCell>
                 <TableCell>{t('common.status')}</TableCell>
+                <TableCell>{t('users.col.department')}</TableCell>
                 <TableCell>{t('users.col.manager')}</TableCell>
                 <TableCell>{t('users.col.roles')}</TableCell>
                 {isAdmin && <TableCell>{t('users.col.addRole')}</TableCell>}
-                {(canAccessBasicData || canViewBalances || canSeeWorkSchedules) && <TableCell align="right">{t('common.actions')}</TableCell>}
+                {(canAccessBasicData || canViewBalances || canSeeWorkSchedules || canSeeEmployment) && <TableCell align="right">{t('common.actions')}</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -240,23 +230,10 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
                       <Chip label={statusLabel(m.status)} size="small" color={STATUS_COLOR[m.status] ?? 'default'} />
                     </TableCell>
                     <TableCell>
-                      {isAdmin ? (
-                        <TextField
-                          select
-                          size="small"
-                          value={m.manager_user_id ?? ''}
-                          onChange={(e) => void setManager(m.id, e.target.value)}
-                          sx={{ minWidth: 160 }}
-                        >
-                          <MenuItem value=""><em>{t('users.noManager')}</em></MenuItem>
-                          {members.filter((o) => o.id !== m.id).map((o) => (
-                            <MenuItem key={o.user_id} value={o.user_id}>{o.display_name}</MenuItem>
-                          ))}
-                        </TextField>
-                      ) : (
-                        m.manager_display_name ?? '—'
-                      )}
+                      <Typography variant="body2">{m.department_name ?? '—'}</Typography>
+                      {m.job_function && <Typography variant="caption" color="text.secondary">{m.job_function}</Typography>}
                     </TableCell>
+                    <TableCell>{m.manager_display_name ?? '—'}</TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                         {m.role_ids.map((rid, i) => (
@@ -287,8 +264,15 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
                         </Box>
                       </TableCell>
                     )}
-                    {(canAccessBasicData || canViewBalances || canSeeWorkSchedules) && (
+                    {(canAccessBasicData || canViewBalances || canSeeWorkSchedules || canSeeEmployment) && (
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        {canSeeEmployment && (
+                          <Tooltip title={t('employment.title')}>
+                            <IconButton size="small" aria-label={t('employment.title')} onClick={() => setEmploymentFor(m)}>
+                              <BusinessIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         {canSeeWorkSchedules && (
                           <Tooltip title={t('workSchedule.title')}>
                             <IconButton size="small" aria-label={t('workSchedule.title')} onClick={() => setScheduleFor(m)}>
@@ -314,7 +298,7 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
                 );
               })}
               {filteredMembers.length === 0 && !loading && (
-                <TableEmptyRow colSpan={isAdmin ? 7 : 6} icon={<PeopleIcon fontSize="inherit" />} title={t('users.empty')} />
+                <TableEmptyRow colSpan={isAdmin ? 8 : 7} icon={<PeopleIcon fontSize="inherit" />} title={t('users.empty')} />
               )}
             </TableBody>
           </Table>
@@ -331,6 +315,20 @@ export default function Users({ orgId, isAdmin, canAccessBasicData, canSeeWorkSc
         <DialogContent dividers sx={{ pb: 3 }}>
           {basicDataFor && (
             <BasicDataPanel orgId={orgId} userId={basicDataFor.user_id} isSelf={false} embedded authHeaders={authHeaders} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!employmentFor} onClose={closeEmployment} fullWidth maxWidth="md">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="h6" component="span">{employmentFor?.display_name}</Typography>
+          <IconButton size="small" aria-label={t('common.close')} onClick={closeEmployment}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {employmentFor && (
+<EmploymentPanel orgId={orgId} userId={employmentFor.user_id} authHeaders={authHeaders} />
           )}
         </DialogContent>
       </Dialog>

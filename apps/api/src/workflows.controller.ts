@@ -30,6 +30,8 @@ export class WorkflowsController {
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return [];
+    // Requests follow a person's manager: bring the inbox up to date with dated manager changes.
+    await this.workflowsSvc.rerouteToCurrentManagers(db).catch(() => 0);
     const teamIds = await this.workflowsSvc.callerTeamIds(db, callerId);
     const assignedToCaller = sql`${workflows.assigned_to_user_id} @> ARRAY[${callerId}]::uuid[]`;
     const assignment = teamIds.length > 0 ? or(assignedToCaller, inArray(workflows.assigned_to_team_id, teamIds)) : assignedToCaller;

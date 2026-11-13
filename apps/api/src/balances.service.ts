@@ -431,10 +431,11 @@ export class BalancesService {
    */
   async startDate(db: Db, orgId: string, userId: string, settings: WorkTimeSettings, timeZone: string, today: string): Promise<{ start: string; until: string | null }> {
     const [membership] = await db
-      .select({ joined_at: organization_memberships.joined_at, exit_at: organization_memberships.exit_at })
+      .select({ start_date: organization_memberships.start_date, joined_at: organization_memberships.joined_at, exit_at: organization_memberships.exit_at })
       .from(organization_memberships)
       .where(and(eq(organization_memberships.organization_id, orgId), eq(organization_memberships.user_id, userId)));
-    const joined = membership?.joined_at ? localDate(membership.joined_at, timeZone) : null;
+    // The employment start date, else the day the account joined the organization.
+    const joined = membership?.start_date ?? (membership?.joined_at ? localDate(membership.joined_at, timeZone) : null);
     const until = membership?.exit_at ? localDate(membership.exit_at, timeZone) : null;
     let start = settings.balancesStartDate;
     if (!start) {

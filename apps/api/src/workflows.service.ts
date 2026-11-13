@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from './db.service';
 import { reachesAll } from './access';
 import { workflows, workflow_definitions, team_members, organization_memberships } from './db/schema';
@@ -17,6 +17,14 @@ export const APPROVE_EXPENSE_REPORT_WORKFLOW_NAME = 'approve expense report';
 export const APPROVE_ABSENCE_WORKFLOW_NAME = 'approve absence';
 /** A person's month of project time on one project, awaiting that project's owner. */
 export const APPROVE_PROJECT_TIMESHEET_WORKFLOW_NAME = 'approve project timesheet';
+
+/** Workflows that go to the submitter's manager; they follow the manager when it changes. */
+export const MANAGER_ROUTED_WORKFLOW_NAMES: readonly string[] = [
+  REOPEN_TIMESHEET_WORKFLOW_NAME,
+  APPROVE_TIMESHEET_WORKFLOW_NAME,
+  APPROVE_EXPENSE_REPORT_WORKFLOW_NAME,
+  APPROVE_ABSENCE_WORKFLOW_NAME,
+];
 
 interface WorkflowStepDefinition {
   key: string;
@@ -202,6 +210,64 @@ export class WorkflowsService {
     });
   }
 
+  /**
+   * Managers are dated (employee_assignments), so a pending request sent to someone's manager
+   * moves to whoever is their manager today: after an assignment changes, and whenever a dated
+   * change has come into force since. Only requests still with one of the person's managers
+   * (current or past) move; a request already elsewhere, or a person without a manager now, stays.
+   * The new manager is notified. Returns how many requests moved.
+   */
+  async rerouteToCurrentManagers(db: Db): Promise<number> {
+    const names = sql.join(MANAGER_ROUTED_WORKFLOW_NAMES.map((n) => sql`${n}`), sql`, `);
+    const result = await db.execute(sql`
+      WITH pending AS (
+        SELECT w.workflow_id, w.assigned_to_user_id[1] AS assignee,
+               (w.workflow_data->>'submittedByUserId')::uuid AS subject,
+               COALESCE(tp.organization_id, ab.organization_id, er.organization_id) AS organization_id
+        FROM workflows w
+        JOIN workflow_definitions d ON d.workflow_def_id = w.workflow_def_id
+        LEFT JOIN timesheet_periods tp ON w.source_table = 'timesheet_periods' AND tp.id = w.source_table_uuid
+        LEFT JOIN absences ab ON w.source_table = 'absences' AND ab.id = w.source_table_uuid
+        LEFT JOIN expense_reports er ON w.source_table = 'expense_reports' AND er.id = w.source_table_uuid
+        WHERE w.step_status = 'pending' AND d.name IN (${names})
+          AND cardinality(w.assigned_to_user_id) = 1
+          AND jsonb_exists(w.workflow_data, 'submittedByUserId')
+      ), moved AS (
+        SELECT p.*, (
+          SELECT a.manager_user_id FROM employee_assignments a
+          WHERE a.organization_id = p.organization_id AND a.user_id = p.subject AND a.valid_from <= CURRENT_DATE
+          ORDER BY a.valid_from DESC LIMIT 1
+        ) AS manager
+        FROM pending p
+        WHERE p.organization_id IS NOT NULL
+      )
+      UPDATE workflows w SET assigned_to_user_id = ARRAY[m.manager]
+      FROM moved m
+      WHERE w.workflow_id = m.workflow_id AND m.manager IS NOT NULL AND m.manager <> m.assignee
+        AND EXISTS (
+          SELECT 1 FROM employee_assignments ea
+          WHERE ea.organization_id = m.organization_id AND ea.user_id = m.subject AND ea.manager_user_id = m.assignee
+        )
+      RETURNING w.workflow_id, w.source_table, w.source_table_uuid, m.organization_id, m.manager`);
+    const rows = result.rows as { workflow_id: string; source_table: string; source_table_uuid: string; organization_id: string; manager: string }[];
+    for (const r of rows) {
+      void this.versions.record('workflows', r.workflow_id, 'update_delta', null, { assigned_to_user_id: [r.manager] }).catch(() => {});
+      void this.notifications
+        .notifyMany({
+          organizationId: r.organization_id,
+          recipientUserIds: [r.manager],
+          type: 'workflow.assigned',
+          title: 'A request was passed on to you as the new manager',
+          sourceTable: r.source_table,
+          sourceTableUuid: r.source_table_uuid,
+          workflowId: r.workflow_id,
+          data: { workflowId: r.workflow_id, sourceTable: r.source_table, sourceTableUuid: r.source_table_uuid },
+        })
+        .catch(() => {});
+    }
+    return rows.length;
+  }
+
   /** The pending workflow (if any) for a record — lets a record-specific endpoint (e.g. timesheet-periods/:id/approve) delegate to it. */
   async findPending(db: Db, sourceTable: string, sourceTableUuid: string, definitionName?: string) {
     const conditions = [
@@ -226,6 +292,8 @@ export class WorkflowsService {
     outcome: 'approved' | 'rejected',
     note: string | undefined,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    // A dated manager change may have come into force since the request was routed.
+    await this.rerouteToCurrentManagers(db).catch(() => 0);
     const [workflow] = await db
       .select({
         source_table: workflows.source_table,

@@ -49,7 +49,7 @@ INSERT INTO roles(id, organization_id, "name", description, is_system_role, sett
   ('00000000-0000-0000-0000-000000000001'::uuid, NULL, 'owner', 'Full organization owner and legal contact', true, '{}'::jsonb, '{}'::jsonb, '{}'),
   ('00000000-0000-0000-0000-000000000002'::uuid, NULL, 'admin', 'Organization administrator', true, '{}'::jsonb, '{}'::jsonb, '{}'),
   ('00000000-0000-0000-0000-000000000003'::uuid, NULL, 'member', 'Standard collaborator with read/write access', true, '{}'::jsonb, '{}'::jsonb, '{}'),
-  ('00000000-0000-0000-0000-000000000004'::uuid, NULL, 'guest', 'Restricted access to assigned teams/projects only', true, '{}'::jsonb, '{}'::jsonb, '{}'),
+  ('00000000-0000-0000-0000-000000000004'::uuid, NULL, 'guest', 'Restricted access to tbd', true, '{}'::jsonb, '{}'::jsonb, '{}'),
   ('00000000-0000-0000-0000-000000000005'::uuid, NULL, 'billing_admin', 'Can manage billing and subscription tiers only', true, '{}'::jsonb, '{}'::jsonb, '{}'),
   ('00000000-0000-0000-0000-000000000006'::uuid, NULL, 'manager', 'Manager with team, project, and subproject access', true, '{}'::jsonb, '{}'::jsonb, '{}')
 ON CONFLICT DO NOTHING;
@@ -71,27 +71,46 @@ VALUES
   ('eeeeeeee-eeee-eeee-eeee-222222222222', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '22222222-2222-2222-2222-222222222222', 'active', to_date('2023-01-01', 'YYYY-MM-DD'))
 ON CONFLICT (organization_id, user_id) DO NOTHING;
 
--- Acme reporting lines (organization_memberships.manager_user_id; approvals route to that person):
+-- Employment start: the seeded joined_at date (only where none is set yet).
+UPDATE organization_memberships SET start_date = joined_at::date
+WHERE organization_id IN ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')
+  AND start_date IS NULL AND joined_at IS NOT NULL;
+
+-- Acme departments, each with a default leader (only a default: the manager is set per person).
+INSERT INTO departments (id, organization_id, name, leader_user_id, sort_order) VALUES
+  ('dddddddd-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Administration', '22222222-2222-2222-2222-222222222222', 1),
+  ('dddddddd-0000-0000-0000-000000000002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'HR', '22222222-2222-2222-2222-222222222226', 2),
+  ('dddddddd-0000-0000-0000-000000000003', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Sales', '22222222-2222-2222-2222-222222222224', 3),
+  ('dddddddd-0000-0000-0000-000000000004', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Marketing', NULL, 4),
+  ('dddddddd-0000-0000-0000-000000000005', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Research & Development', '22222222-2222-2222-2222-222222222223', 5)
+ON CONFLICT DO NOTHING;
+
+-- Acme reporting lines, dated (employee_assignments; approvals route to the manager in force):
 --   Alice  -> Admin, Adam
 --   Adam   -> Marta, Marco, Uma
---   Marta  -> Ulla
+--   Marta  -> Ulla, and Ueli until mid-2025 (Sales), when he moved to R&D under Marco
 --   Marco  -> Ueli
--- An UPDATE rather than a column in the INSERT above, so re-running the seed fills in rows that
--- exist without a manager; a manager someone set since is left alone.
-UPDATE organization_memberships m
-SET manager_user_id = v.manager_user_id::uuid
+-- valid_from is each person's start date, so rows the 050 migration made from an old manager
+-- column are the same rows (the natural key is the row's key): only their unset department and
+-- function get filled in.
+INSERT INTO employee_assignments (organization_id, user_id, valid_from, department_id, job_function, manager_user_id)
+SELECT 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', v.user_id::uuid,
+       COALESCE(v.valid_from::date, m.start_date, m.joined_at::date), v.department_id::uuid, v.job_function, v.manager_user_id::uuid
 FROM (VALUES
-  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'), -- Admin <- Alice
-  ('22222222-2222-2222-2222-222222222223', '22222222-2222-2222-2222-222222222222'), -- Adam  <- Alice
-  ('22222222-2222-2222-2222-222222222224', '22222222-2222-2222-2222-222222222223'), -- Marta <- Adam
-  ('22222222-2222-2222-2222-222222222225', '22222222-2222-2222-2222-222222222223'), -- Marco <- Adam
-  ('22222222-2222-2222-2222-222222222228', '22222222-2222-2222-2222-222222222223'), -- Uma   <- Adam
-  ('22222222-2222-2222-2222-222222222226', '22222222-2222-2222-2222-222222222224'), -- Ulla  <- Marta
-  ('22222222-2222-2222-2222-222222222227', '22222222-2222-2222-2222-222222222225')  -- Ueli  <- Marco
-) AS v(user_id, manager_user_id)
-WHERE m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-  AND m.user_id = v.user_id::uuid
-  AND m.manager_user_id IS NULL;
+  ('22222222-2222-2222-2222-222222222222', 2024-01-01, 'dddddddd-0000-0000-0000-000000000001', 'Managing Director', NULL),                                    -- Alice
+  ('11111111-1111-1111-1111-111111111111', 2024-12-01, 'dddddddd-0000-0000-0000-000000000001', 'System Administrator', '22222222-2222-2222-2222-222222222222'), -- Admin <- Alice
+  ('22222222-2222-2222-2222-222222222223', 2025-01-01, 'dddddddd-0000-0000-0000-000000000005', 'Head of R&D', '22222222-2222-2222-2222-222222222222'),          -- Adam  <- Alice
+  ('22222222-2222-2222-2222-222222222224', 2024-03-01, 'dddddddd-0000-0000-0000-000000000003', 'Head of Sales', '22222222-2222-2222-2222-222222222223'),        -- Marta <- Adam
+  ('22222222-2222-2222-2222-222222222225', 2026-01-01, 'dddddddd-0000-0000-0000-000000000005', 'Team Lead', '22222222-2222-2222-2222-222222222223'),            -- Marco <- Adam
+  ('22222222-2222-2222-2222-222222222228', 2026-05-01, 'dddddddd-0000-0000-0000-000000000005', 'Software Developer', '22222222-2222-2222-2222-222222222223'),   -- Uma   <- Adam
+  ('22222222-2222-2222-2222-222222222226', 2026-01-01, 'dddddddd-0000-0000-0000-000000000002', 'HR Specialist', '22222222-2222-2222-2222-222222222224'),        -- Ulla  <- Marta
+  ('22222222-2222-2222-2222-222222222227', 2024-03-01, 'dddddddd-0000-0000-0000-000000000003', 'Sales Assistant', '22222222-2222-2222-2222-222222222224'),      -- Ueli  <- Marta (Sales)
+  ('22222222-2222-2222-2222-222222222227', '2025-07-01', 'dddddddd-0000-0000-0000-000000000005', 'Software Developer', '22222222-2222-2222-2222-222222222225') -- Ueli  <- Marco (R&D)
+) AS v(user_id, valid_from, department_id, job_function, manager_user_id)
+JOIN organization_memberships m ON m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND m.user_id = v.user_id::uuid
+ON CONFLICT (organization_id, user_id, valid_from) DO UPDATE
+SET department_id = COALESCE(employee_assignments.department_id, EXCLUDED.department_id),
+    job_function = COALESCE(employee_assignments.job_function, EXCLUDED.job_function);
 
 -- Roles per membership (a membership can hold more than one). Everyone who manages someone
 -- above holds the manager role; Ulla is also hr, Uma also developer.

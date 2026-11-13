@@ -874,6 +874,7 @@ export default function App() {
                   authHeaders={authHeaders}
                   onReviewResolved={() => void refreshBadges()}
                   showWorkSchedule={permissions ? holdsAny(permissions, 'section.workTime.schedule') : true}
+                  showEmployment={permissions ? holdsAny(permissions, 'section.people.employment') : true}
                 />
               )}
               {section === 'projectTimesheet' && allowed('projectTimesheet') && orgId && (
@@ -978,6 +979,7 @@ export default function App() {
                   isHr={flags.isHr}
                   canAccessBasicData={permissions ? seesOthersBasicData(permissions) : flags.isAdmin || flags.isHr}
                   canSeeWorkSchedules={permissions ? holdsBeyondOwn(permissions, 'section.workTime.schedule', 'see') : flags.isAdmin || flags.isHr || flags.canManage}
+                  canSeeEmployment={permissions ? holdsBeyondOwn(permissions, 'section.people.employment', 'see') : flags.isAdmin || flags.isHr || flags.canManage}
                   canManage={flags.canManage}
                   authHeaders={authHeaders}
                 />

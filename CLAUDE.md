@@ -136,8 +136,15 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   New navbar entries/sections need a registry entry, catalogue rows and default grants
   (a new `NNN-permission-*.sql` changelog); the catalogue test checks those match the registry.
 - Roles are per organization. A membership can hold several roles
-  (`membership_roles`). "Manager of X" means `organization_memberships.manager_user_id`,
-  so approvals route to that specific manager, not to any org manager.
+  (`membership_roles`). "Manager of X" is the manager of X's employee assignment in force
+  (`employee_assignments`: dated department, function and manager per person, 050), read through
+  `membershipManagerId` / `isManagerOf` / `directReportUserIds`, never stored elsewhere. Approvals
+  route to that specific manager, not to any org manager; pending manager requests move to the new
+  manager when it changes (`WorkflowsService.rerouteToCurrentManagers`, run on writes, on the
+  Approvals inbox and before a decision). Departments (Organization settings, `departments`) have a
+  default leader, which is only offered as manager. Employment (start date
+  `organization_memberships.start_date` plus assignments, `employment.controller.ts`,
+  `EmploymentPanel`) is `section.people.employment`: HR and admin edit it (051).
 - Errors are returned, not thrown: `{ ok: false, error: 'kebab-code' }`
   (e.g. `forbidden`, `period-locked`, `unknown-user`); success is `{ ok: true, ... }`.
   Read endpoints return empty shapes on denial.

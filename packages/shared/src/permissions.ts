@@ -82,6 +82,8 @@ export const SECTION_OBJECTS: readonly PermissionObject[] = [
 export const WORK_SECTION_OBJECTS: readonly PermissionObject[] = [
   // The person's work schedule (target hours per weekday, workload, holiday canton).
   { id: 'section.workTime.schedule', kind: 'section', scopes: PEOPLE_SCOPES, caption: 'workSchedule.title', parent: BASICDATA_PARENT },
+  // The person's employment: start date and dated department / function / manager (051).
+  { id: 'section.people.employment', kind: 'section', scopes: PEOPLE_SCOPES, caption: 'employment.title', parent: BASICDATA_PARENT },
 ];
 
 /** Organization-wide sections of a page; both parents are that page. */

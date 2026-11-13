@@ -120,9 +120,10 @@ host-run API and web app directly.
   | `isManagerOf` | The specific manager of a member |
   | `canManageItem` / `canManageTeamMembers` | Team leads and project owners (scope `own`) |
   | `isSuperDeveloper` / `isOrgDeveloper` | Global and per-org form designers |
-- "Manager of X" is the specific `organization_memberships.manager_user_id`,
-  so approvals route to the member's own manager, not to any manager in the
-  org.
+- "Manager of X" is the manager named by X's employee assignment in force
+  (`employee_assignments`, dated, with department and function), so approvals
+  route to the member's own manager, not to any manager in the org. When the
+  manager changes, pending requests move to the new one.
 - Time writes additionally check a period lock: work time and absences
   `isPeriodLocked` (the working-time timesheet month is submitted or
   approved), project time `isProjectPeriodLocked` (that project's month in the
