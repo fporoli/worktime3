@@ -132,7 +132,8 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
   // Whose project time is shown: one's own, or (manager/HR) someone whose hours one may correct.
   const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
-  useEffect(() => setPersonId(userId), [orgId, userId]);
+  // Back to the opened person (or oneself) when the org or user changes; also runs on mount.
+  useEffect(() => setPersonId(initialPersonId ?? userId), [orgId, userId, initialPersonId]);
 
   const rows = useMemo(() => bucket(entries, 'daily'), [entries]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
@@ -357,7 +358,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
     <Box sx={{ display: 'grid', gap: 2 }}>
       <PageHeader
         title={t('nav.timeTracking')}
-        end={<PersonPicker orgId={orgId} kind="time" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />}
+        end={<PersonPicker orgId={orgId} kind="time" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} highlight={!!initialPersonId} />}
       />
 
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}

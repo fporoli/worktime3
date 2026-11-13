@@ -116,7 +116,8 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
   // Whose sessions are shown: one's own, or (manager/HR) someone whose work time one may correct.
   const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
-  useEffect(() => setPersonId(userId), [orgId, userId]);
+  // Back to the opened person (or oneself) when the org or user changes; also runs on mount.
+  useEffect(() => setPersonId(initialPersonId ?? userId), [orgId, userId, initialPersonId]);
 
   /** API error code -> message; a locked month has to be reopened by the manager or HR. */
   function failure(key: string, code: string | undefined): string {
@@ -269,7 +270,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
         title={t('workTime.title')}
         end={
           <>
-            <PersonPicker orgId={orgId} kind="workTime" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />
+            <PersonPicker orgId={orgId} kind="workTime" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} highlight={!!initialPersonId} />
             {isSelf && balance && (
             <>
               <Tooltip

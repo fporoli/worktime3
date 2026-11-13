@@ -12,6 +12,8 @@ import {
   TableCell,
   TableRow,
   Typography,
+  alpha,
+  useTheme,
 } from '@mui/material';
 import { useT } from './i18n';
 
@@ -169,6 +171,7 @@ export function PersonPicker({
   value,
   onChange,
   authHeaders,
+  highlight = false,
 }: {
   orgId: string;
   kind: 'workTime' | 'time' | 'timesheet' | 'projectTimesheet';
@@ -176,8 +179,11 @@ export function PersonPicker({
   value: string;
   onChange: (userId: string) => void;
   authHeaders: () => Promise<Record<string, string>>;
+  /** Pulses the field briefly, e.g. after the team overview opened a person. */
+  highlight?: boolean;
 }) {
   const t = useT();
+  const theme = useTheme();
   const [people, setPeople] = useState<{ id: string; name: string; email: string }[]>([]);
 
   useEffect(() => {
@@ -199,7 +205,23 @@ export function PersonPicker({
 
   if (!people.some((p) => p.id !== selfId)) return null;
   return (
-    <TextField select size="small" label={t('people.person')} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 220 }}>
+    <TextField
+      select
+      size="small"
+      label={t('people.person')}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      sx={{
+        minWidth: 220,
+        ...(highlight && {
+          '@keyframes personPickerPulse': {
+            '0%, 100%': { boxShadow: '0 0 0 0 transparent' },
+            '50%': { boxShadow: `0 0 0 5px ${alpha(theme.palette.primary.main, 0.4)}` },
+          },
+          '& .MuiOutlinedInput-root': { borderRadius: 1, animation: 'personPickerPulse 0.7s ease-in-out 3' },
+        }),
+      }}
+    >
       {people.map((p) => (
         <MenuItem key={p.id} value={p.id}>
           {p.id === selfId ? t('people.me', { name: p.name }) : p.name}

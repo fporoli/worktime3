@@ -132,7 +132,8 @@ export default function Timesheet({ orgId, userId, authHeaders, initialPersonId,
   const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
   const [reopening, setReopening] = useState(false);
-  useEffect(() => setPersonId(userId), [orgId, userId]);
+  // Back to the opened person (or oneself) when the org or user changes; also runs on mount.
+  useEffect(() => setPersonId(initialPersonId ?? userId), [orgId, userId, initialPersonId]);
 
   async function reload() {
     setLoading(true);
@@ -295,7 +296,7 @@ export default function Timesheet({ orgId, userId, authHeaders, initialPersonId,
         subtitle={periodLabel('month', period, locale)}
         end={
           <>
-            <PersonPicker orgId={orgId} kind="timesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />
+            <PersonPicker orgId={orgId} kind="timesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} highlight={!!initialPersonId} />
             <Chip label={t(`timesheet.status.${status}`)} color={STATUS_COLOR[status]} size="small" />
           </>
         }

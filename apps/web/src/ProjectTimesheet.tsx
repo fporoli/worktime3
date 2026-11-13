@@ -85,7 +85,8 @@ export default function ProjectTimesheet({
   const [busy, setBusy] = useState(false);
   const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
-  useEffect(() => setPersonId(userId), [orgId, userId]);
+  // Back to the opened person (or oneself) when the org or user changes; also runs on mount.
+  useEffect(() => setPersonId(initialPersonId ?? userId), [orgId, userId, initialPersonId]);
 
   async function reload(m = month) {
     setLoading(true);
@@ -164,7 +165,7 @@ export default function ProjectTimesheet({
       <PageHeader
         title={t('projectTimesheet.title')}
         subtitle={t('projectTimesheet.subtitle')}
-        end={<PersonPicker orgId={orgId} kind="projectTimesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />}
+        end={<PersonPicker orgId={orgId} kind="projectTimesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} highlight={!!initialPersonId} />}
       />
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
