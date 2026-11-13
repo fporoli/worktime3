@@ -60,9 +60,22 @@ function shiftMonth(month: string, by: number): string {
  * rejected one can be corrected and submitted again. The person's manager and HR pick the person
  * and reopen a submitted or approved project month so it can be corrected.
  */
-export default function ProjectTimesheet({ orgId, userId, authHeaders }: { orgId: string; userId: string; authHeaders: () => Promise<Record<string, string>> }) {
+export default function ProjectTimesheet({
+  orgId,
+  userId,
+  authHeaders,
+  initialPersonId,
+  initialMonth,
+}: {
+  orgId: string;
+  userId: string;
+  authHeaders: () => Promise<Record<string, string>>;
+  /** Opens the page on this person and month ('YYYY-MM'), from the team overview. */
+  initialPersonId?: string;
+  initialMonth?: string;
+}) {
   const { t, locale } = useI18n();
-  const [month, setMonth] = useState(currentMonth());
+  const [month, setMonth] = useState(initialMonth ?? currentMonth());
   const [projects, setProjects] = useState<ProjectMonth[]>([]);
   const [unassigned, setUnassigned] = useState({ minutes: 0, entries: 0 });
   const [loading, setLoading] = useState(true);
@@ -70,7 +83,7 @@ export default function ProjectTimesheet({ orgId, userId, authHeaders }: { orgId
   const [success, setSuccess] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const [personId, setPersonId] = useState(userId);
+  const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
   useEffect(() => setPersonId(userId), [orgId, userId]);
 

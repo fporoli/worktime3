@@ -96,9 +96,11 @@ interface WorkTimeProps {
   userId: string;
   authHeaders: () => Promise<Record<string, string>>;
   onWorkTimeChanged?: () => void;
+  /** Opens the page on this person (from the team overview). */
+  initialPersonId?: string;
 }
 
-export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged }: WorkTimeProps) {
+export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged, initialPersonId }: WorkTimeProps) {
   const { t, locale } = useI18n();
   const [tab, setTab] = useState<'sessions' | 'balances'>('sessions');
   const [range, setRange] = useState<RangeKey>('14d');
@@ -112,7 +114,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
   // Whose sessions are shown: one's own, or (manager/HR) someone whose work time one may correct.
-  const [personId, setPersonId] = useState(userId);
+  const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
   useEffect(() => setPersonId(userId), [orgId, userId]);
 

@@ -73,6 +73,7 @@ const ExpenseProcessing = lazy(() => import('./ExpenseProcessing'));
 const Assistant = lazy(() => import('./Assistant'));
 const TeamHours = lazy(() => import('./TeamHours'));
 const ProjectTimesheet = lazy(() => import('./ProjectTimesheet'));
+const TeamView = lazy(() => import('./TeamView'));
 const BalanceReport = lazy(() => import('./BalanceReport'));
 const AuditLog = lazy(() => import('./AuditLog'));
 const Users = lazy(() => import('./Users'));
@@ -876,36 +877,66 @@ export default function App() {
                 />
               )}
               {section === 'projectTimesheet' && allowed('projectTimesheet') && orgId && (
-                <ProjectTimesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+                <TeamView
+                  orgId={orgId}
+                  kind="projectTimesheet"
+                  authHeaders={authHeaders}
+                  renderOwn={(personId, month) => (
+                    <ProjectTimesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} initialPersonId={personId} initialMonth={month} />
+                  )}
+                />
               )}
               {section === 'time' && allowed('time') && orgId && (
-                <ProjectTime
+                <TeamView
                   orgId={orgId}
-                  userId={session.userId}
-                  useProjectTimeRanges={useProjectTimeRanges}
+                  kind="time"
                   authHeaders={authHeaders}
-                  projectsVersion={projectsVersion}
+                  renderOwn={(personId) => (
+                    <ProjectTime
+                      orgId={orgId}
+                      userId={session.userId}
+                      useProjectTimeRanges={useProjectTimeRanges}
+                      authHeaders={authHeaders}
+                      projectsVersion={projectsVersion}
+                      initialPersonId={personId}
+                    />
+                  )}
                 />
               )}
               {section === 'timesheet' && allowed('timesheet') && orgId && (
-                <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+                <TeamView
+                  orgId={orgId}
+                  kind="timesheet"
+                  authHeaders={authHeaders}
+                  renderOwn={(personId, month) => (
+                    <Timesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} initialPersonId={personId} initialMonth={month} />
+                  )}
+                />
               )}
               {section === 'workTime' && allowed('workTime') && orgId && (
-                <WorkTime
+                <TeamView
                   orgId={orgId}
-                  userId={session.userId}
+                  kind="workTime"
                   authHeaders={authHeaders}
-                  onWorkTimeChanged={() => setWorkTimeVersion((v) => v + 1)}
+                  renderOwn={(personId) => (
+                    <WorkTime
+                      orgId={orgId}
+                      userId={session.userId}
+                      authHeaders={authHeaders}
+                      onWorkTimeChanged={() => setWorkTimeVersion((v) => v + 1)}
+                      initialPersonId={personId}
+                    />
+                  )}
                 />
               )}
               {section === 'absences' && allowed('absences') && orgId && (
-                <Absences orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+                <TeamView orgId={orgId} kind="absences" authHeaders={authHeaders} renderOwn={() => <Absences orgId={orgId} userId={session.userId} authHeaders={authHeaders} />} />
               )}
               {section === 'expenses' && allowed('expenses') && orgId && (
-                <Expenses orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+                <TeamView orgId={orgId} kind="expenses" authHeaders={authHeaders} renderOwn={() => <Expenses orgId={orgId} userId={session.userId} authHeaders={authHeaders} />} />
               )}
               {section === 'expenseReports' && allowed('expenseReports') && orgId && (
-                <ExpenseReports orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
+                <TeamView orgId={orgId} kind="expenseReports" authHeaders={authHeaders} renderOwn={() => <ExpenseReports orgId={orgId} userId={session.userId} authHeaders={authHeaders} />} />
               )}
               {(section === 'management' || section === 'managementProjects') && allowed(section) && orgId && (
                 <Management

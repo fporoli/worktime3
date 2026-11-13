@@ -186,6 +186,10 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   HR (`canEditUserData`: `nav.workTime` / `nav.time` edit beyond own) and only while the month is
   open; the manager or HR reopens a submitted/approved month (`timesheet-periods/:id/reopen`,
   `project-timesheets/:id/reopen`). The pages pick the person via `time-record-people` (`PersonPicker`).
+  Managers and HR also get a Team tab on those pages and on Absences, Expenses and Expense reports
+  (`TeamView.tsx`, `GET organizations/:orgId/team-overview?kind=&month=`): one row per person they may
+  see (`listableUserIds`, caller excluded), opening that person's page or their entries; Absences adds a
+  month calendar with the org's holidays. HR's read access to absences and expenses is 049.
   The work schedule is HR's alone (048); every basic-data section, Personalien included, is
   requested by the employee and approved by HR.
 

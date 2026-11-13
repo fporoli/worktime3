@@ -107,9 +107,12 @@ interface TimesheetProps {
   orgId: string;
   userId: string;
   authHeaders: () => Promise<Record<string, string>>;
+  /** Opens the page on this person and month ('YYYY-MM'), from the team overview. */
+  initialPersonId?: string;
+  initialMonth?: string;
 }
 
-export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps) {
+export default function Timesheet({ orgId, userId, authHeaders, initialPersonId, initialMonth }: TimesheetProps) {
   const { t, locale } = useI18n();
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [monthEntries, setMonthEntries] = useState<Entry[]>([]);
@@ -120,13 +123,13 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState(currentPeriodStart());
+  const [period, setPeriod] = useState(initialMonth ? `${initialMonth}-01` : currentPeriodStart());
   const [reopenRequest, setReopenRequest] = useState<ReopenRequest | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [requestingReopen, setRequestingReopen] = useState(false);
   const [submitNote, setSubmitNote] = useState('');
   // Whose month is shown: one's own, or (manager/HR) a person whose month one may reopen.
-  const [personId, setPersonId] = useState(userId);
+  const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
   const [reopening, setReopening] = useState(false);
   useEffect(() => setPersonId(userId), [orgId, userId]);

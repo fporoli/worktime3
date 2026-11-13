@@ -102,9 +102,11 @@ export interface ProjectTimeProps {
   useProjectTimeRanges: boolean;
   authHeaders: () => Promise<Record<string, string>>;
   projectsVersion?: number;
+  /** Opens the page on this person (from the team overview). */
+  initialPersonId?: string;
 }
 
-export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authHeaders, projectsVersion = 0 }: ProjectTimeProps) {
+export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authHeaders, projectsVersion = 0, initialPersonId }: ProjectTimeProps) {
   const { t, locale } = useI18n();
   const theme = useTheme();
   const [periodType, setPeriodType] = useState<PeriodType>('week');
@@ -128,7 +130,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [locks, setLocks] = useState<ProjectLock[]>([]);
   // Whose project time is shown: one's own, or (manager/HR) someone whose hours one may correct.
-  const [personId, setPersonId] = useState(userId);
+  const [personId, setPersonId] = useState(initialPersonId ?? userId);
   const isSelf = personId === userId;
   useEffect(() => setPersonId(userId), [orgId, userId]);
 
