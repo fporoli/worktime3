@@ -20,7 +20,7 @@ import { useI18n } from './i18n';
 import { formatDurationMinutes, formatLocaleDate, formatSignedMinutes } from './localeFormat';
 import { holidayName, type Holiday } from '@worktime3/shared/worktime';
 import { formatDays, monthName, type MonthBalance } from './BalancesPanel';
-import { PageHeader } from './components';
+import { PageHeader, PersonPicker } from './components';
 import { ChevronLeftIcon, ChevronRightIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -125,11 +125,16 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   const [reopenReason, setReopenReason] = useState('');
   const [requestingReopen, setRequestingReopen] = useState(false);
   const [submitNote, setSubmitNote] = useState('');
+  // Whose month is shown: one's own, or (manager/HR) a person whose month one may reopen.
+  const [personId, setPersonId] = useState(userId);
+  const isSelf = personId === userId;
+  const [reopening, setReopening] = useState(false);
+  useEffect(() => setPersonId(userId), [orgId, userId]);
 
   async function reload() {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods?userId=${userId}`, {
+      const res = await fetch(`${API}/organizations/${orgId}/timesheet-periods?userId=${personId}`, {
         headers: await authHeaders(),
       });
       const data = await res.json();
@@ -145,9 +150,9 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       const headers = await authHeaders();
       const lastDay = new Date(Date.UTC(Number(targetPeriod.slice(0, 4)), Number(targetPeriod.slice(5, 7)), 0)).toISOString().slice(0, 10);
       const [ptRes, dayRes, balRes] = await Promise.all([
-        fetch(`${API}/organizations/${orgId}/project-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
-        fetch(`${API}/organizations/${orgId}/day-targets?from=${targetPeriod}&to=${lastDay}`, { headers }),
-        fetch(`${API}/organizations/${orgId}/balances/year?year=${targetPeriod.slice(0, 4)}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/project-time?userId=${personId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/day-targets?from=${targetPeriod}&to=${lastDay}&userId=${personId}`, { headers }),
+        fetch(`${API}/organizations/${orgId}/balances/year?year=${targetPeriod.slice(0, 4)}&userId=${personId}`, { headers }),
       ]);
       const ptData = await ptRes.json();
       const dayData = await dayRes.json();
@@ -163,12 +168,12 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, userId]);
+  }, [orgId, personId]);
 
   useEffect(() => {
     void reloadMonthSummary(period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, userId, period]);
+  }, [orgId, personId, period]);
 
   const current = periods.find((p) => p.period_start === period);
   const status = current?.status ?? 'open';
@@ -213,6 +218,28 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       setError(t('timesheet.reopenRequestFailed', { error: 'offline' }));
     } finally {
       setRequestingReopen(false);
+    }
+  }
+
+  /** Manager/HR: reopens the shown person's submitted or approved month so it can be corrected. */
+  async function reopen() {
+    if (!current) return;
+    setError(null);
+    setSuccess(null);
+    setReopening(true);
+    try {
+      const res = await fetch(`${API}/timesheet-periods/${current.id}/reopen`, { method: 'POST', headers: await authHeaders() });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error === 'forbidden' ? t('approvals.reopenForbidden') : t('approvals.reopenFailedWith', { error: data.error ?? t('common.unknownError') }));
+        return;
+      }
+      setSuccess(t('approvals.reopened'));
+      await Promise.all([reload(), reloadMonthSummary(period)]);
+    } catch {
+      setError(t('approvals.reopenFailed'));
+    } finally {
+      setReopening(false);
     }
   }
 
@@ -263,7 +290,12 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
       <PageHeader
         title={t('timesheet.title')}
         subtitle={periodLabel('month', period, locale)}
-        end={<Chip label={t(`timesheet.status.${status}`)} color={STATUS_COLOR[status]} size="small" />}
+        end={
+          <>
+            <PersonPicker orgId={orgId} kind="timesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />
+            <Chip label={t(`timesheet.status.${status}`)} color={STATUS_COLOR[status]} size="small" />
+          </>
+        }
       />
 
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
@@ -425,13 +457,28 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
           {monthBalance && monthBalance.vacationDays > 0 && ` · ${t('timesheet.vacationTaken', { value: formatDays(monthBalance.vacationDays, locale) })}`}
         </Typography>
 
-        {(status === 'open' || status === 'rejected') && (
+        {!isSelf && (
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+            {status === 'submitted' || status === 'approved' ? (
+              <>
+                <Typography variant="body2" color="text.secondary">{t('timesheet.reopenForOther')}</Typography>
+                <Button variant="outlined" size="small" onClick={reopen} disabled={reopening}>
+                  {t('approvals.reopen')}
+                </Button>
+              </>
+            ) : (
+              <Typography variant="body2" color="text.secondary">{t('timesheet.openForOther')}</Typography>
+            )}
+          </Box>
+        )}
+
+        {isSelf && (status === 'open' || status === 'rejected') && (
           <Alert severity={monthOver ? 'info' : 'warning'} sx={{ mb: 1.5, maxWidth: 900 }}>
             {monthOver ? t('timesheet.submitExplain') : t('timesheet.submitEarly')}
           </Alert>
         )}
 
-        {(status === 'open' || status === 'rejected') && (
+        {isSelf && (status === 'open' || status === 'rejected') && (
           <TextField
             size="small"
             label={t('timesheet.submitNote')}
@@ -449,11 +496,13 @@ export default function Timesheet({ orgId, userId, authHeaders }: TimesheetProps
             }}
           />
         )}
+        {isSelf && (
         <Button variant="contained" size="small" onClick={submit} disabled={status === 'submitted' || status === 'approved'}>
           {status === 'approved' ? t('timesheet.approved') : status === 'submitted' ? t('timesheet.pending') : status === 'rejected' ? t('timesheet.resubmit') : t('timesheet.submit')}
         </Button>
+        )}
 
-        {status === 'approved' && (
+        {isSelf && status === 'approved' && (
           <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
             {reopenRequest?.step_status === 'pending' ? (
               <Typography variant="body2">{t('timesheet.reopenPending')}</Typography>

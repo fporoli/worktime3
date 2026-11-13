@@ -116,7 +116,7 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   2. `const userId = req.user ? await callerUserId(db, req.user) : null;`
      Never trust a user id from the body or query for the caller.
   3. Gate with permissions (below) via `can` / `canSeeUserData` / `listableUserIds` /
-     `reachesAll` / `canEditBeyondOwn`, plus `isOrgMember`, `isManagerOf`, `isSuperDeveloper`.
+     `reachesAll` / `canEditBeyondOwn` / `canEditUserData`, plus `isOrgMember`, `isManagerOf`, `isSuperDeveloper`.
      Team Management uses `canManageItem` (scope `own` = teams you lead, projects you own).
      Don't add checks on role names; `isOrgDeveloper` (form design) is the one left.
   4. Work-time and absence writes check `isPeriodLocked` (working-time timesheet month
@@ -182,7 +182,12 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   timesheet (`project_time_periods`, one row per person, project and month,
   `project-timesheets.controller.ts`) goes to each project's owner (Approvals page), approved
   on submit when the person owns the project or it has none. Hours without a project can't
-  be submitted.
+  be submitted. Work time and project time are changed by the person, their designated manager or
+  HR (`canEditUserData`: `nav.workTime` / `nav.time` edit beyond own) and only while the month is
+  open; the manager or HR reopens a submitted/approved month (`timesheet-periods/:id/reopen`,
+  `project-timesheets/:id/reopen`). The pages pick the person via `time-record-people` (`PersonPicker`).
+  The work schedule is HR's alone (048); every basic-data section, Personalien included, is
+  requested by the employee and approved by HR.
 
 ## Web conventions (`apps/web/src`)
 

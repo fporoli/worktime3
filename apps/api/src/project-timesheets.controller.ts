@@ -1,7 +1,7 @@
 import { Body, Controller, Get, OnModuleInit, Param, Post, Query, Req } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
-import { callerUserId, canSeeUserData, isOrgMember, reachesAll } from './access';
+import { callerUserId, canEditUserData, canSeeUserData, isOrgMember, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { project_time_periods, projects, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
@@ -102,17 +102,20 @@ export class ProjectTimesheetsController implements OnModuleInit {
     return { ok: true, month: periodStart, projects: rows, unassigned: unassigned ? { minutes: unassigned.minutes, entries: unassigned.entries } : { minutes: 0, entries: 0 } };
   }
 
-  /** The caller's locked project months (submitted or approved), for the project-time page. */
+  /** A person's locked project months (submitted or approved; the caller's by default), for the project-time page. */
   @Get('organizations/:orgId/project-timesheets/locks')
-  async locks(@Param('orgId') orgId: string, @Req() req: AuthenticatedRequest) {
+  async locks(@Param('orgId') orgId: string, @Req() req: AuthenticatedRequest, @Query('userId') userId?: string) {
     const db = this.db.getDb();
     if (!db) return [];
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return [];
+    // Someone else's locks (their manager or HR entering time for them) need sight of their data.
+    const target = userId || callerId;
+    if (target !== callerId && !(await canSeeUserData(db, orgId, callerId, 'nav.time', target))) return [];
     const rows = await db
       .select({ project_id: project_time_periods.project_id, period_start: project_time_periods.period_start, status: project_time_periods.status })
       .from(project_time_periods)
-      .where(and(eq(project_time_periods.organization_id, orgId), eq(project_time_periods.user_id, callerId)));
+      .where(and(eq(project_time_periods.organization_id, orgId), eq(project_time_periods.user_id, target)));
     return rows.filter((r) => r.status === 'submitted' || r.status === 'approved');
   }
 
@@ -221,7 +224,11 @@ export class ProjectTimesheetsController implements OnModuleInit {
     };
   }
 
-  /** The project's owner (or an approvals override) reopens an approved month so it can be corrected. */
+  /**
+   * Reopens a submitted or approved project month so its hours can be corrected again: the
+   * project's owner, an approvals override, the person's designated manager or HR
+   * (`nav.projectTimesheet` edit beyond own). A pending approval is cancelled.
+   */
   @Post('project-timesheets/:id/reopen')
   async reopen(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
@@ -230,9 +237,14 @@ export class ProjectTimesheetsController implements OnModuleInit {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     const period = await this.findPeriod(db, id);
     if (!period) return { ok: false, error: 'not-found' };
-    if (!(await this.mayReview(db, period, callerId))) return { ok: false, error: 'forbidden' };
-    if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
-    const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
+    const mayReopen =
+      (await this.mayReview(db, period, callerId)) ||
+      (period.user_id !== callerId && (await canEditUserData(db, period.organization_id, callerId, OBJECT, period.user_id)));
+    if (!mayReopen) return { ok: false, error: 'forbidden' };
+    if (period.status !== 'approved' && period.status !== 'submitted') return { ok: false, error: 'not-locked' };
+    const pending = await this.workflowsSvc.findPending(db, 'project_time_periods', id);
+    if (pending) await db.update(workflows).set({ step_status: 'cancelled', workflow_finished: new Date().toISOString() }).where(eq(workflows.workflow_id, pending.id));
+    const patch = { status: 'open' as const, submitted_at: null, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
     await db.update(project_time_periods).set(patch).where(eq(project_time_periods.id, id));
     void this.versions.record('project_time_periods', id, 'update_delta', callerId, patch).catch(() => {});
     void this.audit.record(period.organization_id, callerId, 'project-timesheet.reopen', 'project_time_period', id, {}).catch(() => {});

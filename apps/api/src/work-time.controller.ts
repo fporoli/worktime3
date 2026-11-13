@@ -1,11 +1,19 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { and, asc, eq, getTableColumns, gte, isNull, lt } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, gte, inArray, isNull, lt } from 'drizzle-orm';
 import { DbService, type Db } from './db.service';
 import { WorkTimeService } from './work-time.service';
 import { VersionsService } from './versions.service';
-import { callerUserId, canSeeUserData, isOrgMember, isPeriodLocked, reachesAll } from './access';
+import { callerUserId, canEditUserData, canSeeUserData, editableUserIds, isOrgMember, isPeriodLocked, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
-import { work_times } from './db/schema';
+import { organization_memberships, users, work_times } from './db/schema';
+
+/** The permission object behind each page's time records (`time-record-people?kind=`). */
+export const TIME_RECORD_OBJECTS: Record<string, string> = {
+  workTime: 'nav.workTime',
+  time: 'nav.time',
+  timesheet: 'nav.timesheet',
+  projectTimesheet: 'nav.projectTimesheet',
+};
 
 @Controller()
 export class WorkTimeController {
@@ -64,6 +72,60 @@ export class WorkTimeController {
     return this.findOpenSession(db, userId);
   }
 
+  /**
+   * A completed entry added by hand (a forgotten check-in, a correction): by the person, their
+   * designated manager or HR (`nav.workTime` edit beyond own), only while the month is open.
+   */
+  @Post('organizations/:orgId/users/:userId/work-time')
+  async addEntry(
+    @Param('orgId') orgId: string,
+    @Param('userId') targetUserId: string,
+    @Body() body: { checkIn?: string; checkOut?: string; comment?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unknown-user' };
+    if (!(await isOrgMember(db, orgId, targetUserId))) return { ok: false, error: 'unknown-user' };
+    if (!(await canEditUserData(db, orgId, callerId, 'nav.workTime', targetUserId))) return { ok: false, error: 'forbidden' };
+    const checkIn = typeof body.checkIn === 'string' ? body.checkIn : '';
+    const checkOut = typeof body.checkOut === 'string' ? body.checkOut : '';
+    if (Number.isNaN(Date.parse(checkIn)) || Number.isNaN(Date.parse(checkOut)) || Date.parse(checkOut) <= Date.parse(checkIn)) {
+      return { ok: false, error: 'invalid-range' };
+    }
+    if (await isPeriodLocked(db, orgId, targetUserId, checkIn)) return { ok: false, error: 'period-locked' };
+    const values = { user_id: targetUserId, organization_id: orgId, check_in: checkIn, check_out: checkOut, comment: body.comment?.trim() || null };
+    const [row] = await db.insert(work_times).values(values).returning({ id: work_times.id });
+    void this.versions.record('work_times', row.id, 'insert', callerId, { id: row.id, ...values }).catch(() => {});
+    return { ok: true, id: row.id };
+  }
+
+  /**
+   * The people whose time records the caller may change on a page (`kind`: work time, project
+   * time, or either monthly timesheet): themselves, their direct reports, and whoever an edit
+   * grant beyond own covers (HR: everyone). Drives the person picker on those pages.
+   */
+  @Get('organizations/:orgId/time-record-people')
+  async timeRecordPeople(@Param('orgId') orgId: string, @Req() req: AuthenticatedRequest, @Query('kind') kind?: string) {
+    const db = this.db.getDb();
+    if (!db) return { ok: true, offline: true, people: [] };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId || !(await isOrgMember(db, orgId, callerId))) return { ok: false, error: 'forbidden', people: [] };
+    const object = TIME_RECORD_OBJECTS[kind ?? ''];
+    if (!object) return { ok: false, error: 'invalid-kind', people: [] };
+    const ids = await editableUserIds(db, orgId, callerId, object);
+    const conditions = [eq(organization_memberships.organization_id, orgId), eq(organization_memberships.status, 'active')];
+    if (ids !== 'all') conditions.push(inArray(organization_memberships.user_id, [...ids]));
+    const rows = await db
+      .select({ id: users.id, name: users.display_name, email: users.email })
+      .from(organization_memberships)
+      .innerJoin(users, eq(users.id, organization_memberships.user_id))
+      .where(and(...conditions))
+      .orderBy(asc(users.display_name));
+    return { ok: true, people: rows };
+  }
+
   @Get('organizations/:orgId/work-time')
   async list(
     @Param('orgId') orgId: string,
@@ -119,7 +181,7 @@ export class WorkTimeController {
     if ('error' in owned) return owned;
 
     if (body.checkIn !== undefined && body.checkIn !== owned.entry.check_in && owned.entry.organization_id) {
-      if (await isPeriodLocked(db, owned.entry.organization_id, owned.userId, body.checkIn)) {
+      if (await isPeriodLocked(db, owned.entry.organization_id, owned.entry.user_id, body.checkIn)) {
         return { ok: false, error: 'period-locked' };
       }
     }
@@ -154,8 +216,9 @@ export class WorkTimeController {
   }
 
   /**
-   * Entries are only editable by the user they belong to, and only outside a
-   * submitted/approved timesheet period. Returns `{error}` when disallowed,
+   * Entries are editable by the person they belong to, their designated manager and HR
+   * (`nav.workTime` edit beyond own), and only outside a submitted/approved timesheet period:
+   * a locked month has to be reopened first. Returns `{error}` when disallowed,
    * or the entry (plus caller id) when the edit may proceed.
    */
   private async assertEditableEntry(
@@ -164,7 +227,7 @@ export class WorkTimeController {
     req: AuthenticatedRequest,
   ): Promise<
     | { ok: false; error: string }
-    | { userId: string; entry: { organization_id: string | null; check_in: string; check_out: string | null } }
+    | { userId: string; entry: { user_id: string; organization_id: string | null; check_in: string; check_out: string | null } }
   > {
     const userId = req.user ? await callerUserId(db, req.user) : null;
     if (!userId) return { ok: false, error: 'unknown-user' };
@@ -173,8 +236,10 @@ export class WorkTimeController {
       .from(work_times)
       .where(eq(work_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
-    if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
-    if (row.organization_id && (await isPeriodLocked(db, row.organization_id, userId, row.check_in))) {
+    if (row.user_id !== userId && !(row.organization_id && (await canEditUserData(db, row.organization_id, userId, 'nav.workTime', row.user_id)))) {
+      return { ok: false, error: 'forbidden' };
+    }
+    if (row.organization_id && (await isPeriodLocked(db, row.organization_id, row.user_id, row.check_in))) {
       return { ok: false, error: 'period-locked' };
     }
     return { userId, entry: row };

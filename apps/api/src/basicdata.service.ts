@@ -159,7 +159,8 @@ export class BasicDataService {
 
   /**
    * Admin/HR resolves the pending request: approving merges its data into users.basicdata, rejecting
-   * leaves it untouched. Only the reviewing org's own custom-field section is applied.
+   * leaves it untouched. Only the reviewing org's own custom-field section is applied. Keys stored
+   * in real `users` columns (`userColumns`: key -> column, e.g. firstName -> first_name) go there.
    */
   async resolveRequest(
     userId: string,
@@ -168,6 +169,7 @@ export class BasicDataService {
     actorUserId: string,
     note: string | null,
     orgId?: string,
+    userColumns: Record<string, string> = {},
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const db = this.db.getDb();
     if (!db) return { ok: false, error: 'offline' };
@@ -185,7 +187,13 @@ export class BasicDataService {
 
     if (outcome === 'approved') {
       const data = orgId ? keepOrgSection(history[idx].data, orgId) : history[idx].data;
-      await db.update(users).set({ basicdata: mergedBasicdata(data) }).where(eq(users.id, userId));
+      const columns: Record<string, unknown> = {};
+      const json: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (userColumns[key]) columns[userColumns[key]] = value;
+        else json[key] = value;
+      }
+      await db.update(users).set({ ...columns, basicdata: mergedBasicdata(json) }).where(eq(users.id, userId));
     }
     return { ok: true };
   }

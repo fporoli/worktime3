@@ -18,7 +18,7 @@ import {
 import { periodLabel } from './aggregate';
 import { useI18n } from './i18n';
 import { formatDurationMinutes } from './localeFormat';
-import { PageHeader, TableEmptyRow } from './components';
+import { PageHeader, PersonPicker, TableEmptyRow } from './components';
 import { ChevronLeftIcon, ChevronRightIcon, WorkspacesIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -57,9 +57,10 @@ function shiftMonth(month: string, by: number): string {
  * Project timesheet: the month's project time per project, submitted for approval by each
  * project's owner. Separate from the working-time timesheet (Timesheet.tsx), which goes to the
  * line manager. A project month that is submitted or approved can no longer be changed; a
- * rejected one can be corrected and submitted again.
+ * rejected one can be corrected and submitted again. The person's manager and HR pick the person
+ * and reopen a submitted or approved project month so it can be corrected.
  */
-export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string; authHeaders: () => Promise<Record<string, string>> }) {
+export default function ProjectTimesheet({ orgId, userId, authHeaders }: { orgId: string; userId: string; authHeaders: () => Promise<Record<string, string>> }) {
   const { t, locale } = useI18n();
   const [month, setMonth] = useState(currentMonth());
   const [projects, setProjects] = useState<ProjectMonth[]>([]);
@@ -69,11 +70,14 @@ export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string
   const [success, setSuccess] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [personId, setPersonId] = useState(userId);
+  const isSelf = personId === userId;
+  useEffect(() => setPersonId(userId), [orgId, userId]);
 
   async function reload(m = month) {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets?month=${m}`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets?month=${m}&userId=${personId}`, { headers: await authHeaders() });
       const data = await res.json();
       if (data?.ok === false) setError(t(`projectTimesheet.error.${data.error}`));
       setProjects(Array.isArray(data?.projects) ? data.projects : []);
@@ -88,7 +92,7 @@ export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string
   useEffect(() => {
     void reload(month);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, month]);
+  }, [orgId, month, personId]);
 
   async function post(path: string, body?: unknown): Promise<{ ok: boolean; error?: string; [k: string]: unknown } | null> {
     setError(null);
@@ -131,13 +135,24 @@ export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string
     }
   }
 
+  async function reopen(periodId: string) {
+    if (await post(`/project-timesheets/${periodId}/reopen`)) {
+      setSuccess(t('approvals.reopened'));
+      await reload();
+    }
+  }
+
   const openProjects = projects.filter((p) => p.minutes > 0 && (!p.period || p.period.status === 'open' || p.period.status === 'rejected'));
   const total = projects.reduce((s, p) => s + p.minutes, 0) + unassigned.minutes;
   const statusOf = (p: ProjectMonth): Status => p.period?.status ?? 'open';
 
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
-      <PageHeader title={t('projectTimesheet.title')} subtitle={t('projectTimesheet.subtitle')} />
+      <PageHeader
+        title={t('projectTimesheet.title')}
+        subtitle={t('projectTimesheet.subtitle')}
+        end={<PersonPicker orgId={orgId} kind="projectTimesheet" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />}
+      />
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
       {loading && <LinearProgress />}
@@ -188,8 +203,11 @@ export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string
                       )}
                     </TableCell>
                     <TableCell align="right">
-                      {status === 'submitted' && p.period && (
+                      {isSelf && status === 'submitted' && p.period && (
                         <Button size="small" disabled={busy} onClick={() => void withdraw(p.period!.id)}>{t('projectTimesheet.withdraw')}</Button>
+                      )}
+                      {!isSelf && (status === 'submitted' || status === 'approved') && p.period && (
+                        <Button size="small" disabled={busy} onClick={() => void reopen(p.period!.id)}>{t('approvals.reopen')}</Button>
                       )}
                     </TableCell>
                   </TableRow>
@@ -214,7 +232,7 @@ export default function ProjectTimesheet({ orgId, authHeaders }: { orgId: string
 
         {unassigned.entries > 0 && <Alert severity="warning">{t('projectTimesheet.unassignedHelp')}</Alert>}
 
-        {openProjects.length > 0 && (
+        {isSelf && openProjects.length > 0 && (
           <>
             <Alert severity="info">{t('projectTimesheet.submitExplain', { count: String(openProjects.length) })}</Alert>
             <TextField

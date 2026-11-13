@@ -109,7 +109,8 @@ function basicdataJson(key: string, group: string, order: number, extras: FieldE
     order,
     width: 'm',
     optional: true,
-    editableBy: group === 'personalien' ? 'hr' : 'self',
+    // Every section is self-service: the employee requests a change, HR approves it.
+    editableBy: 'self',
     ...extras,
   };
 }
@@ -125,7 +126,7 @@ function usersColumn(key: string, column: string, order: number, extras: FieldEx
     order,
     width: 'm',
     optional: true,
-    editableBy: 'hr',
+    editableBy: 'self',
     ...extras,
   };
 }
@@ -164,7 +165,8 @@ export const BASICDATA_FORM: FormDef = {
     usersColumn('firstName', 'first_name', 20),
     usersColumn('middleName', 'middle_name', 30),
     usersColumn('lastName', 'last_name', 40),
-    basicdataJson('personnelNumber', 'personalien', 50),
+    // Assigned by the company, so HR only; the other Personalien fields go through a request.
+    basicdataJson('personnelNumber', 'personalien', 50, { editableBy: 'hr' }),
     basicdataJson('gender', 'personalien', 60),
     basicdataJson('birthDate', 'personalien', 70, { type: 'date', allowedTypes: ['date'] }),
     basicdataJson('socialSecurityNumber', 'personalien', 80),

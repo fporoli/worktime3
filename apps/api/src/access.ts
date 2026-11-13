@@ -365,6 +365,29 @@ export async function canSeeUserData(db: Executor, organizationId: string, calle
   return can(db, organizationId, callerId, object, 'see', targetUserId);
 }
 
+/**
+ * Who may change a person's time records (work time, project time) and reopen their months:
+ * the person themselves, their designated manager, or an `edit` grant on `object` beyond `own`
+ * covering them (HR: `all`). Period locks are checked separately.
+ */
+export async function canEditUserData(db: Executor, organizationId: string, callerId: string, object: string, targetUserId: string): Promise<boolean> {
+  if (targetUserId === callerId) return true;
+  if (await isManagerOf(db, organizationId, callerId, targetUserId)) return true;
+  return canEditBeyondOwn(db, organizationId, callerId, object, targetUserId);
+}
+
+/** Whose time records the caller may change (`canEditUserData` for a list): `'all'`, or self + direct reports + grants beyond own. */
+export async function editableUserIds(db: Executor, organizationId: string, callerId: string, object: string): Promise<'all' | Set<string>> {
+  const ids = await permissionIdsOf(db, organizationId, callerId);
+  const beyond = new Set([...ids].filter((id) => id !== `${object}:edit:own`));
+  const granted = await visibleUserIds(db, organizationId, callerId, object, 'edit', beyond);
+  if (granted === 'all') return 'all';
+  const out = new Set(granted);
+  out.add(callerId);
+  for (const id of await directReportUserIds(db, organizationId, callerId)) out.add(id);
+  return out;
+}
+
 /** True when the caller's `action` grants on `object` reach everyone in the organization. */
 export async function reachesAll(db: Executor, organizationId: string, callerId: string, object: string, action: Action = 'see'): Promise<boolean> {
   const ids = await permissionIdsOf(db, organizationId, callerId);

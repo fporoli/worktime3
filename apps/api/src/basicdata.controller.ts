@@ -280,7 +280,7 @@ export class BasicDataController {
     if (!callerId) return { ok: false, error: 'unauthenticated' };
     if (!(await this.mayResolve(db, orgId, callerId, userId))) return { ok: false, error: 'forbidden' };
 
-    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'approved', callerId, null, orgId);
+    const result = await this.basicData.resolveRequest(userId, Number(versionNr), 'approved', callerId, null, orgId, USER_COLUMN_MAP);
     if (result.ok) void this.audit.record(orgId, callerId, 'basicdata.approve', 'user', userId, { version: Number(versionNr) }).catch(() => {});
     return result;
   }

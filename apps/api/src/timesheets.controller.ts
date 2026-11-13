@@ -1,7 +1,7 @@
 import { Body, Controller, Get, OnModuleInit, Param, Post, Query, Req } from '@nestjs/common';
 import { and, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
 import { DbService } from './db.service';
-import { callerUserId, canEditBeyondOwn, canSeeUserData, isManagerOf, isOrgMember, listableUserIds, membershipManagerId } from './access';
+import { callerUserId, canEditBeyondOwn, canEditUserData, canSeeUserData, isManagerOf, isOrgMember, listableUserIds, membershipManagerId } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { timesheet_periods, users, workflows } from './db/schema';
 import { AuditService } from './audit.service';
@@ -256,7 +256,11 @@ export class TimesheetsController implements OnModuleInit {
     return { ok: true };
   }
 
-  /** Admin-only undo: an approved period can be reopened for correction. */
+  /**
+   * Reopens a submitted or approved month so its work time can be corrected again: the person's
+   * designated manager or HR (`nav.timesheet` edit beyond own), never the person themselves (they
+   * withdraw or ask via request-reopen). Pending approvals or reopen requests are cancelled.
+   */
   @Post('timesheet-periods/:id/reopen')
   async reopen(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     const db = this.db.getDb();
@@ -268,13 +272,19 @@ export class TimesheetsController implements OnModuleInit {
     if (!period) return { ok: false, error: 'period-not-found' };
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return { ok: false, error: 'unauthenticated' };
-    if (!(await canEditBeyondOwn(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) return { ok: false, error: 'forbidden' };
-    if (period.status !== 'approved') return { ok: false, error: 'not-approved' };
-    const patch = { status: 'open' as const, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
+    if (period.user_id === callerId || !(await canEditUserData(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) {
+      return { ok: false, error: 'forbidden' };
+    }
+    if (period.status !== 'approved' && period.status !== 'submitted') return { ok: false, error: 'not-locked' };
+    await db
+      .update(workflows)
+      .set({ step_status: 'cancelled', workflow_finished: new Date().toISOString() })
+      .where(and(eq(workflows.source_table, 'timesheet_periods'), eq(workflows.source_table_uuid, id), eq(workflows.step_status, 'pending')));
+    const patch = { status: 'open' as const, submitted_at: null, reviewed_by_user_id: null, reviewed_at: null, review_note: null };
     await db.update(timesheet_periods).set(patch).where(eq(timesheet_periods.id, id));
     void this.audit.record(period.organization_id, callerId, 'timesheet.reopen', 'timesheet_period', id).catch(() => {});
     void this.versions.record('timesheet_periods', id, 'update_delta', callerId, patch).catch(() => {});
-    await this.balances.reopenMonth(db, id, callerId);
+    if (period.status === 'approved') await this.balances.reopenMonth(db, id, callerId);
     return { ok: true };
   }
 
@@ -351,7 +361,7 @@ export class TimesheetsController implements OnModuleInit {
     if (!period) return null;
     const callerId = req.user ? await callerUserId(db, req.user) : null;
     if (!callerId) return null;
-    if (period.user_id !== callerId && !(await canEditBeyondOwn(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) return null;
+    if (period.user_id !== callerId && !(await canEditUserData(db, period.organization_id, callerId, 'nav.timesheet', period.user_id))) return null;
 
     const [row] = await db
       .select({

@@ -29,7 +29,7 @@ import { BarChart } from '@mui/x-charts/BarChart';
 import { bucket, minutes, periodLabel, periodRange, shiftPeriod, todayDate, type Entry, type PeriodType } from './aggregate';
 import { useI18n } from './i18n';
 import { formatDurationMinutes, formatLocaleDate } from './localeFormat';
-import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { ConfirmDialog, PageHeader, PersonPicker, TableEmptyRow } from './components';
 import { ChevronLeftIcon, ChevronRightIcon, ContentCopyIcon, DeleteIcon, EditIcon, ScheduleIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
@@ -127,6 +127,10 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
   const [attendanceConfirm, setAttendanceConfirm] = useState<{ kind: 'add' | 'draft'; message: string; overlapAck: boolean } | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [locks, setLocks] = useState<ProjectLock[]>([]);
+  // Whose project time is shown: one's own, or (manager/HR) someone whose hours one may correct.
+  const [personId, setPersonId] = useState(userId);
+  const isSelf = personId === userId;
+  useEffect(() => setPersonId(userId), [orgId, userId]);
 
   const rows = useMemo(() => bucket(entries, 'daily'), [entries]);
   const total = rows.reduce((s, r) => s + r.minutes, 0);
@@ -152,7 +156,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
     const { from, to } = periodRange(periodType, periodAnchor);
     try {
       const res = await fetch(
-        `${API}/organizations/${orgId}/project-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        `${API}/organizations/${orgId}/project-time?userId=${personId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
         { headers: await authHeaders() },
       );
       const data = await res.json();
@@ -174,7 +178,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
 
   async function reloadPeriods() {
     try {
-      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets/locks`, { headers: await authHeaders() });
+      const res = await fetch(`${API}/organizations/${orgId}/project-timesheets/locks?userId=${personId}`, { headers: await authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) setLocks(data);
     } catch { /* offline fallback */ }
@@ -185,12 +189,12 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
     void reloadProjects();
     void reloadPeriods();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, userId, projectsVersion]);
+  }, [orgId, personId, projectsVersion]);
 
   useEffect(() => {
     void reloadEntries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, userId, periodType, periodAnchor]);
+  }, [orgId, personId, periodType, periodAnchor]);
 
   useEffect(() => {
     void loadSubprojects(projectId);
@@ -219,6 +223,7 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
           comment,
           acknowledgeOverlap: acknowledgeOverlap || undefined,
           acknowledgeAttendance: acknowledgeAttendance || undefined,
+          userId: isSelf ? undefined : personId,
         }),
       });
       const data = await res.json();
@@ -348,7 +353,10 @@ export default function ProjectTime({ orgId, userId, useProjectTimeRanges, authH
 
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
-      <PageHeader title={t('nav.timeTracking')} />
+      <PageHeader
+        title={t('nav.timeTracking')}
+        end={<PersonPicker orgId={orgId} kind="time" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />}
+      />
 
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}

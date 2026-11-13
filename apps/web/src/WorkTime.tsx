@@ -27,9 +27,9 @@ import {
 import BalanceOverview from './BalanceOverview';
 import { useI18n } from './i18n';
 import { formatDurationMinutes, formatSignedMinutes } from './localeFormat';
-import { ConfirmDialog, PageHeader, TableEmptyRow } from './components';
+import { ConfirmDialog, PageHeader, PersonPicker, TableEmptyRow } from './components';
 import { BalancesPanel, formatDays } from './BalancesPanel';
-import { DeleteIcon, EditIcon, PlayArrowIcon, StopIcon, TimerIcon } from './icons';
+import { AddIcon, DeleteIcon, EditIcon, PlayArrowIcon, StopIcon, TimerIcon } from './icons';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
@@ -111,6 +111,21 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
   const [draft, setDraft] = useState<Session | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
+  // Whose sessions are shown: one's own, or (manager/HR) someone whose work time one may correct.
+  const [personId, setPersonId] = useState(userId);
+  const isSelf = personId === userId;
+  useEffect(() => setPersonId(userId), [orgId, userId]);
+
+  /** API error code -> message; a locked month has to be reopened by the manager or HR. */
+  function failure(key: string, code: string | undefined): string {
+    if (code === 'period-locked') return t('workTime.periodLocked');
+    if (code === 'invalid-range') return t('workTime.invalidRange');
+    return t(key, { error: code ?? 'unknown error' });
+  }
+
+  function changed() {
+    if (isSelf) onWorkTimeChanged?.();
+  }
 
   async function reloadStatus() {
     try {
@@ -131,7 +146,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
     const { from, to } = rangeBounds(selectedRange);
     try {
       const res = await fetch(
-        `${API}/organizations/${orgId}/work-time?userId=${userId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        `${API}/organizations/${orgId}/work-time?userId=${personId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
         { headers: await authHeaders() },
       );
       const data = await res.json();
@@ -141,7 +156,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
 
   async function reloadAll() {
     setLoading(true);
-    await Promise.all([reloadStatus(), reloadBalance(), reloadEntries()]);
+    await Promise.all(isSelf ? [reloadStatus(), reloadBalance(), reloadEntries()] : [reloadEntries()]);
     setBalanceRefreshKey((k) => k + 1);
     setLoading(false);
   }
@@ -149,7 +164,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
   useEffect(() => {
     void reloadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, userId]);
+  }, [orgId, userId, personId]);
 
   useEffect(() => {
     void reloadEntries(range);
@@ -172,11 +187,11 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(t('workTime.checkInFailed', { error: data.error ?? 'unknown error' }));
+        setError(failure('workTime.checkInFailed', data.error));
         return;
       }
       await reloadAll();
-      onWorkTimeChanged?.();
+      changed();
     } catch {
       setError(t('workTime.checkInFailed', { error: 'offline' }));
     }
@@ -192,7 +207,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
         return;
       }
       await reloadAll();
-      onWorkTimeChanged?.();
+      changed();
     } catch {
       setError(t('workTime.checkOutFailed', { error: 'offline' }));
     }
@@ -204,11 +219,11 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
       const res = await fetch(`${API}/work-time/${id}`, { method: 'DELETE', headers: await authHeaders() });
       const data = await res.json();
       if (!data.ok) {
-        setError(t('workTime.deleteFailed', { error: data.error ?? 'unknown error' }));
+        setError(failure('workTime.deleteFailed', data.error));
         return;
       }
       await reloadAll();
-      onWorkTimeChanged?.();
+      changed();
     } catch {
       setError(t('workTime.deleteFailed', { error: 'offline' }));
     }
@@ -218,19 +233,26 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
     if (!draft) return;
     setError(null);
     try {
-      const res = await fetch(`${API}/work-time/${draft.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ checkIn: draft.check_in, checkOut: draft.check_out, comment: draft.comment ?? undefined }),
-      });
+      // A new entry (no id) is added by hand for the person shown; an existing one is patched.
+      const res = draft.id
+        ? await fetch(`${API}/work-time/${draft.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+            body: JSON.stringify({ checkIn: draft.check_in, checkOut: draft.check_out, comment: draft.comment ?? undefined }),
+          })
+        : await fetch(`${API}/organizations/${orgId}/users/${personId}/work-time`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+            body: JSON.stringify({ checkIn: draft.check_in, checkOut: draft.check_out, comment: draft.comment ?? undefined }),
+          });
       const data = await res.json();
       if (!data.ok) {
-        setError(t('workTime.saveFailed', { error: data.error ?? 'unknown error' }));
+        setError(failure('workTime.saveFailed', data.error));
         return;
       }
       setDraft(null);
       await reloadAll();
-      onWorkTimeChanged?.();
+      changed();
     } catch {
       setError(t('workTime.saveFailed', { error: 'offline' }));
     }
@@ -244,7 +266,9 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
       <PageHeader
         title={t('workTime.title')}
         end={
-          balance && (
+          <>
+            <PersonPicker orgId={orgId} kind="workTime" selfId={userId} value={personId} onChange={setPersonId} authHeaders={authHeaders} />
+            {isSelf && balance && (
             <>
               <Tooltip
                 title={t('workTime.overtimeBreakdown', {
@@ -266,13 +290,15 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
                 size="small"
               />
             </>
-          )
+            )}
+          </>
         }
       />
 
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {loading && <LinearProgress />}
 
+      {isSelf && (
       <Paper sx={{ p: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -292,19 +318,32 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
           </Box>
         </Box>
       </Paper>
+      )}
 
-      <BalanceOverview orgId={orgId} authHeaders={authHeaders} refreshKey={balanceRefreshKey} />
+      {isSelf && <BalanceOverview orgId={orgId} authHeaders={authHeaders} refreshKey={balanceRefreshKey} />}
 
       <Paper sx={{ p: 2 }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tab value="sessions" label={t('workTime.tab.sessions')} />
-          <Tab value="balances" label={t('workTime.tab.balances')} />
+          {isSelf && <Tab value="balances" label={t('workTime.tab.balances')} />}
         </Tabs>
 
-        {tab === 'sessions' ? (
+        {tab === 'sessions' || !isSelf ? (
           <>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{t('workTime.recentSessions')}</Typography>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button
+                size="small"
+                startIcon={<AddIcon fontSize="small" />}
+                onClick={() => {
+                  const start = new Date();
+                  start.setHours(8, 0, 0, 0);
+                  setDraft({ id: '', check_in: start.toISOString(), check_out: new Date(start.getTime() + 8 * 3600000).toISOString(), comment: null });
+                }}
+              >
+                {t('workTime.addEntry')}
+              </Button>
               <TextField
                 select
                 size="small"
@@ -318,6 +357,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
                 <MenuItem value="lastMonth">{t('workTime.range.lastMonth')}</MenuItem>
                 <MenuItem value="90d">{t('workTime.range.90d')}</MenuItem>
               </TextField>
+              </Box>
             </Box>
 
             <TableContainer>
@@ -380,7 +420,7 @@ export default function WorkTime({ orgId, userId, authHeaders, onWorkTimeChanged
             void saveDraft();
           }}
         >
-          <DialogTitle>{t('workTime.editSession')}</DialogTitle>
+          <DialogTitle>{draft?.id ? t('workTime.editSession') : t('workTime.addEntry')}</DialogTitle>
           {draft && (
             <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
               <TextField

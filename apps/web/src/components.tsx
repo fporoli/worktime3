@@ -1,7 +1,9 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Box,
   Button,
+  MenuItem,
+  TextField,
   Dialog,
   DialogActions,
   DialogContent,
@@ -11,6 +13,9 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
+import { useT } from './i18n';
+
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8001/api/v1';
 
 /** Consistent top-of-page header with title, optional subtitle, and right-aligned badges/actions. */
 export function PageHeader({
@@ -150,5 +155,56 @@ export function TableEmptyRow({
         <EmptyState icon={icon} title={title} description={description} action={action} />
       </TableCell>
     </TableRow>
+  );
+}
+
+/**
+ * Whose time records a page shows: the caller, or someone whose records they may change (their
+ * reports; everyone for HR), from `time-record-people`. Renders nothing when there is no one else.
+ */
+export function PersonPicker({
+  orgId,
+  kind,
+  selfId,
+  value,
+  onChange,
+  authHeaders,
+}: {
+  orgId: string;
+  kind: 'workTime' | 'time' | 'timesheet' | 'projectTimesheet';
+  selfId: string;
+  value: string;
+  onChange: (userId: string) => void;
+  authHeaders: () => Promise<Record<string, string>>;
+}) {
+  const t = useT();
+  const [people, setPeople] = useState<{ id: string; name: string; email: string }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/organizations/${orgId}/time-record-people?kind=${kind}`, { headers: await authHeaders() });
+        const data = await res.json();
+        if (!cancelled) setPeople(Array.isArray(data.people) ? data.people : []);
+      } catch {
+        if (!cancelled) setPeople([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, kind]);
+
+  if (!people.some((p) => p.id !== selfId)) return null;
+  return (
+    <TextField select size="small" label={t('people.person')} value={value} onChange={(e) => onChange(e.target.value)} sx={{ minWidth: 220 }}>
+      {people.map((p) => (
+        <MenuItem key={p.id} value={p.id}>
+          {p.id === selfId ? t('people.me', { name: p.name }) : p.name}
+        </MenuItem>
+      ))}
+    </TextField>
   );
 }

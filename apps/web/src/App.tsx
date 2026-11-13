@@ -554,6 +554,8 @@ export default function App() {
   const useProjectTimeRanges = session.settings?.useProjectTimeMinutesRanges === true;
 
   const NAV_GROUPS: Array<{
+    id: string;
+    /** Empty: no heading, the group starts after a line instead (My data, at the end). */
     header: string;
     items: Array<{
       id: string;
@@ -567,25 +569,17 @@ export default function App() {
     }>;
   }> = [
     {
+      id: 'myWork',
       header: t('nav.myWork'),
       items: [
         { id: 'home', section: 'home', label: t('nav.home'), icon: <DashboardIcon fontSize="small" />, visible: allowed('home') },
         { id: 'workTime', section: 'workTime', label: t('nav.workTime'), icon: <TimerIcon fontSize="small" />, visible: allowed('workTime') },
         { id: 'absences', section: 'absences', label: t('nav.absences'), icon: <BeachAccessIcon fontSize="small" />, visible: allowed('absences') },
         { id: 'timesheet', section: 'timesheet', label: t('nav.monthlyTimesheet'), icon: <CalendarMonthIcon fontSize="small" />, visible: allowed('timesheet') },
-        {
-          id: 'myData',
-          section: 'myData',
-          label: t('nav.myData'),
-          icon: <PersonIcon fontSize="small" />,
-          visible: allowed('myData'),
-          badge: isReviewer ? hrPendingCount : 0,
-        },
-        { id: 'expenses', section: 'expenses', label: t('nav.expenses'), icon: <ReceiptLongIcon fontSize="small" />, visible: allowed('expenses'), dividerBefore: true },
-        { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), icon: <FolderCopyIcon fontSize="small" />, visible: allowed('expenseReports') },
       ],
     },
     {
+      id: 'projectTracking',
       header: t('nav.projectTracking'),
       items: [
         { id: 'time', section: 'time', label: t('nav.timeTracking'), icon: <ScheduleIcon fontSize="small" />, visible: allowed('time') },
@@ -593,6 +587,15 @@ export default function App() {
       ],
     },
     {
+      id: 'expenses',
+      header: t('nav.expensesGroup'),
+      items: [
+        { id: 'expenses', section: 'expenses', label: t('nav.expenses'), icon: <ReceiptLongIcon fontSize="small" />, visible: allowed('expenses') },
+        { id: 'expenseReports', section: 'expenseReports', label: t('nav.expenseReports'), icon: <FolderCopyIcon fontSize="small" />, visible: allowed('expenseReports') },
+      ],
+    },
+    {
+      id: 'organization',
       header: t('nav.organization'),
       items: [
         { id: 'hours', section: 'hours', label: t('nav.teamHours'), icon: <GroupIcon fontSize="small" />, visible: allowed('hours') },
@@ -611,12 +614,28 @@ export default function App() {
       ],
     },
     {
+      id: 'administration',
       header: t('nav.administration'),
       items: [
         { id: 'orgSettings', section: 'orgSettings', label: t('nav.organizationSettings'), icon: <SettingsIcon fontSize="small" />, visible: allowed('orgSettings') },
         { id: 'audit', section: 'audit', label: t('nav.auditLog'), icon: <HistoryIcon fontSize="small" />, visible: allowed('audit') },
         { id: 'expenseProcessing', section: 'expenseProcessing', label: t('nav.expenseProcessing'), icon: <PaymentsIcon fontSize="small" />, visible: allowed('expenseProcessing') },
         { id: 'admin', section: 'admin', label: t('nav.adminSettings'), icon: <TuneIcon fontSize="small" />, visible: allowed('admin') },
+      ],
+    },
+    {
+      id: 'myData',
+      header: '',
+      items: [
+        {
+          id: 'myData',
+          section: 'myData',
+          label: t('nav.myData'),
+          icon: <PersonIcon fontSize="small" />,
+          visible: allowed('myData'),
+          badge: isReviewer ? hrPendingCount : 0,
+          dividerBefore: true,
+        },
       ],
     },
   ];
@@ -627,28 +646,30 @@ export default function App() {
         const visibleItems = group.items.filter((n) => n.visible);
         if (visibleItems.length === 0) return null;
         return (
-          <li key={group.header}>
+          <li key={group.id}>
             <ul style={{ padding: 0 }}>
-              <ListSubheader
-                disableSticky
-                sx={{
-                  bgcolor: 'transparent',
-                  color: 'text.secondary',
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  lineHeight: '28px',
-                  mx: 1.5,
-                  mt: 1.5,
-                  mb: 0.5,
-                }}
-              >
-                {group.header}
-              </ListSubheader>
+              {group.header && (
+                <ListSubheader
+                  disableSticky
+                  sx={{
+                    bgcolor: 'transparent',
+                    color: 'text.secondary',
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    lineHeight: '28px',
+                    mx: 1.5,
+                    mt: 1.5,
+                    mb: 0.5,
+                  }}
+                >
+                  {group.header}
+                </ListSubheader>
+              )}
               {visibleItems.map((n) => (
                 <li key={n.id} style={{ listStyle: 'none' }}>
-                  {n.dividerBefore && <Divider sx={{ mx: 1, my: 0.5 }} />}
+                  {n.dividerBefore && <Divider sx={{ mx: 1, my: 0.5, mt: group.header ? 0.5 : 1.5 }} />}
                   <ListItemButton
                     // The Team Management page's Projects tab has its own route but the same nav item.
                     selected={section === n.section || (n.section === 'management' && section === 'managementProjects')}
@@ -855,7 +876,7 @@ export default function App() {
                 />
               )}
               {section === 'projectTimesheet' && allowed('projectTimesheet') && orgId && (
-                <ProjectTimesheet orgId={orgId} authHeaders={authHeaders} />
+                <ProjectTimesheet orgId={orgId} userId={session.userId} authHeaders={authHeaders} />
               )}
               {section === 'time' && allowed('time') && orgId && (
                 <ProjectTime

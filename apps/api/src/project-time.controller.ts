@@ -4,7 +4,7 @@ import { DbService, type Db } from './db.service';
 import { ProjectTimeService } from './project-time.service';
 import { VersionsService } from './versions.service';
 import { WorkTimeModelService } from './work-time-model.service';
-import { callerUserId, canSeeUserData, isOrgMember, isProjectPeriodLocked, reachesAll } from './access';
+import { callerUserId, canEditUserData, canSeeUserData, isOrgMember, isProjectPeriodLocked, reachesAll } from './access';
 import type { AuthenticatedRequest } from './jwt.guard';
 import { project_times, projects, subprojects, users } from './db/schema';
 
@@ -31,15 +31,23 @@ export class ProjectTimeController {
       acknowledgeOverlap?: boolean;
       /** Set once the user has seen the "more project time than working time" warning and chose to add it anyway. */
       acknowledgeAttendance?: boolean;
+      /** Whose entry it is: the caller by default; someone else only for their manager or HR. */
+      userId?: string;
     },
     @Req() req: AuthenticatedRequest,
   ) {
     const db = this.db.getDb();
     if (!db) return { ok: true, offline: true };
-    // The entry always belongs to the caller — never trust a client-supplied user id.
-    const userId = req.user ? await callerUserId(db, req.user) : null;
-    if (!userId) return { ok: false, error: 'unknown-user' };
-    if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'forbidden' };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unknown-user' };
+    if (!(await isOrgMember(db, orgId, callerId))) return { ok: false, error: 'forbidden' };
+    // The caller's own entry unless another person is named; that needs their manager or an
+    // edit grant beyond own (HR), checked against the caller's real identity.
+    const userId = body.userId || callerId;
+    if (userId !== callerId) {
+      if (!(await isOrgMember(db, orgId, userId))) return { ok: false, error: 'unknown-user' };
+      if (!(await canEditUserData(db, orgId, callerId, 'nav.time', userId))) return { ok: false, error: 'forbidden' };
+    }
     // Project time is locked per project and month by the project timesheet, not by the working-time one.
     if (await isProjectPeriodLocked(db, orgId, userId, body.projectId, body.startTime)) return { ok: false, error: 'period-locked' };
     // Only "ranges" users care about overlap at all — everyone else logs duration-only entries that
@@ -66,7 +74,7 @@ export class ProjectTimeController {
       comment: body.comment ?? null,
     };
     const [row] = await db.insert(project_times).values(values).returning({ id: project_times.id });
-    void this.versions.record('project_times', row.id, 'insert', userId, { id: row.id, ...values }).catch(() => {});
+    void this.versions.record('project_times', row.id, 'insert', callerId, { id: row.id, ...values }).catch(() => {});
     return { ok: true, id: row.id };
   }
 
@@ -181,7 +189,7 @@ export class ProjectTimeController {
     if (Object.keys(patch).length === 0) return { ok: true };
     // One statement: start/end move together, so chk_project_time_order never sees a half-applied edit.
     await db.update(project_times).set(patch).where(eq(project_times.id, id));
-    void this.versions.record('project_times', id, 'update_delta', owned.userId, patch).catch(() => {});
+    void this.versions.record('project_times', id, 'update_delta', owned.actorId, patch).catch(() => {});
     return { ok: true };
   }
 
@@ -192,14 +200,15 @@ export class ProjectTimeController {
     const owned = await this.assertEditableEntry(db, id, req);
     if ('error' in owned) return owned;
     await db.delete(project_times).where(eq(project_times.id, id));
-    void this.versions.record('project_times', id, 'delete', owned.userId, owned.entry).catch(() => {});
+    void this.versions.record('project_times', id, 'delete', owned.actorId, { user_id: owned.userId, ...owned.entry }).catch(() => {});
     return { ok: true };
   }
 
   /**
-   * Entries are only editable by the user they belong to, and only outside a
-   * submitted/approved project month (project timesheet). Returns `{error}` when disallowed,
-   * or the entry (plus caller id) when the edit may proceed.
+   * Entries are editable by the person they belong to, their designated manager and HR
+   * (`nav.time` edit beyond own), and only outside a submitted/approved project month (project
+   * timesheet): a locked month has to be reopened first. Returns `{error}` when disallowed,
+   * or the entry with its owner (`userId`) and the caller (`actorId`).
    */
   private async assertEditableEntry(
     db: Db,
@@ -207,10 +216,10 @@ export class ProjectTimeController {
     req: AuthenticatedRequest,
   ): Promise<
     | { ok: false; error: string }
-    | { userId: string; entry: { organization_id: string | null; project_id: string | null; start_time: string; end_time: string } }
+    | { userId: string; actorId: string; entry: { organization_id: string | null; project_id: string | null; start_time: string; end_time: string } }
   > {
-    const userId = req.user ? await callerUserId(db, req.user) : null;
-    if (!userId) return { ok: false, error: 'unknown-user' };
+    const callerId = req.user ? await callerUserId(db, req.user) : null;
+    if (!callerId) return { ok: false, error: 'unknown-user' };
     const [row] = await db
       .select({
         user_id: project_times.user_id,
@@ -222,11 +231,14 @@ export class ProjectTimeController {
       .from(project_times)
       .where(eq(project_times.id, id));
     if (!row) return { ok: false, error: 'not-found' };
-    if (row.user_id !== userId) return { ok: false, error: 'forbidden' };
-    if (row.organization_id && (await isProjectPeriodLocked(db, row.organization_id, userId, row.project_id, row.start_time))) {
+    if (row.user_id !== callerId && !(row.organization_id && (await canEditUserData(db, row.organization_id, callerId, 'nav.time', row.user_id)))) {
+      return { ok: false, error: 'forbidden' };
+    }
+    if (row.organization_id && (await isProjectPeriodLocked(db, row.organization_id, row.user_id, row.project_id, row.start_time))) {
       return { ok: false, error: 'period-locked' };
     }
-    return { userId, entry: row };
+    const { user_id: userId, ...entry } = row;
+    return { userId, actorId: callerId, entry };
   }
 
   /** Whether this user wants strict, non-overlapping start/end ranges (a per-user preference). */

@@ -63,6 +63,7 @@
     <include file="045-permission-project-timesheet.sql" relativeToChangelogFile="true"/>
     <include file="046-legal-overtime.sql" relativeToChangelogFile="true"/>
     <include file="047-absence-approval-flag.sql" relativeToChangelogFile="true"/>
+    <include file="048-permission-hr-time-records.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
 
