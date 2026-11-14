@@ -21,11 +21,17 @@ npm test                   # all workspaces
 npm run dev:api            # build + start the API on :8001
 npm run dev:web            # Vite on :3001
 npm run dev:migrate        # apply Liquibase changelogs (Docker required)
-npm run dev:introspect     # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB
+npm run dev:introspect     # regenerate apps/api/src/db/schema.ts + relations.ts from the live DB (also local:)
+npm run dev:checkschema    # does the committed schema.ts/relations.ts match the DB? (also local:, db:)
+npm run dev:status         # read-only: does the DB hold exactly this checkout's changesets? (also local:, db:)
 npm run dev:psql           # psql into the dev database; dev:down / dev:logs
 npm run dev:resetdb        # drop + recreate schema public, migrate, seed (also local:resetdb)
 npm run local:up           # whole stack in Docker (.env.local); local:down / local:seed / local:psql
+npm run stack -- <env> <push|build|reset|start|stop|all>   # any env: dev, local, a VPS GitHub Environment, azure
 ```
+
+`scripts/stack.mjs` wraps the scripts above for dev/local and only dispatches/follows the
+GitHub workflows (`gh`) for VPS instances and Azure; keep deploy logic in the workflows.
 
 Single API test file: `cd apps/api && NODE_PATH=./node_modules npx tsx --conditions=source --test ../../test/api/orgs.test.ts`
 (`--conditions=source` makes `@worktime3/shared` resolve to its TypeScript sources).
@@ -57,6 +63,11 @@ Alice manages Admin and Adam; Adam manages Marta, Marco and Uma; Marta manages U
 (also hr); Marco manages Ueli; Uma is also developer. The Login screen's demo-account dropdown (Admin, Manager = Marta, HR User = Ulla, User = Ueli)
 come from the global `static_data` row `login`/`demo_accounts` via public
 `GET auth/demo-accounts`; each value is a JSON string `{name, user, password}`.
+The end of `seed.sql` generates each Acme member's history from their start date to yesterday
+(absences, attendance, project time, approved timesheets, expenses and reports). It is
+deterministic (`pg_temp.seed_rnd`/`seed_id` hash a key), so re-seeding adds only newly passed days.
+Its working days use Zurich's holidays (`pg_temp.seed_workday`); keep that in step with
+`worktime.ts` if Acme's region changes.
 
 ## Tests
 
@@ -83,8 +94,11 @@ come from the global `static_data` row `login`/`demo_accounts` via public
   (`NNN-description.sql`, formatted SQL with `--changeset author:id`
   headers), added to `db.changelog-master.xml`. Never edit an existing
   changeset; Liquibase checksums them.
-- Then run `npm run db:migrate` and `npm run db:introspect` (drizzle-kit 0.31,
-  matching drizzle-orm 0.45; needs `DATABASE_URL` exported).
+- Then run `npm run dev:migrate` and `npm run dev:introspect` (drizzle-kit 0.31,
+  matching drizzle-orm 0.45), and commit both generated files. `db:checkschema`
+  (`apps/api/scripts/check-schema.mjs`) introspects into a scratch folder and compares,
+  ignoring table/line order (which follows the database's history); `resetdb` runs it after
+  migrating and CI fails on a mismatch.
 - `apps/api/src/db/schema.ts` and `relations.ts` are **generated**. Never
   hand-edit them. `scripts/fix-introspected-schema.mjs` patches what drizzle-kit
   gets wrong after introspection (`citext` columns, truncated `COALESCE(... ::uuid)`

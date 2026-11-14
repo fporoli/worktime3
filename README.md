@@ -264,14 +264,40 @@ the API logs an OFFLINE warning at startup without it.
 | `dev:api` | build and start the API (http://localhost:8001) |
 | `dev:web` | Vite (http://localhost:3001) |
 | `dev:migrate` / `dev:seed` / `dev:introspect` | database tasks against the dev database |
+| `dev:checkschema` / `local:checkschema` | check that the committed `schema.ts` / `relations.ts` match that database (`resetdb` and CI run it after migrating) |
+| `dev:status` / `local:status` | read-only Liquibase check: changesets pending, applied but missing from this checkout (database ahead or on another branch), or edited after they ran (checksum); exit 1 on any. `db:status` takes `DATABASE_URL`, so it works against any reachable database |
 | `dev:psql` | psql into the dev database |
 | `dev:resetdb` | **Destructive.** Drop and recreate the dev database's `public` schema, migrate, seed (Keycloak's `auth` schema is kept) |
 | `local:up` / `local:down` / `local:logs` | the whole stack in Docker behind Caddy |
-| `local:migrate` / `local:seed` / `local:psql` | database tasks against the local database |
+| `local:migrate` / `local:seed` / `local:introspect` / `local:psql` | database tasks against the local database |
 | `local:resetdb` | **Destructive.** The same reset for the local database |
 
 To run any other command with an environment loaded:
 `node scripts/with-env.mjs dev <command> [args...]`.
+
+### One command for every environment
+
+`npm run stack -- <env> <steps...>` (`scripts/stack.mjs`) does the usual round in any
+environment: `dev`, `local`, a VPS instance (`prod`, `preprod`, `test`, … = its GitHub
+Environment) or `azure`. Steps always run in the same order, whatever order you give them:
+
+| Step | dev / local | VPS instance / azure (through the GitHub workflows, `gh` CLI) |
+| --- | --- | --- |
+| `push` | `git push` of the current branch (commit first) | the same |
+| `build` | dev: `npm run build`; local: build the Docker images | wait for `build-push` of HEAD (dispatched off `main`) |
+| `reset` | **Destructive.** `dev:resetdb` / `local:resetdb` | **Destructive**, asks you to type the environment name: VPS `reset-seed`; Azure drops and re-creates the Postgres server (`dropdb` + `initdb` with seed) |
+| `start` | dev: Docker services, then API + web on the host (Ctrl-C stops both); local: `local:up` | deploy HEAD's `sha-xxxxxxx` images (`vps` deploy / `azure-deploy`), before any reset |
+| `stop` | `dev:down` / `local:down` | — |
+| `all` | `push build reset start` | the same |
+
+```sh
+npm run stack -- dev reset start         # fresh demo data, API + web on the host
+npm run stack -- local all               # push, rebuild images, reset, whole stack up
+npm run stack -- test push build start   # deploy HEAD to the test VPS
+npm run stack -- prod all                # the same plus reset-seed (asks first; --yes skips that)
+```
+
+The remote steps only trigger and follow the workflows; their config stays in GitHub Environments.
 
 **dev** (pg + Keycloak + Mailpit in Docker, API + web on the host):
 

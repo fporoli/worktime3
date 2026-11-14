@@ -30,4 +30,7 @@ jobs:
       - run: npm run test --workspaces
       # Fails the build if a changelog doesn't apply cleanly to a fresh database.
       - run: npm run db:migrate
+      # Fails the build if src/db/schema.ts / relations.ts don't match the migrated database
+      # (a changelog added without npm run dev:introspect).
+      - run: npm run db:checkschema
       - run: npm run db:seed

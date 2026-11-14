@@ -11,7 +11,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const schemaPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'db', 'schema.ts');
+// Patches src/db/schema.ts, or the file given as the first argument (check-schema.mjs patches
+// a fresh introspection in a scratch folder before comparing it).
+const schemaPath = process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'db', 'schema.ts');
 const before = readFileSync(schemaPath, 'utf8');
 let src = before;
 

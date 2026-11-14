@@ -8,7 +8,7 @@
 // Local development only: it refuses to run outside scripts/with-env.mjs or against a database
 // that isn't on this machine. The VPS has its own `reset-seed` workflow action.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 const env = process.env.WORKTIME_ENV;
 const databaseUrl = process.env.DATABASE_URL;
@@ -38,6 +38,7 @@ const owner = decodeURIComponent(url.username) || 'worktime';
 const target = `${url.hostname}:${url.port || 5432}${url.pathname}`;
 const shell = process.platform === 'win32';
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit', shell });
+let schemaInSync = true;
 
 try {
   console.log(`\n== Resetting ${env} database ${target}: dropping schema public`);
@@ -53,6 +54,11 @@ try {
   console.log('\n== Migrating (Liquibase)');
   run('npm', ['run', 'db:migrate']);
 
+  // The database now is exactly what the changelogs make; the generated Drizzle schema must
+  // describe it. A mismatch doesn't stop the reset, but is reported at the end.
+  console.log('\n== Checking src/db/schema.ts against the migrated database');
+  schemaInSync = spawnSync('npm', ['run', '--silent', 'db:checkschema'], { stdio: 'inherit', shell }).status === 0;
+
   console.log('\n== Seeding');
   run('npm', ['run', 'db:seed']);
 } catch {
@@ -61,3 +67,7 @@ try {
 }
 
 console.log(`\n== Done: the ${env} database is migrated and seeded.`);
+if (!schemaInSync) {
+  console.warn(`\nWARNING: apps/api/src/db/schema.ts does not match the migrated database (see above).`);
+  console.warn(`Run npm run ${env}:introspect and commit the result.`);
+}

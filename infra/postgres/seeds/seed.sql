@@ -97,14 +97,14 @@ INSERT INTO employee_assignments (organization_id, user_id, valid_from, departme
 SELECT 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', v.user_id::uuid,
        COALESCE(v.valid_from::date, m.start_date, m.joined_at::date), v.department_id::uuid, v.job_function, v.manager_user_id::uuid
 FROM (VALUES
-  ('22222222-2222-2222-2222-222222222222', 2024-01-01, 'dddddddd-0000-0000-0000-000000000001', 'Managing Director', NULL),                                    -- Alice
-  ('11111111-1111-1111-1111-111111111111', 2024-12-01, 'dddddddd-0000-0000-0000-000000000001', 'System Administrator', '22222222-2222-2222-2222-222222222222'), -- Admin <- Alice
-  ('22222222-2222-2222-2222-222222222223', 2025-01-01, 'dddddddd-0000-0000-0000-000000000005', 'Head of R&D', '22222222-2222-2222-2222-222222222222'),          -- Adam  <- Alice
-  ('22222222-2222-2222-2222-222222222224', 2024-03-01, 'dddddddd-0000-0000-0000-000000000003', 'Head of Sales', '22222222-2222-2222-2222-222222222223'),        -- Marta <- Adam
-  ('22222222-2222-2222-2222-222222222225', 2026-01-01, 'dddddddd-0000-0000-0000-000000000005', 'Team Lead', '22222222-2222-2222-2222-222222222223'),            -- Marco <- Adam
-  ('22222222-2222-2222-2222-222222222228', 2026-05-01, 'dddddddd-0000-0000-0000-000000000005', 'Software Developer', '22222222-2222-2222-2222-222222222223'),   -- Uma   <- Adam
-  ('22222222-2222-2222-2222-222222222226', 2026-01-01, 'dddddddd-0000-0000-0000-000000000002', 'HR Specialist', '22222222-2222-2222-2222-222222222224'),        -- Ulla  <- Marta
-  ('22222222-2222-2222-2222-222222222227', 2024-03-01, 'dddddddd-0000-0000-0000-000000000003', 'Sales Assistant', '22222222-2222-2222-2222-222222222224'),      -- Ueli  <- Marta (Sales)
+  ('22222222-2222-2222-2222-222222222222', NULL, 'dddddddd-0000-0000-0000-000000000001', 'Managing Director', NULL),                                    -- Alice
+  ('11111111-1111-1111-1111-111111111111', NULL, 'dddddddd-0000-0000-0000-000000000001', 'System Administrator', '22222222-2222-2222-2222-222222222222'), -- Admin <- Alice
+  ('22222222-2222-2222-2222-222222222223', NULL, 'dddddddd-0000-0000-0000-000000000005', 'Head of R&D', '22222222-2222-2222-2222-222222222222'),          -- Adam  <- Alice
+  ('22222222-2222-2222-2222-222222222224', NULL, 'dddddddd-0000-0000-0000-000000000003', 'Head of Sales', '22222222-2222-2222-2222-222222222223'),        -- Marta <- Adam
+  ('22222222-2222-2222-2222-222222222225', NULL, 'dddddddd-0000-0000-0000-000000000005', 'Team Lead', '22222222-2222-2222-2222-222222222223'),            -- Marco <- Adam
+  ('22222222-2222-2222-2222-222222222228', NULL, 'dddddddd-0000-0000-0000-000000000005', 'Software Developer', '22222222-2222-2222-2222-222222222223'),   -- Uma   <- Adam
+  ('22222222-2222-2222-2222-222222222226', NULL, 'dddddddd-0000-0000-0000-000000000002', 'HR Specialist', '22222222-2222-2222-2222-222222222224'),        -- Ulla  <- Marta
+  ('22222222-2222-2222-2222-222222222227', NULL, 'dddddddd-0000-0000-0000-000000000003', 'Sales Assistant', '22222222-2222-2222-2222-222222222224'),      -- Ueli  <- Marta (Sales)
   ('22222222-2222-2222-2222-222222222227', '2025-07-01', 'dddddddd-0000-0000-0000-000000000005', 'Software Developer', '22222222-2222-2222-2222-222222222225') -- Ueli  <- Marco (R&D)
 ) AS v(user_id, valid_from, department_id, job_function, manager_user_id)
 JOIN organization_memberships m ON m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND m.user_id = v.user_id::uuid
@@ -247,83 +247,411 @@ VALUES
   ('ffffffff-ffff-ffff-ffff-111111111111', 'eeeeeeee-eeee-eeee-eeee-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 ON CONFLICT (expense_id) DO NOTHING;
 
--- Demo work time (attendance, work_times) for every active user, in their oldest organization:
--- 100 sessions in the previous month and 50 in the current one, on weekdays before today
--- (Europe/Zurich). Each day holds about 7.5-9 hours of work, split into its sessions (random
--- lengths), starting between 07:00 and 08:30 with 5-30 minute breaks between sessions.
--- A month in which the user already has any work time is skipped: that is how an earlier demo
--- run (or real data) is recognized, so re-seeding never adds a second set or overlaps them.
--- Times are random, so each fresh database gets different values.
-WITH params AS (
-  SELECT (now() AT TIME ZONE 'Europe/Zurich')::date AS today
+-- Demo history for every active Acme member, from their employment start date until yesterday
+-- (Europe/Zurich): absences, attendance, project time, both monthly timesheets, expenses and
+-- expense reports.
+--
+--   * Absences (past only, approved): 20-30 vacation days a year (prorated in the first year),
+--     as a two-week summer holiday, a one-week break and single or short days, sometimes a half
+--     day; plus a few sick days. The year's plan does not depend on today, so a later re-seed
+--     only adds the blocks that have since passed. Untaken or extra days carry over (the
+--     balances compute that).
+--   * Attendance (work_times) on every working day without a full-day absence: 1 session on 15%
+--     of the days, 2 on 60%, 3 on 20%, 4 on 5%; 7-9 hours a day around the 8-hour target, about
+--     half on half-day absences.
+--     Working days skip weekends and Zurich's public holidays (Acme's holidayRegion).
+--   * Project time: 1-2 entries a day on a project (and subproject), 80-100% of that day's
+--     attendance, never more.
+--   * Timesheets: every month before the current one is submitted and approved, the working-time
+--     one by the manager in force (the API closes it into work_time_months when balances are
+--     read), the project one by the project's owner. The current month stays open.
+--   * Expenses: 0-3 a month, in one expense report a month: finished, approved for the last two
+--     months, in preparation for the current one.
+--
+-- Pseudo-random but deterministic: values come from md5 of a key (person, day, purpose), and ids
+-- are md5-derived too, so a re-run inserts nothing twice. A day on which the person already has
+-- attendance or project time (real data, older demo data) is left alone, and so is an absence
+-- that would overlap another one or recorded attendance.
+
+CREATE FUNCTION pg_temp.seed_rnd(key text) RETURNS double precision LANGUAGE sql IMMUTABLE AS
+$$ SELECT ('x' || substr(md5(key), 1, 8))::bit(32)::bigint / 4294967296.0 $$;
+
+CREATE FUNCTION pg_temp.seed_id(key text) RETURNS uuid LANGUAGE sql IMMUTABLE AS
+$$ SELECT md5('worktime3-demo-history:' || key)::uuid $$;
+
+-- Easter Sunday (anonymous Gregorian algorithm, as packages/shared/src/worktime.ts).
+CREATE FUNCTION pg_temp.seed_easter(y int) RETURNS date LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE a int; b int; c int; d int; e int; f int; g int; h int; i int; k int; l int; m int;
+BEGIN
+  a := y % 19; b := y / 100; c := y % 100; d := b / 4; e := b % 4; f := (b + 8) / 25;
+  g := (b - f + 1) / 3; h := (19 * a + b - d - g + 15) % 30; i := c / 4; k := c % 4;
+  l := (32 + 2 * e + 2 * i - h - k) % 7; m := (a + 11 * h + 22 * l) / 451;
+  RETURN make_date(y, (h + l - 7 * m + 114) / 31, ((h + l - 7 * m + 114) % 31) + 1);
+END $$;
+
+-- A working day clock Acme: Monday-Friday and not a Zurich public holiday.
+CREATE FUNCTION pg_temp.seed_workday(day date) RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE e date := pg_temp.seed_easter(extract(year FROM day)::int); md text := to_char(day, 'MM-DD');
+BEGIN
+  RETURN extract(isodow FROM day) < 6
+    AND md NOT IN ('01-01', '01-02', '05-01', '08-01', '12-25', '12-26')
+    AND day NOT IN (e - 2, e + 1, e + 39, e + 50);
+END $$;
+
+-- The manager in force for a person on a date (employee_assignments), else their first one.
+CREATE FUNCTION pg_temp.seed_manager(org uuid, person uuid, day date) RETURNS uuid LANGUAGE sql STABLE AS $$
+  SELECT manager_user_id FROM employee_assignments
+  WHERE organization_id = org AND user_id = person
+  ORDER BY (valid_from <= day) DESC, CASE WHEN valid_from <= day THEN valid_from END DESC NULLS LAST, valid_from
+  LIMIT 1
+$$;
+
+-- The last of `n` working days starting clock the first working day on or after `day`.
+CREATE FUNCTION pg_temp.seed_span_end(day date, n int) RETURNS date LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE d date := day; counted int := 0;
+BEGIN
+  LOOP
+    IF pg_temp.seed_workday(d) THEN
+      counted := counted + 1;
+      EXIT WHEN counted >= n;
+    END IF;
+    d := d + 1;
+  END LOOP;
+  RETURN d;
+END $$;
+
+CREATE FUNCTION pg_temp.seed_next_workday(day date) RETURNS date LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE d date := day;
+BEGIN
+  WHILE NOT pg_temp.seed_workday(d) LOOP d := d + 1; END LOOP;
+  RETURN d;
+END $$;
+
+DO $$
+DECLARE
+  org constant uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  tz constant text := 'Europe/Zurich';
+  today constant date := (now() AT TIME ZONE 'Europe/Zurich')::date;
+  -- Projects and their subprojects (seeded above); comments per project.
+  projects constant uuid[] := ARRAY['cccccccc-cccc-cccc-cccc-cccccccccccc', 'cccccccc-cccc-cccc-cccc-cccccccccccd', 'cccccccc-cccc-cccc-cccc-ccccccccccce']::uuid[];
+  subprojects constant text[] := ARRAY[
+    'dddddddd-dddd-dddd-dddd-dddddddddddd,dddddddd-dddd-dddd-dddd-ddddddddddd1',
+    'dddddddd-dddd-dddd-dddd-ddddddddddd2,',
+    'dddddddd-dddd-dddd-dddd-ddddddddddd3,dddddddd-dddd-dddd-dddd-ddddddddddd4'];
+  comments constant text[] := ARRAY[
+    'Workshop with the client|Wireframes|Frontend implementation|Code review|Bugfixing|Release preparation|Status meeting',
+    'Tenant assessment|Interviews with IT|Licence analysis|Migration plan|Report writing|Steering committee',
+    'Data migration scripts|Requirements|Testing|Documentation|Team meeting|Vendor evaluation'];
+  p record;
+  y int;
+  k int;
+  attempt int;
+  key text;
+  range_start date;
+  range_end date;
+  vacation numeric;
+  left_days numeric;
+  block_days int;
+  s date;
+  e date;
+  plan_start date[];
+  plan_end date[];
+  plan_type text[];
+  plan_half boolean[];
+  ok boolean;
+  day date;
+  half boolean;
+  sessions int;
+  total int;
+  weights double precision[];
+  weight_sum double precision;
+  minutes int[];
+  starts timestamp[];
+  clock timestamp;
+  has_project boolean;
+  used int;
+  r double precision;
+  project_total int;
+  entries int;
+  first_minutes int;
+  main int;
+  other int;
+  pick int;
+  subs text[];
+  t_start timestamp;
+  t_end timestamp;
+BEGIN
+  FOR p IN
+    SELECT m.user_id, COALESCE(m.start_date, m.joined_at::date) AS start_date
+    FROM organization_memberships m
+    JOIN users u ON u.id = m.user_id AND u.status = 'active'
+    WHERE m.organization_id = org AND m.status = 'active' AND COALESCE(m.start_date, m.joined_at::date) IS NOT NULL
+    ORDER BY m.user_id
+  LOOP
+    ------------------------------------------------------------------------------------------
+    -- Absences, planned per calendar year, inserted once they are over.
+    FOR y IN extract(year FROM p.start_date)::int .. extract(year FROM today)::int LOOP
+      range_start := greatest(p.start_date, make_date(y, 1, 1));
+      range_end := make_date(y, 12, 31);
+      key := p.user_id || ':' || y;
+      vacation := round((20 + floor(pg_temp.seed_rnd(key || ':vacation') * 11)) * (range_end - range_start + 1) / (make_date(y, 12, 31) - make_date(y, 1, 1) + 1.0));
+      left_days := vacation;
+      plan_start := '{}'; plan_end := '{}'; plan_type := '{}'; plan_half := '{}';
+      k := 0;
+      -- Two weeks in summer, one week elsewhere, then 1-3 days clock a time; one half day sometimes.
+      WHILE left_days > 0 AND k < 40 LOOP
+        k := k + 1;
+        block_days := CASE
+          WHEN k = 1 AND left_days >= 10 THEN 10
+          WHEN k = 2 AND left_days >= 5 THEN 5
+          ELSE floor(least(left_days, 1 + floor(pg_temp.seed_rnd(key || ':len:' || k) * 3)))::int END;
+        -- A half day sometimes, and always for a last half day left.
+        half := left_days < 1 OR (k > 2 AND pg_temp.seed_rnd(key || ':half:' || k) < 0.12);
+        IF half THEN block_days := 1; END IF;
+        ok := false;
+        FOR attempt IN 1 .. 25 LOOP
+          r := pg_temp.seed_rnd(key || ':start:' || k || ':' || attempt);
+          IF block_days = 10 THEN
+            s := make_date(y, 7, 1) + floor(r * 50)::int;   -- July / August
+          ELSIF block_days = 5 AND r < 0.5 THEN
+            s := make_date(y, 2, 1) + floor(r * 2 * 80)::int; -- February - April
+          ELSIF block_days = 5 THEN
+            s := make_date(y, 9, 20) + floor((r - 0.5) * 2 * 90)::int; -- autumn / Christmas
+          ELSE
+            s := make_date(y, 1, 1) + floor(r * 365)::int;
+          END IF;
+          IF block_days >= 5 THEN s := s - (extract(isodow FROM s)::int - 1); END IF; -- a Monday
+          s := pg_temp.seed_next_workday(greatest(s, range_start));
+          e := pg_temp.seed_span_end(s, block_days);
+          CONTINUE WHEN e > range_end;
+          CONTINUE WHEN EXISTS (SELECT 1 FROM generate_subscripts(plan_start, 1) i WHERE plan_start[i] <= e + 1 AND plan_end[i] >= s - 1);
+          ok := true;
+          EXIT;
+        END LOOP;
+        IF ok THEN
+          plan_start := plan_start || s; plan_end := plan_end || e;
+          plan_type := plan_type || 'vacation'::text; plan_half := plan_half || half;
+        END IF;
+        left_days := left_days - CASE WHEN half THEN 0.5 ELSE block_days END;
+      END LOOP;
+      -- 0-3 sick spells of 1-3 working days.
+      FOR k IN 1 .. floor(pg_temp.seed_rnd(key || ':sick') * 4)::int LOOP
+        FOR attempt IN 1 .. 10 LOOP
+          s := pg_temp.seed_next_workday(make_date(y, 1, 1) + floor(pg_temp.seed_rnd(key || ':sick:' || k || ':' || attempt) * 365)::int);
+          e := pg_temp.seed_span_end(s, 1 + floor(pg_temp.seed_rnd(key || ':sicklen:' || k) * 3)::int);
+          CONTINUE WHEN s < range_start OR e > range_end;
+          CONTINUE WHEN EXISTS (SELECT 1 FROM generate_subscripts(plan_start, 1) i WHERE plan_start[i] <= e + 1 AND plan_end[i] >= s - 1);
+          plan_start := plan_start || s; plan_end := plan_end || e;
+          plan_type := plan_type || 'sickness'::text; plan_half := plan_half || false;
+          EXIT;
+        END LOOP;
+      END LOOP;
+
+      FOR k IN 1 .. coalesce(array_length(plan_start, 1), 0) LOOP
+        s := plan_start[k]; e := plan_end[k];
+        CONTINUE WHEN e >= today;
+        CONTINUE WHEN EXISTS (
+          SELECT 1 FROM absences a
+          WHERE a.user_id = p.user_id AND a.organization_id = org AND a.date_start <= e AND a.date_end >= s
+            AND a.id <> pg_temp.seed_id(key || ':absence:' || s));
+        CONTINUE WHEN EXISTS (
+          SELECT 1 FROM work_times w
+          WHERE w.user_id = p.user_id
+            AND w.check_in >= (s::timestamp AT TIME ZONE tz) AND w.check_in < ((e + 1)::timestamp AT TIME ZONE tz)
+            AND NOT plan_half[k]);
+        INSERT INTO absences (id, organization_id, user_id, date_start, date_end, status, reviewed_by_user_id, reviewed_at, note, absence_type, half_day)
+        VALUES (
+          pg_temp.seed_id(key || ':absence:' || s), org, p.user_id, s, e, 'approved',
+          CASE WHEN plan_type[k] = 'vacation' THEN pg_temp.seed_manager(org, p.user_id, s) END,
+          CASE WHEN plan_type[k] = 'vacation' THEN ((s - 21)::timestamp + TIME '10:15') AT TIME ZONE tz ELSE ((s)::timestamp + TIME '08:05') AT TIME ZONE tz END,
+          CASE WHEN plan_type[k] = 'sickness' THEN 'Flu' WHEN e - s >= 7 THEN 'Summer holidays' END,
+          plan_type[k], plan_half[k])
+        ON CONFLICT (id) DO NOTHING;
+      END LOOP;
+    END LOOP;
+
+    ------------------------------------------------------------------------------------------
+    -- Attendance and project time, day by day.
+    FOR day IN SELECT g::date FROM generate_series(p.start_date, today - 1, INTERVAL '1 day') AS g LOOP
+      CONTINUE WHEN NOT pg_temp.seed_workday(day);
+      CONTINUE WHEN EXISTS (
+        SELECT 1 FROM work_times w
+        WHERE w.user_id = p.user_id AND w.check_in >= (day::timestamp AT TIME ZONE tz) AND w.check_in < ((day + 1)::timestamp AT TIME ZONE tz));
+      has_project := EXISTS (
+        SELECT 1 FROM project_times t
+        WHERE t.user_id = p.user_id AND t.start_time >= (day::timestamp AT TIME ZONE tz) AND t.start_time < ((day + 1)::timestamp AT TIME ZONE tz));
+      half := false;
+      SELECT a.half_day INTO half FROM absences a
+      WHERE a.user_id = p.user_id AND a.organization_id = org AND a.status = 'approved' AND day BETWEEN a.date_start AND a.date_end
+      ORDER BY a.half_day LIMIT 1;
+      IF FOUND AND NOT half THEN CONTINUE; END IF;
+      half := coalesce(half, false);
+
+      key := p.user_id || ':' || day;
+      r := pg_temp.seed_rnd(key || ':sessions');
+      IF half THEN
+        sessions := CASE WHEN r < 0.5 THEN 1 ELSE 2 END;
+        total := 225 + floor(pg_temp.seed_rnd(key || ':total') * 40)::int;
+      ELSE
+        sessions := CASE WHEN r < 0.15 THEN 1 WHEN r < 0.75 THEN 2 WHEN r < 0.95 THEN 3 ELSE 4 END;
+        -- Around the 8-hour target (7:12 - 8:48), plus a small habit per person (-4 to +4
+        -- minutes a day), so overtime balances drift apart without running away.
+        total := 432 + floor(pg_temp.seed_rnd(p.user_id || ':habit') * 9)::int - 4 + floor(pg_temp.seed_rnd(key || ':total') * 97)::int;
+      END IF;
+      weights := '{}'; weight_sum := 0;
+      FOR k IN 1 .. sessions LOOP
+        weights := weights || (0.6 + pg_temp.seed_rnd(key || ':w:' || k) * 0.8);
+        weight_sum := weight_sum + weights[k];
+      END LOOP;
+      minutes := '{}'; starts := '{}'; used := 0;
+      clock := day + TIME '07:00' + make_interval(mins => floor(pg_temp.seed_rnd(key || ':start') * 91)::int);
+      FOR k IN 1 .. sessions LOOP
+        minutes := minutes || CASE WHEN k = sessions THEN total - used ELSE floor(total * weights[k] / weight_sum)::int END;
+        used := used + minutes[k];
+        IF k > 1 THEN
+          -- The lunch break sits in the middle of the day; other breaks are short.
+          clock := clock + make_interval(mins => CASE WHEN k = sessions / 2 + 1 THEN 30 + floor(pg_temp.seed_rnd(key || ':gap:' || k) * 31)::int
+                                                 ELSE 5 + floor(pg_temp.seed_rnd(key || ':gap:' || k) * 21)::int END);
+        END IF;
+        starts := starts || clock;
+        INSERT INTO work_times (id, user_id, organization_id, check_in, check_out)
+        VALUES (pg_temp.seed_id(key || ':work:' || k), p.user_id, org, clock AT TIME ZONE tz, (clock + make_interval(mins => minutes[k])) AT TIME ZONE tz)
+        ON CONFLICT (id) DO NOTHING;
+        clock := clock + make_interval(mins => minutes[k]);
+      END LOOP;
+
+      -- Project time: the month's main project, sometimes a second one; 80-100% of attendance in
+      -- whole 5 minutes, the first entry from the first check-in, the second from the next one.
+      CONTINUE WHEN has_project;
+      project_total := (floor(total * (0.8 + pg_temp.seed_rnd(key || ':ptotal') * 0.2) / 5) * 5)::int;
+      entries := CASE WHEN pg_temp.seed_rnd(key || ':entries') < 0.5 OR project_total < 60 THEN 1 ELSE 2 END;
+      first_minutes := CASE WHEN entries = 1 THEN project_total
+                            ELSE (round(project_total * (0.35 + pg_temp.seed_rnd(key || ':split') * 0.3) / 5) * 5)::int END;
+      main := 1 + floor(pg_temp.seed_rnd(p.user_id || ':' || to_char(day, 'YYYY-MM') || ':main') * 3)::int;
+      other := 1 + (main + floor(pg_temp.seed_rnd(key || ':other') * 2)::int) % 3;
+      t_start := starts[1];
+      FOR k IN 1 .. entries LOOP
+        pick := CASE WHEN k = 1 THEN main ELSE other END;
+        IF k = 2 THEN t_start := greatest(coalesce(starts[2], t_end), t_end); END IF;
+        t_end := t_start + make_interval(mins => CASE WHEN k = 1 THEN first_minutes ELSE project_total - first_minutes END);
+        subs := string_to_array(subprojects[pick], ',');
+        INSERT INTO project_times (id, user_id, organization_id, project_id, subproject_id, start_time, end_time, comment)
+        VALUES (
+          pg_temp.seed_id(key || ':project:' || k), p.user_id, org, projects[pick],
+          nullif(subs[1 + floor(pg_temp.seed_rnd(key || ':sub:' || k) * array_length(subs, 1))::int], '')::uuid,
+          t_start AT TIME ZONE tz, t_end AT TIME ZONE tz,
+          (string_to_array(comments[pick], '|'))[1 + floor(pg_temp.seed_rnd(key || ':comment:' || k) * 6)::int])
+        ON CONFLICT (id) DO NOTHING;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+END $$;
+
+-- Working-time timesheets: every month from the start month to last month, submitted on the
+-- 1st-2nd of the next month and approved by the manager in force clock the month's end.
+INSERT INTO timesheet_periods (id, organization_id, user_id, period_start, period_end, status, submitted_at, reviewed_by_user_id, reviewed_at)
+SELECT pg_temp.seed_id(m.user_id || ':timesheet:' || mo::date), m.organization_id, m.user_id, mo::date, (mo + INTERVAL '1 month')::date, 'approved',
+       least(now(), ((mo + INTERVAL '1 month')::timestamp + TIME '17:30') AT TIME ZONE 'Europe/Zurich'),
+       pg_temp.seed_manager(m.organization_id, m.user_id, (mo + INTERVAL '1 month - 1 day')::date),
+       least(now(), ((mo + INTERVAL '1 month 2 days')::timestamp + TIME '09:10') AT TIME ZONE 'Europe/Zurich')
+FROM organization_memberships m
+JOIN users u ON u.id = m.user_id AND u.status = 'active'
+CROSS JOIN LATERAL generate_series(date_trunc('month', COALESCE(m.start_date, m.joined_at::date)),
+                                   date_trunc('month', (now() AT TIME ZONE 'Europe/Zurich')::date) - INTERVAL '1 month',
+                                   INTERVAL '1 month') AS mo
+WHERE m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND m.status = 'active'
+ON CONFLICT (organization_id, user_id, period_start) DO NOTHING;
+
+-- Project timesheets: one per person, project and month with project time before this month,
+-- approved by the project's owner.
+INSERT INTO project_time_periods (id, organization_id, user_id, project_id, period_start, period_end, status, submitted_at, reviewed_by_user_id, reviewed_at)
+SELECT pg_temp.seed_id(t.user_id || ':project-timesheet:' || t.project_id || ':' || t.month), t.organization_id, t.user_id, t.project_id,
+       t.month, (t.month + INTERVAL '1 month')::date, 'approved',
+       least(now(), ((t.month + INTERVAL '1 month')::timestamp + TIME '17:35') AT TIME ZONE 'Europe/Zurich'),
+       COALESCE(pr.owner_user_id, t.user_id),
+       least(now(), ((t.month + INTERVAL '1 month 3 days')::timestamp + TIME '11:00') AT TIME ZONE 'Europe/Zurich')
+FROM (
+  SELECT DISTINCT pt.user_id, pt.organization_id, pt.project_id, date_trunc('month', pt.start_time AT TIME ZONE 'Europe/Zurich')::date AS month
+  FROM project_times pt
+  WHERE pt.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND pt.project_id IS NOT NULL
+    AND pt.start_time < (date_trunc('month', now() AT TIME ZONE 'Europe/Zurich') AT TIME ZONE 'Europe/Zurich')
+) t
+JOIN projects pr ON pr.id = t.project_id
+ON CONFLICT (organization_id, user_id, project_id, period_start) DO NOTHING;
+
+-- Expenses: 0-3 a month per person, on a weekday of that month before today, from a small
+-- catalogue (category, sub-category, amount range, currency, billing).
+CREATE TEMP TABLE seed_expenses ON COMMIT DROP AS
+WITH kinds(n, category, sub_category, low, high, currency, billing_type, comment) AS (
+  VALUES
+    (0, 'travel',   'taxi',         18, 85,  'CHF', 'billable',     'Taxi to the client'),
+    (1, 'travel',   'hotel',        120, 260, 'EUR', 'billable',    'Hotel, client visit'),
+    (2, 'travel',   'flight',       160, 620, 'EUR', 'billable',    'Flight to workshop'),
+    (3, 'meals',    'client_lunch', 45, 190, 'CHF', 'billable',     'Lunch with the client'),
+    (4, 'meals',    'team_lunch',   35, 140, 'CHF', 'internal',     'Team lunch'),
+    (5, 'supplies', NULL,           8, 60,   'CHF', 'non_billable', 'Office supplies'),
+    (6, 'software', NULL,           10, 49,  'CHF', 'internal',     'Software subscription'),
+    (7, 'other',    NULL,           12, 80,  'CHF', 'non_billable', 'Parking')
 ),
-months AS (
-  SELECT v.entries, (date_trunc('month', p.today) + make_interval(months => v.month_offset))::date AS month_start
-  FROM params p
-  CROSS JOIN (VALUES (-1, 100), (0, 50)) AS v(month_offset, entries)
-),
-days AS (
-  SELECT mo.month_start, d::date AS day,
-         (row_number() OVER (PARTITION BY mo.month_start ORDER BY d) - 1)::int AS day_idx,
-         (count(*) OVER (PARTITION BY mo.month_start))::int AS n_days
-  FROM months mo
-  CROSS JOIN params p
-  CROSS JOIN generate_series(mo.month_start, (mo.month_start + INTERVAL '1 month' - INTERVAL '1 day')::date, INTERVAL '1 day') AS d
-  WHERE extract(isodow FROM d) < 6 AND d::date < p.today
-),
-people AS (
-  SELECT DISTINCT ON (m.user_id) m.user_id, m.organization_id
+slots AS (
+  SELECT m.user_id, m.organization_id, mo::date AS month, i,
+         m.user_id || ':' || to_char(mo, 'YYYY-MM') || ':expense:' || i AS key,
+         COALESCE(m.start_date, m.joined_at::date) AS start_date
   FROM organization_memberships m
   JOIN users u ON u.id = m.user_id AND u.status = 'active'
-  WHERE m.status = 'active'
-  ORDER BY m.user_id, m.joined_at, m.organization_id
+  CROSS JOIN LATERAL generate_series(date_trunc('month', COALESCE(m.start_date, m.joined_at::date)),
+                                     date_trunc('month', (now() AT TIME ZONE 'Europe/Zurich')::date), INTERVAL '1 month') AS mo
+  CROSS JOIN generate_series(1, 3) AS i
+  WHERE m.organization_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND m.status = 'active'
+    AND i <= CASE WHEN pg_temp.seed_rnd(m.user_id || ':' || to_char(mo, 'YYYY-MM') || ':expenses') < 0.3 THEN 0
+                  WHEN pg_temp.seed_rnd(m.user_id || ':' || to_char(mo, 'YYYY-MM') || ':expenses') < 0.65 THEN 1
+                  WHEN pg_temp.seed_rnd(m.user_id || ':' || to_char(mo, 'YYYY-MM') || ':expenses') < 0.9 THEN 2 ELSE 3 END
 ),
-targets AS (
-  SELECT pe.user_id, pe.organization_id, mo.month_start, mo.entries
-  FROM people pe
-  CROSS JOIN months mo
-  WHERE NOT EXISTS (
-    SELECT 1 FROM work_times w
-    WHERE w.user_id = pe.user_id
-      AND w.check_in >= (mo.month_start::timestamp AT TIME ZONE 'Europe/Zurich')
-      AND w.check_in < ((mo.month_start + INTERVAL '1 month')::timestamp AT TIME ZONE 'Europe/Zurich')
-  )
-),
--- Entry i of a month goes to that month's weekday (i mod weekdays), so sessions spread evenly.
-slots AS (
-  SELECT t.user_id, t.organization_id, d.day, i,
-         0.6 + random() * 0.8 AS weight,
-         5 + floor(random() * 26)::int AS gap_before
-  FROM targets t
-  CROSS JOIN generate_series(0, t.entries - 1) AS i
-  JOIN days d ON d.month_start = t.month_start AND d.day_idx = i % d.n_days
-),
-day_plan AS (
-  SELECT user_id, day,
-         (day + TIME '07:00')::timestamp + make_interval(mins => floor(random() * 91)::int) AS day_start,
-         450 + floor(random() * 91)::int AS total_minutes
-  FROM slots
-  GROUP BY user_id, day
-),
-sessions AS (
-  SELECT s.user_id, s.organization_id, dp.day_start,
-         row_number() OVER w AS n,
-         greatest(15, floor(dp.total_minutes * s.weight / sum(s.weight) OVER (PARTITION BY s.user_id, s.day)))::int AS minutes,
-         s.gap_before,
-         s.day
+dated AS (
+  SELECT s.*, (s.month + floor(pg_temp.seed_rnd(s.key || ':day') * 20)::int) AS raw_day
   FROM slots s
-  JOIN day_plan dp ON dp.user_id = s.user_id AND dp.day = s.day
-  WINDOW w AS (PARTITION BY s.user_id, s.day ORDER BY s.i)
-),
-timed AS (
-  SELECT user_id, organization_id, minutes,
-         day_start + make_interval(mins => (
-           sum(minutes + CASE WHEN n = 1 THEN 0 ELSE gap_before END)
-             OVER (PARTITION BY user_id, day ORDER BY n) - minutes)::int) AS local_in
-  FROM sessions
 )
-INSERT INTO work_times (user_id, organization_id, check_in, check_out)
-SELECT user_id, organization_id,
-       local_in AT TIME ZONE 'Europe/Zurich',
-       (local_in + make_interval(mins => minutes)) AT TIME ZONE 'Europe/Zurich'
-FROM timed;
+SELECT pg_temp.seed_id(d.key) AS id, d.user_id, d.organization_id, d.month, pg_temp.seed_next_workday(d.raw_day) AS expense_date,
+       k.category, k.sub_category, k.billing_type, k.currency AS original_currency, k.comment,
+       round((k.low + pg_temp.seed_rnd(d.key || ':amount') * (k.high - k.low))::numeric, 2) AS original_value,
+       CASE WHEN k.billing_type = 'billable'
+            THEN (ARRAY['cccccccc-cccc-cccc-cccc-cccccccccccc', 'cccccccc-cccc-cccc-cccc-cccccccccccd']::uuid[])[1 + floor(pg_temp.seed_rnd(d.key || ':project') * 2)::int]
+            WHEN k.billing_type = 'internal' THEN 'cccccccc-cccc-cccc-cccc-ccccccccccce'::uuid END AS project_id
+FROM dated d
+JOIN kinds k ON k.n = floor(pg_temp.seed_rnd(d.key || ':kind') * 8)::int;
+
+DELETE FROM seed_expenses
+WHERE expense_date >= (now() AT TIME ZONE 'Europe/Zurich')::date
+   OR expense_date < (SELECT COALESCE(m.start_date, m.joined_at::date) FROM organization_memberships m
+                      WHERE m.organization_id = seed_expenses.organization_id AND m.user_id = seed_expenses.user_id)
+   OR date_trunc('month', expense_date) <> month;
+
+INSERT INTO expenses (id, user_id, organization_id, project_id, expense_date, category, sub_category, billing_type,
+                      original_value, original_currency, currency, quantity, value, comment)
+SELECT id, user_id, organization_id, project_id, expense_date, category, sub_category, billing_type,
+       original_value, original_currency, 'CHF', CASE WHEN category = 'supplies' THEN 1 END,
+       CASE WHEN original_currency = 'EUR' THEN round(original_value * 0.94, 2) ELSE original_value END, comment
+FROM seed_expenses
+ON CONFLICT (id) DO NOTHING;
+
+-- One expense report per person and month with expenses: finished, approved for the last two
+-- months (waiting for processing), in preparation for the current month.
+INSERT INTO expense_reports (id, organization_id, user_id, status, date_submitted, reviewed_by_user_id, reviewed_at, data)
+SELECT pg_temp.seed_id(r.user_id || ':expense-report:' || r.month), r.organization_id, r.user_id,
+       CASE WHEN r.month = r.this_month THEN 'in_preparation'
+            WHEN r.month >= r.this_month - INTERVAL '2 months' THEN 'approved' ELSE 'finished' END,
+       CASE WHEN r.month < r.this_month THEN ((r.month + INTERVAL '1 month 1 day')::timestamp + TIME '16:00') AT TIME ZONE 'Europe/Zurich' END,
+       CASE WHEN r.month < r.this_month THEN pg_temp.seed_manager(r.organization_id, r.user_id, (r.month + INTERVAL '1 month - 1 day')::date) END,
+       CASE WHEN r.month < r.this_month THEN least(now(), ((r.month + INTERVAL '1 month 4 days')::timestamp + TIME '10:30') AT TIME ZONE 'Europe/Zurich') END,
+       '{}'::jsonb
+FROM (
+  SELECT DISTINCT user_id, organization_id, month, date_trunc('month', (now() AT TIME ZONE 'Europe/Zurich')::date)::date AS this_month
+  FROM seed_expenses
+) r
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO expense_report_items (id, expense_report_id, expense_id, organization_id)
+SELECT pg_temp.seed_id(e.id || ':item'), pg_temp.seed_id(e.user_id || ':expense-report:' || e.month), e.id, e.organization_id
+FROM seed_expenses e
+WHERE EXISTS (SELECT 1 FROM expense_reports r WHERE r.id = pg_temp.seed_id(e.user_id || ':expense-report:' || e.month))
+ON CONFLICT DO NOTHING;

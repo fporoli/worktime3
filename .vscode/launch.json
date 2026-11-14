@@ -21,7 +21,8 @@
       "url": "http://localhost:3001",
       "webRoot": "${workspaceFolder}/apps/web",
       "preLaunchTask": "web: dev server",
-      "sourceMaps": true
+      "sourceMaps": true,
+      "cleanUp": "wholeBrowser"
     },
     {
       "type": "chrome",
@@ -29,7 +30,8 @@
       "name": "Local Full Stack: Docker + Chrome",
       "url": "http://localhost:3002",
       "webRoot": "${workspaceFolder}/apps/web",
-      "preLaunchTask": "local: stack up"
+      "preLaunchTask": "local: stack up",
+      "cleanUp": "wholeBrowser"
     }
   ],
   "compounds": [
